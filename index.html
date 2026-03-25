@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Itaú BBA — Agribusiness, Food & Beverage Research</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --orange: #FF5500;
+    --black:  #1A1A1A;
+    --gray-dark: #333333;
+    --gray-mid:  #888888;
+    --gray-light: #F4F4F4;
+    --border:    #E5E5E5;
+    --white:     #FFFFFF;
+    --blue:      #0070C0;
+    --green:     #27AE60;
+    --red:       #C0392B;
+    --navy:      #12233A;
+    --font: 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+
+  body { font-family: var(--font); background: var(--gray-light); color: var(--gray-dark); }
+
+  /* ── SCREENS ── */
+  .screen { display: none; min-height: 100vh; }
+  .screen.active { display: block; }
+
+  /* ═══════════════════════════════════════
+     LOGIN SCREEN
+  ═══════════════════════════════════════ */
+  #screen-login {
+    background: #1A1A1A;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #screen-login.active { display: flex; }
+
+  .login-card {
+    background: var(--white);
+    border-radius: 8px;
+    padding: 40px 48px 36px;
+    width: 420px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+    text-align: center;
+  }
+  .login-logo {
+    background: #1A1A1A;
+    border-radius: 6px;
+    padding: 8px 16px;
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-bottom: 24px;
+  }
+  .login-logo-itau { font-size: 18px; font-weight: 900; color: var(--white); letter-spacing: -0.5px; }
+  .login-logo-bba  { font-size: 11px; font-weight: 700; color: var(--orange); letter-spacing: 2px; margin-top: 2px; }
+  .login-title { font-size: 20px; font-weight: 700; color: var(--black); margin-bottom: 4px; }
+  .login-sub   { font-size: 13px; color: var(--gray-mid); margin-bottom: 28px; }
+  .login-label { display: block; text-align: left; font-size: 12px; font-weight: 600; color: var(--gray-dark); margin-bottom: 6px; }
+  .login-input {
+    width: 100%; padding: 10px 13px; border: 1.5px solid var(--border);
+    border-radius: 5px; font-size: 14px; font-family: var(--font);
+    color: var(--gray-dark); margin-bottom: 16px; outline: none;
+    transition: border-color .2s;
+  }
+  .login-input:focus { border-color: var(--orange); }
+  .login-btn {
+    width: 100%; padding: 12px; background: var(--orange); color: var(--white);
+    border: none; border-radius: 5px; font-size: 15px; font-weight: 700;
+    cursor: pointer; transition: background .2s; font-family: var(--font);
+  }
+  .login-btn:hover { background: #e04a00; }
+  .login-hint { font-size: 11px; color: #aaa; margin-top: 14px; }
+  .login-error { font-size: 12px; color: var(--red); margin-top: 8px; min-height: 18px; }
+
+  /* ═══════════════════════════════════════
+     APP (POST-LOGIN)
+  ═══════════════════════════════════════ */
+  #screen-app { display: flex; flex-direction: column; }
+  #screen-app.active { display: flex; }
+
+  /* ── TOP NAV (BLACK BAR) ── */
+  .top-nav {
+    background: var(--black);
+    display: flex; align-items: center;
+    padding: 0 20px; height: 48px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .top-nav-logo {
+    background: #2a2a2a;
+    border-radius: 4px;
+    padding: 4px 10px;
+    display: flex; align-items: center; gap: 5px;
+    margin-right: 20px; cursor: pointer;
+  }
+  .top-nav-logo span:first-child { font-size: 14px; font-weight: 900; color: var(--white); }
+  .top-nav-logo span:last-child  { font-size: 9px; font-weight: 700; color: var(--orange); letter-spacing: 1.5px; }
+
+  .top-nav-tabs { display: flex; align-items: stretch; height: 100%; flex: 1; }
+  .top-nav-tab {
+    padding: 0 18px; font-size: 13.5px; font-weight: 500; color: #aaa;
+    cursor: pointer; display: flex; align-items: center; border-bottom: 3px solid transparent;
+    transition: color .15s, border-color .15s; white-space: nowrap;
+    position: relative;
+  }
+  .top-nav-tab:hover { color: var(--white); }
+  .top-nav-tab.active { color: var(--white); border-bottom-color: var(--orange); font-weight: 700; }
+  .top-nav-tab .admin-badge {
+    font-size: 9px; background: var(--orange); color: white;
+    border-radius: 3px; padding: 1px 5px; margin-left: 6px; font-weight: 700; letter-spacing: .5px;
+  }
+
+  .top-nav-right { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+  .sync-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; }
+  .sync-label { font-size: 12px; color: #888; display: flex; align-items: center; gap: 5px; }
+  .search-box {
+    background: #2a2a2a; border: none; border-radius: 5px;
+    padding: 6px 12px; font-size: 12px; color: #bbb; font-family: var(--font);
+    width: 180px; outline: none;
+  }
+  .search-box::placeholder { color: #555; }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--orange); color: white; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+
+  /* ── SECOND NAV (SUBSECTORS) ── */
+  .sub-nav {
+    background: var(--white);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    display: flex; align-items: stretch; height: 44px;
+    gap: 4px;
+  }
+  .sub-nav-tab {
+    padding: 0 16px; font-size: 13px; color: var(--gray-mid);
+    cursor: pointer; display: flex; align-items: center;
+    border-bottom: 3px solid transparent; transition: color .15s, border-color .15s;
+    white-space: nowrap;
+  }
+  .sub-nav-tab:hover { color: var(--gray-dark); }
+  .sub-nav-tab.active { color: var(--orange); border-bottom-color: var(--orange); font-weight: 700; }
+  .sub-nav-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .btn-outline {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: 5px;
+    font-size: 12px; background: white; cursor: pointer; color: var(--gray-dark);
+    display: flex; align-items: center; gap: 6px; transition: border-color .15s;
+    font-family: var(--font);
+  }
+  .btn-outline:hover { border-color: var(--orange); color: var(--orange); }
+
+  /* ── MAIN CONTENT ── */
+  .main-content {
+    flex: 1; padding: 28px 28px 40px;
+    display: flex; gap: 24px;
+  }
+  .content-area { flex: 1; min-width: 0; }
+  .sidebar { width: 280px; flex-shrink: 0; }
+
+  /* ── GREETING ── */
+  .greeting { margin-bottom: 24px; }
+  .greeting h1 { font-size: 22px; font-weight: 700; color: var(--black); }
+  .greeting h1 span { font-weight: 400; }
+  .greeting p { font-size: 13px; color: var(--gray-mid); margin-top: 3px; }
+
+  /* ── SECTION HEADER ── */
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .section-title { font-size: 15px; font-weight: 700; color: var(--black); }
+  .section-sub { font-size: 12px; color: var(--gray-mid); }
+
+  /* ── DATABASE CARDS ── */
+  .db-grid { display: flex; flex-direction: column; gap: 12px; }
+  .db-card {
+    background: var(--white); border: 1px solid var(--border);
+    border-radius: 7px; padding: 18px 20px;
+    display: flex; align-items: flex-start; gap: 16px;
+    transition: box-shadow .15s;
+  }
+  .db-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.07); }
+  .db-card-icon {
+    width: 40px; height: 40px; border-radius: 8px;
+    background: var(--gray-light); display: flex; align-items: center;
+    justify-content: center; font-size: 18px; flex-shrink: 0;
+  }
+  .db-card-body { flex: 1; min-width: 0; }
+  .db-card-title { font-size: 14px; font-weight: 700; color: var(--black); margin-bottom: 4px; }
+  .db-card-desc { font-size: 12.5px; color: var(--gray-mid); line-height: 1.5; }
+  .db-card-meta {
+    margin-top: 10px; display: flex; align-items: center;
+    justify-content: space-between;
+  }
+  .db-card-tag { font-size: 11px; color: #aaa; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; }
+  .btn-open {
+    padding: 6px 14px; background: transparent; border: 1.5px solid var(--orange);
+    border-radius: 5px; font-size: 12px; color: var(--orange); font-weight: 600;
+    cursor: pointer; transition: background .15s; font-family: var(--font);
+    text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+  }
+  .btn-open:hover { background: var(--orange); color: white; }
+
+  .empty-state {
+    background: var(--white); border: 1.5px dashed var(--border);
+    border-radius: 7px; padding: 40px 20px; text-align: center;
+  }
+  .empty-state-icon { font-size: 32px; margin-bottom: 12px; }
+  .empty-state h3 { font-size: 14px; font-weight: 700; color: var(--black); margin-bottom: 6px; }
+  .empty-state p { font-size: 12px; color: var(--gray-mid); line-height: 1.6; }
+
+  /* ── SIDEBAR ── */
+  .sidebar-banner {
+    background: var(--navy);
+    border-radius: 8px; overflow: hidden; margin-bottom: 16px;
+    cursor: pointer; transition: opacity .15s;
+    text-decoration: none; display: block;
+  }
+  .sidebar-banner:hover { opacity: .92; }
+  .sidebar-banner-top {
+    padding: 20px 18px 14px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-banner-logo-wrap { display: flex; align-items: center; gap: 10px; }
+  .sidebar-logo-box {
+    background: rgba(255,255,255,.08); border-radius: 5px;
+    padding: 4px 8px; display: flex; align-items: center; gap: 4px;
+  }
+  .sidebar-logo-box span:first-child { font-size: 13px; font-weight: 900; color: white; }
+  .sidebar-logo-box span:last-child  { font-size: 8px; font-weight: 700; color: var(--orange); letter-spacing: 1.5px; }
+  .sidebar-banner-arrow { font-size: 18px; color: rgba(255,255,255,.4); }
+  .sidebar-banner-body { padding: 0 18px 20px; }
+  .sidebar-banner-headline {
+    font-size: 13.5px; font-weight: 700; color: white; line-height: 1.4; margin-bottom: 10px;
+  }
+  .sidebar-banner-sub { font-size: 11px; color: rgba(255,255,255,.5); margin-bottom: 16px; }
+  .sidebar-divider { border: none; border-top: 1px solid rgba(255,255,255,.1); margin: 14px 0; }
+
+  .sidebar-team-title { font-size: 11px; font-weight: 700; color: rgba(255,255,255,.5); letter-spacing: .8px; text-transform: uppercase; margin-bottom: 12px; }
+  .analyst-row {
+    display: flex; align-items: center; gap: 11px; margin-bottom: 12px;
+    cursor: pointer; text-decoration: none;
+  }
+  .analyst-row:last-child { margin-bottom: 0; }
+  .analyst-avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--orange); color: white; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .analyst-info { min-width: 0; }
+  .analyst-name { font-size: 12.5px; font-weight: 600; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .analyst-role { font-size: 11px; color: rgba(255,255,255,.5); }
+
+  .sidebar-card { background: white; border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .sidebar-card-title { font-size: 12px; font-weight: 700; color: var(--black); margin-bottom: 10px; }
+
+  /* ── ADMIN PANEL ── */
+  .admin-panel { padding: 0; }
+  .admin-section { background: white; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+  .admin-section-header {
+    background: var(--gray-light); padding: 12px 18px;
+    font-size: 13px; font-weight: 700; color: var(--black);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .admin-section-header span.icon { font-size: 16px; }
+  .admin-section-body { padding: 18px; }
+  .admin-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .admin-row:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+  .admin-row-info { flex: 1; min-width: 0; }
+  .admin-row-name { font-size: 13px; font-weight: 600; color: var(--black); }
+  .admin-row-sub  { font-size: 11px; color: var(--gray-mid); }
+  .toggle {
+    position: relative; width: 38px; height: 20px; cursor: pointer;
+  }
+  .toggle input { display: none; }
+  .toggle-track {
+    width: 100%; height: 100%; background: var(--border); border-radius: 20px;
+    transition: background .2s; position: relative;
+  }
+  .toggle input:checked + .toggle-track { background: var(--orange); }
+  .toggle-thumb {
+    position: absolute; top: 3px; left: 3px;
+    width: 14px; height: 14px; background: white; border-radius: 50%;
+    transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  }
+  .toggle input:checked ~ .toggle-thumb { transform: translateX(18px); }
+  .admin-input {
+    width: 100%; padding: 8px 11px; border: 1.5px solid var(--border);
+    border-radius: 5px; font-size: 13px; font-family: var(--font);
+    color: var(--gray-dark); outline: none; margin-bottom: 8px;
+    transition: border-color .2s;
+  }
+  .admin-input:focus { border-color: var(--orange); }
+  .admin-label { font-size: 12px; font-weight: 600; color: var(--gray-dark); margin-bottom: 4px; display: block; }
+  .btn-primary {
+    padding: 8px 18px; background: var(--orange); color: white;
+    border: none; border-radius: 5px; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: var(--font); transition: background .15s;
+  }
+  .btn-primary:hover { background: #e04a00; }
+  .btn-danger {
+    padding: 6px 12px; background: transparent; border: 1.5px solid var(--red);
+    border-radius: 5px; font-size: 12px; color: var(--red); font-weight: 600;
+    cursor: pointer; font-family: var(--font); transition: background .15s;
+  }
+  .btn-danger:hover { background: var(--red); color: white; }
+  .badge-admin {
+    font-size: 10px; background: #FFF0E8; color: var(--orange);
+    border: 1px solid #FFD0B0; border-radius: 3px; padding: 2px 6px;
+    font-weight: 700; letter-spacing: .4px;
+  }
+  .badge-user {
+    font-size: 10px; background: var(--gray-light); color: var(--gray-mid);
+    border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px;
+    font-weight: 700; letter-spacing: .4px;
+  }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  /* ── DB FORM (add database) ── */
+  .db-form-fields { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+
+  /* ── UNDER CONSTRUCTION ── */
+  .under-construction {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 60px 20px; text-align: center;
+  }
+  .under-construction-icon { font-size: 48px; margin-bottom: 16px; }
+  .under-construction h2 { font-size: 18px; font-weight: 700; color: var(--black); margin-bottom: 8px; }
+  .under-construction p { font-size: 13px; color: var(--gray-mid); max-width: 360px; line-height: 1.6; }
+
+  /* ── MODAL ── */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.5); z-index: 200;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: white; border-radius: 8px; padding: 28px;
+    width: 460px; max-width: 95vw; max-height: 90vh; overflow-y: auto;
+    box-shadow: 0 12px 40px rgba(0,0,0,.2);
+  }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .modal-title { font-size: 16px; font-weight: 700; color: var(--black); }
+  .modal-close { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--gray-mid); line-height: 1; }
+
+  /* ── TOAST ── */
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--black); color: white; border-radius: 6px;
+    padding: 12px 18px; font-size: 13px; z-index: 300;
+    opacity: 0; transform: translateY(12px);
+    transition: opacity .25s, transform .25s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  /* ── MISC ── */
+  hr.sep { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+  .hidden { display: none !important; }
+  @media (max-width: 900px) {
+    .main-content { flex-direction: column; }
+    .sidebar { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════
+     LOGIN SCREEN
+════════════════════════════════════════════════ -->
+<div id="screen-login" class="screen active">
+  <div class="login-card">
+    <div class="login-logo">
+      <span class="login-logo-itau">itaú</span>
+      <span class="login-logo-bba">BBA</span>
+    </div>
+    <div class="login-title">Agri, Food & Bev Research</div>
+    <div class="login-sub">Itaú BBA — Equity Research</div>
+    <label class="login-label" for="inp-user">Username</label>
+    <input id="inp-user" class="login-input" type="text" placeholder="your username" autocomplete="username" />
+    <label class="login-label" for="inp-pass">Password</label>
+    <input id="inp-pass" class="login-input" type="password" placeholder="••••••••" autocomplete="current-password" />
+    <button class="login-btn" onclick="doLogin()">Sign In</button>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-hint">Default admin: <strong>admin / admin123</strong></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════
+     APP SCREEN
+════════════════════════════════════════════════ -->
+<div id="screen-app" class="screen">
+
+  <!-- TOP NAV -->
+  <nav class="top-nav">
+    <div class="top-nav-logo" onclick="navigateSector('agri')">
+      <span>itaú</span><span>BBA</span>
+    </div>
+
+    <div class="top-nav-tabs" id="top-nav-tabs">
+      <!-- Sector tabs injected by JS -->
+    </div>
+
+    <div class="top-nav-right">
+      <div class="sync-label"><div class="sync-dot"></div> Live sync</div>
+      <input class="search-box" type="text" placeholder="🔍  Search..." />
+      <div class="avatar" id="nav-avatar" title="Logged in user">BT</div>
+    </div>
+  </nav>
+
+  <!-- SECOND NAV (subsector tabs) -->
+  <nav class="sub-nav" id="sub-nav">
+    <!-- Subsector tabs injected by JS -->
+  </nav>
+
+  <!-- MAIN -->
+  <div class="main-content">
+    <div class="content-area" id="content-area">
+      <!-- Content injected by JS -->
+    </div>
+    <div class="sidebar" id="sidebar">
+      <!-- Sidebar injected by JS -->
+    </div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Modal</div>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════════ */
+const STATE = {
+  currentUser: null,
+  activeSector: 'agri',
+  activeSubsector: 'grains',
+
+  // Users: { username, password, isAdmin, active }
+  users: [
+    { username: 'admin',          password: 'admin123', isAdmin: true,  active: true },
+    { username: 'brunotomazetto', password: 'ibba2024', isAdmin: false, active: true },
+    { username: 'demo',           password: 'demo123',  isAdmin: false, active: true },
+  ],
+
+  // Sector / subsector visibility (admin can hide from non-admins)
+  sectorVisibility: {
+    agri: true, food: true, bev: true,
+  },
+  subsectorVisibility: {
+    grains: true, sugar: true,
+    beef: true, chicken: true, pork: true, staples: true,
+    beverages: true,
+  },
+
+  // Databases: { id, sector, subsector, title, description, url, source }
+  databases: [
+    // examples — all empty/placeholder
+    // { id: 1, sector:'agri', subsector:'grains', title:'Grains Price Monitor', description:'Weekly price tracker for corn, soy and wheat.', url:'#', source:'CBOT / ESALQ' },
+  ],
+
+  // Team info (editable by admin)
+  team: {
+    bannerTitle: 'Agribusiness, Food & Beverage Coverage',
+    bannerSub:   'Itaú BBA Equity Research',
+    analysts: [
+      { name: 'Gustavo Troyano',  role: 'Head of Sector', email: 'gustavo.troyano@itaubba.com' },
+      { name: 'Bruno Tomazetto',  role: 'Equity Research Analyst', email: 'bruno.tomazetto@itaubba.com' },
+      { name: 'Ryu Matsuyama',    role: 'Equity Research Analyst', email: 'ryu.matsuyama@itaubba.com' },
+    ],
+  },
+
+  nextDbId: 1,
+};
+
+/* ═══════════════════════════════════════════════════
+   SECTOR / SUBSECTOR DEFINITIONS
+═══════════════════════════════════════════════════ */
+const SECTORS = [
+  { id: 'agri',  label: 'Agribusiness' },
+  { id: 'food',  label: 'Food' },
+  { id: 'bev',   label: 'Beverage' },
+];
+const SUBSECTORS = {
+  agri: [
+    { id: 'grains', label: 'Grains' },
+    { id: 'sugar',  label: 'Sugar & Ethanol' },
+  ],
+  food: [
+    { id: 'beef',    label: 'Beef' },
+    { id: 'chicken', label: 'Chicken' },
+    { id: 'pork',    label: 'Pork' },
+    { id: 'staples', label: 'Staples' },
+  ],
+  bev: [
+    { id: 'beverages', label: 'Beverages' },
+  ],
+};
+
+/* ═══════════════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════════════ */
+function initials(name) {
+  return name.split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase();
+}
+function today() {
+  return new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+}
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+function showToast(msg, dur = 2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), dur);
+}
+function openModal(title, bodyHTML) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = bodyHTML;
+  document.getElementById('modal').classList.add('open');
+}
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+
+/* ═══════════════════════════════════════════════════
+   LOGIN
+═══════════════════════════════════════════════════ */
+function doLogin() {
+  const u = document.getElementById('inp-user').value.trim();
+  const p = document.getElementById('inp-pass').value;
+  const found = STATE.users.find(x => x.username === u && x.password === p && x.active);
+  if (!found) {
+    document.getElementById('login-error').textContent = 'Invalid credentials or account inactive.';
+    return;
+  }
+  STATE.currentUser = found;
+  document.getElementById('screen-login').classList.remove('active');
+  document.getElementById('screen-app').classList.add('active');
+  STATE.activeSector = 'agri';
+  STATE.activeSubsector = 'grains';
+  renderAll();
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && document.getElementById('screen-login').classList.contains('active')) doLogin();
+});
+
+/* ═══════════════════════════════════════════════════
+   NAVIGATION
+═══════════════════════════════════════════════════ */
+function navigateSector(sid) {
+  STATE.activeSector = sid;
+  const subs = SUBSECTORS[sid].filter(s => STATE.currentUser.isAdmin || STATE.subsectorVisibility[s.id]);
+  STATE.activeSubsector = subs.length ? subs[0].id : null;
+  renderAll();
+}
+function navigateSubsector(sid) {
+  STATE.activeSubsector = sid;
+  renderSubNav();
+  renderContent();
+}
+function navigateAdmin() {
+  STATE.activeSector = 'admin';
+  STATE.activeSubsector = null;
+  renderAll();
+}
+
+/* ═══════════════════════════════════════════════════
+   RENDER
+═══════════════════════════════════════════════════ */
+function renderAll() {
+  renderTopNav();
+  renderSubNav();
+  renderContent();
+  renderSidebar();
+}
+
+function renderTopNav() {
+  const isAdmin = STATE.currentUser?.isAdmin;
+  let html = '';
+  SECTORS.forEach(s => {
+    const visible = isAdmin || STATE.sectorVisibility[s.id];
+    if (!visible) return;
+    const active = STATE.activeSector === s.id ? 'active' : '';
+    html += `<div class="top-nav-tab ${active}" onclick="navigateSector('${s.id}')">${s.label}</div>`;
+  });
+  if (isAdmin) {
+    html += `<div class="top-nav-tab ${STATE.activeSector==='admin'?'active':''}" onclick="navigateAdmin()">Settings <span class="admin-badge">ADMIN</span></div>`;
+  }
+  document.getElementById('top-nav-tabs').innerHTML = html;
+
+  const av = document.getElementById('nav-avatar');
+  if (STATE.currentUser) {
+    av.textContent = initials(STATE.currentUser.username);
+    av.title = STATE.currentUser.username + (STATE.currentUser.isAdmin ? ' (admin)' : '');
+  }
+}
+
+function renderSubNav() {
+  const nav = document.getElementById('sub-nav');
+  if (STATE.activeSector === 'admin' || !STATE.activeSubsector) {
+    nav.innerHTML = '';
+    nav.style.display = 'none';
+    return;
+  }
+  nav.style.display = 'flex';
+  const subs = SUBSECTORS[STATE.activeSector] || [];
+  const isAdmin = STATE.currentUser?.isAdmin;
+  let html = '';
+  subs.forEach(s => {
+    const visible = isAdmin || STATE.subsectorVisibility[s.id];
+    if (!visible) return;
+    const active = STATE.activeSubsector === s.id ? 'active' : '';
+    html += `<div class="sub-nav-tab ${active}" onclick="navigateSubsector('${s.id}')">${s.label}</div>`;
+  });
+  html += `<div class="sub-nav-right">
+    <button class="btn-outline">⬇ Export</button>
+  </div>`;
+  nav.innerHTML = html;
+}
+
+function renderContent() {
+  const area = document.getElementById('content-area');
+  if (STATE.activeSector === 'admin') {
+    area.innerHTML = renderAdminPanel();
+    return;
+  }
+  const sub = STATE.activeSubsector;
+  const dbs = STATE.databases.filter(d => d.sector === STATE.activeSector && d.subsector === sub);
+
+  const sectorLabel = SECTORS.find(s => s.id === STATE.activeSector)?.label || '';
+  const subLabel = sub ? (SUBSECTORS[STATE.activeSector]?.find(s => s.id === sub)?.label || '') : '';
+
+  let dbsHtml = '';
+  if (dbs.length === 0) {
+    dbsHtml = `
+      <div class="empty-state">
+        <div class="empty-state-icon">📂</div>
+        <h3>No databases yet</h3>
+        <p>Databases for <strong>${subLabel}</strong> will appear here as they are added.<br>
+        Admins can add databases in the <em>Settings</em> panel.</p>
+      </div>`;
+  } else {
+    dbsHtml = '<div class="db-grid">' + dbs.map(d => `
+      <div class="db-card">
+        <div class="db-card-icon">📊</div>
+        <div class="db-card-body">
+          <div class="db-card-title">${esc(d.title)}</div>
+          <div class="db-card-desc">${esc(d.description)}</div>
+          <div class="db-card-meta">
+            <span class="db-card-tag">${esc(d.source || '')}</span>
+            <a class="btn-open" href="${esc(d.url)}" target="_blank">Open →</a>
+          </div>
+        </div>
+      </div>`).join('') + '</div>';
+  }
+
+  const isAdmin = STATE.currentUser?.isAdmin;
+  const addBtn = isAdmin ? `<button class="btn-primary" onclick="openAddDbModal()">+ Add Database</button>` : '';
+
+  area.innerHTML = `
+    <div class="greeting">
+      <h1>${greeting()}, <span>${STATE.currentUser?.username}</span></h1>
+      <p>${today()}</p>
+    </div>
+    <div class="section-header">
+      <div>
+        <div class="section-title">${sectorLabel} — ${subLabel}</div>
+        <div class="section-sub">${dbs.length} database${dbs.length !== 1 ? 's' : ''} available</div>
+      </div>
+      ${addBtn}
+    </div>
+    ${dbsHtml}
+  `;
+}
+
+function renderSidebar() {
+  const t = STATE.team;
+  const analystsHtml = t.analysts.map(a => `
+    <a class="analyst-row" href="mailto:${esc(a.email)}" title="Email ${esc(a.name)}">
+      <div class="analyst-avatar">${initials(a.name)}</div>
+      <div class="analyst-info">
+        <div class="analyst-name">${esc(a.name)}</div>
+        <div class="analyst-role">${esc(a.role)}</div>
+      </div>
+    </a>`).join('');
+
+  document.getElementById('sidebar').innerHTML = `
+    <div class="sidebar-banner" onclick="window.location.href='mailto:${esc(t.analysts.map(a=>a.email).join(','))}'">
+      <div class="sidebar-banner-top">
+        <div class="sidebar-logo-box"><span>itaú</span><span>BBA</span></div>
+        <div class="sidebar-banner-arrow">›</div>
+      </div>
+      <div class="sidebar-banner-body">
+        <div class="sidebar-banner-headline">${esc(t.bannerTitle)}</div>
+        <div class="sidebar-banner-sub">${esc(t.bannerSub)}</div>
+        <hr class="sidebar-divider" />
+        <div class="sidebar-team-title">Coverage Analysts</div>
+        ${analystsHtml}
+      </div>
+    </div>
+  `;
+}
+
+/* ═══════════════════════════════════════════════════
+   ADMIN PANEL
+═══════════════════════════════════════════════════ */
+function renderAdminPanel() {
+  // Users list
+  const usersHtml = STATE.users.map((u, i) => `
+    <div class="admin-row">
+      <div class="admin-row-info">
+        <div class="admin-row-name">${esc(u.username)}
+          ${u.isAdmin ? '<span class="badge-admin">ADMIN</span>' : '<span class="badge-user">USER</span>'}
+        </div>
+        <div class="admin-row-sub">${u.active ? '● Active' : '○ Inactive'}</div>
+      </div>
+      <label class="toggle" title="Active">
+        <input type="checkbox" ${u.active?'checked':''} onchange="toggleUserActive(${i}, this.checked)">
+        <div class="toggle-track"></div>
+        <div class="toggle-thumb"></div>
+      </label>
+      ${!u.isAdmin ? `<button class="btn-danger" onclick="deleteUser(${i})">Remove</button>` : ''}
+    </div>`).join('');
+
+  // Sector visibility
+  const secVisHtml = SECTORS.map(s => `
+    <div class="admin-row">
+      <div class="admin-row-info">
+        <div class="admin-row-name">${s.label}</div>
+        <div class="admin-row-sub">Sector tab visibility for non-admin users</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" ${STATE.sectorVisibility[s.id]?'checked':''} onchange="toggleSectorVis('${s.id}', this.checked)">
+        <div class="toggle-track"></div>
+        <div class="toggle-thumb"></div>
+      </label>
+    </div>`).join('');
+
+  // Subsector visibility
+  const allSubs = Object.values(SUBSECTORS).flat();
+  const subVisHtml = allSubs.map(s => `
+    <div class="admin-row">
+      <div class="admin-row-info">
+        <div class="admin-row-name">${s.label}</div>
+        <div class="admin-row-sub">Subsector tab visibility for non-admin users</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" ${STATE.subsectorVisibility[s.id]?'checked':''} onchange="toggleSubVis('${s.id}', this.checked)">
+        <div class="toggle-track"></div>
+        <div class="toggle-thumb"></div>
+      </label>
+    </div>`).join('');
+
+  // Databases list
+  const dbsHtml = STATE.databases.length === 0
+    ? '<p style="font-size:13px;color:#aaa;">No databases registered yet.</p>'
+    : STATE.databases.map(d => `
+      <div class="admin-row">
+        <div class="admin-row-info">
+          <div class="admin-row-name">${esc(d.title)}</div>
+          <div class="admin-row-sub">${esc(d.sector)} › ${esc(d.subsector)} — ${esc(d.source||'')}</div>
+        </div>
+        <button class="btn-outline" onclick="openEditDbModal(${d.id})" style="font-size:12px;padding:5px 11px;">Edit</button>
+        <button class="btn-danger" onclick="deleteDb(${d.id})">Remove</button>
+      </div>`).join('');
+
+  // Team
+  const teamAnalystsHtml = STATE.team.analysts.map((a,i) => `
+    <div class="admin-row" style="flex-wrap:wrap;gap:8px;">
+      <div class="admin-row-info" style="flex:0 0 100%;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input class="admin-input" style="flex:1;margin:0;" value="${esc(a.name)}" placeholder="Name"
+            oninput="updateAnalyst(${i},'name',this.value)" />
+          <input class="admin-input" style="flex:1;margin:0;" value="${esc(a.role)}" placeholder="Role"
+            oninput="updateAnalyst(${i},'role',this.value)" />
+          <input class="admin-input" style="flex:2;margin:0;" value="${esc(a.email)}" placeholder="Email"
+            oninput="updateAnalyst(${i},'email',this.value)" />
+          <button class="btn-danger" onclick="removeAnalyst(${i})">Remove</button>
+        </div>
+      </div>
+    </div>`).join('');
+
+  return `
+    <div class="greeting">
+      <h1>Settings <span style="font-weight:400;">— Admin Panel</span></h1>
+      <p>${today()}</p>
+    </div>
+    <div class="admin-panel">
+
+      <!-- USERS -->
+      <div class="admin-section">
+        <div class="admin-section-header"><span class="icon">👥</span> User Management</div>
+        <div class="admin-section-body">
+          ${usersHtml}
+          <hr class="sep" />
+          <div style="font-size:13px;font-weight:700;margin-bottom:10px;">Add New User</div>
+          <div class="form-grid">
+            <div>
+              <label class="admin-label">Username</label>
+              <input class="admin-input" id="new-user-name" placeholder="username" />
+            </div>
+            <div>
+              <label class="admin-label">Password</label>
+              <input class="admin-input" id="new-user-pass" type="password" placeholder="password" />
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+            <label class="toggle">
+              <input type="checkbox" id="new-user-admin">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+            <span style="font-size:13px;">Grant admin privileges</span>
+          </div>
+          <button class="btn-primary" onclick="addUser()">Add User</button>
+        </div>
+      </div>
+
+      <!-- VISIBILITY -->
+      <div class="admin-section">
+        <div class="admin-section-header"><span class="icon">👁</span> Tab Visibility (for non-admin users)</div>
+        <div class="admin-section-body">
+          <div style="font-size:12px;font-weight:700;color:#888;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Sectors</div>
+          ${secVisHtml}
+          <hr class="sep" />
+          <div style="font-size:12px;font-weight:700;color:#888;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Subsectors</div>
+          ${subVisHtml}
+        </div>
+      </div>
+
+      <!-- DATABASES -->
+      <div class="admin-section">
+        <div class="admin-section-header"><span class="icon">📊</span> Database Management</div>
+        <div class="admin-section-body">
+          ${dbsHtml}
+          <hr class="sep" />
+          <button class="btn-primary" onclick="openAddDbModal()">+ Add Database</button>
+        </div>
+      </div>
+
+      <!-- TEAM / SIDEBAR -->
+      <div class="admin-section">
+        <div class="admin-section-header"><span class="icon">🏦</span> Team & Sidebar Panel</div>
+        <div class="admin-section-body">
+          <label class="admin-label">Banner Title</label>
+          <input class="admin-input" value="${esc(STATE.team.bannerTitle)}" oninput="STATE.team.bannerTitle=this.value;renderSidebar();" />
+          <label class="admin-label">Banner Subtitle</label>
+          <input class="admin-input" value="${esc(STATE.team.bannerSub)}" oninput="STATE.team.bannerSub=this.value;renderSidebar();" />
+          <hr class="sep" />
+          <div style="font-size:13px;font-weight:700;margin-bottom:10px;">Analysts</div>
+          ${teamAnalystsHtml}
+          <button class="btn-outline" style="margin-top:10px;" onclick="addAnalyst()">+ Add Analyst</button>
+        </div>
+      </div>
+
+    </div>
+  `;
+}
+
+/* ═══════════════════════════════════════════════════
+   ADMIN ACTIONS
+═══════════════════════════════════════════════════ */
+function toggleUserActive(i, val) { STATE.users[i].active = val; showToast('User updated'); }
+function deleteUser(i) {
+  if (!confirm(`Remove user "${STATE.users[i].username}"?`)) return;
+  STATE.users.splice(i, 1);
+  renderContent(); showToast('User removed');
+}
+function addUser() {
+  const name = document.getElementById('new-user-name').value.trim();
+  const pass = document.getElementById('new-user-pass').value;
+  const isAdmin = document.getElementById('new-user-admin').checked;
+  if (!name || !pass) { showToast('Fill username and password'); return; }
+  if (STATE.users.find(u => u.username === name)) { showToast('Username already exists'); return; }
+  STATE.users.push({ username: name, password: pass, isAdmin, active: true });
+  renderContent(); showToast('User added ✓');
+}
+function toggleSectorVis(id, val) { STATE.sectorVisibility[id] = val; renderTopNav(); showToast('Visibility updated'); }
+function toggleSubVis(id, val) { STATE.subsectorVisibility[id] = val; renderSubNav(); showToast('Visibility updated'); }
+
+function openAddDbModal() {
+  const sectorOpts = SECTORS.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
+  openModal('Add Database', `
+    <div class="db-form-fields">
+      <div>
+        <label class="admin-label">Sector</label>
+        <select class="admin-input" id="db-sector" onchange="refreshSubsectorSelect()" style="margin-bottom:0;">
+          ${sectorOpts}
+        </select>
+      </div>
+      <div>
+        <label class="admin-label">Subsector</label>
+        <select class="admin-input" id="db-subsector" style="margin-bottom:0;"></select>
+      </div>
+      <div>
+        <label class="admin-label">Title</label>
+        <input class="admin-input" id="db-title" placeholder="e.g. Grains Price Monitor" />
+      </div>
+      <div>
+        <label class="admin-label">Description</label>
+        <textarea class="admin-input" id="db-desc" rows="3" placeholder="Brief description of this database / dashboard…"></textarea>
+      </div>
+      <div>
+        <label class="admin-label">URL (link)</label>
+        <input class="admin-input" id="db-url" placeholder="https://..." />
+      </div>
+      <div>
+        <label class="admin-label">Source (e.g. CBOT / ESALQ)</label>
+        <input class="admin-input" id="db-source" placeholder="Data source" />
+      </div>
+    </div>
+    <button class="btn-primary" onclick="saveDb()">Save Database</button>
+  `);
+  refreshSubsectorSelect();
+}
+
+function refreshSubsectorSelect() {
+  const sec = document.getElementById('db-sector')?.value || 'agri';
+  const subs = SUBSECTORS[sec] || [];
+  document.getElementById('db-subsector').innerHTML = subs.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
+}
+
+function saveDb() {
+  const title = document.getElementById('db-title').value.trim();
+  const desc  = document.getElementById('db-desc').value.trim();
+  const url   = document.getElementById('db-url').value.trim();
+  const src   = document.getElementById('db-source').value.trim();
+  const sec   = document.getElementById('db-sector').value;
+  const sub   = document.getElementById('db-subsector').value;
+  if (!title) { showToast('Title is required'); return; }
+  STATE.databases.push({ id: STATE.nextDbId++, sector: sec, subsector: sub, title, description: desc, url: url||'#', source: src });
+  closeModal();
+  if (STATE.activeSector === sec && STATE.activeSubsector === sub) renderContent();
+  else if (STATE.activeSector === 'admin') renderContent();
+  showToast('Database added ✓');
+}
+
+function openEditDbModal(id) {
+  const db = STATE.databases.find(d => d.id === id);
+  if (!db) return;
+  openModal('Edit Database', `
+    <div class="db-form-fields">
+      <div>
+        <label class="admin-label">Title</label>
+        <input class="admin-input" id="edit-title" value="${esc(db.title)}" />
+      </div>
+      <div>
+        <label class="admin-label">Description</label>
+        <textarea class="admin-input" id="edit-desc" rows="3">${esc(db.description)}</textarea>
+      </div>
+      <div>
+        <label class="admin-label">URL</label>
+        <input class="admin-input" id="edit-url" value="${esc(db.url)}" />
+      </div>
+      <div>
+        <label class="admin-label">Source</label>
+        <input class="admin-input" id="edit-source" value="${esc(db.source||'')}" />
+      </div>
+    </div>
+    <button class="btn-primary" onclick="updateDb(${id})">Save Changes</button>
+  `);
+}
+
+function updateDb(id) {
+  const db = STATE.databases.find(d => d.id === id);
+  if (!db) return;
+  db.title       = document.getElementById('edit-title').value.trim();
+  db.description = document.getElementById('edit-desc').value.trim();
+  db.url         = document.getElementById('edit-url').value.trim() || '#';
+  db.source      = document.getElementById('edit-source').value.trim();
+  closeModal(); renderContent(); showToast('Database updated ✓');
+}
+
+function deleteDb(id) {
+  if (!confirm('Remove this database?')) return;
+  const i = STATE.databases.findIndex(d => d.id === id);
+  if (i !== -1) STATE.databases.splice(i, 1);
+  renderContent(); showToast('Database removed');
+}
+
+function updateAnalyst(i, field, val) {
+  STATE.team.analysts[i][field] = val;
+  renderSidebar();
+}
+function removeAnalyst(i) {
+  STATE.team.analysts.splice(i, 1);
+  renderContent(); renderSidebar(); showToast('Analyst removed');
+}
+function addAnalyst() {
+  STATE.team.analysts.push({ name: 'New Analyst', role: 'Equity Research Analyst', email: '' });
+  renderContent(); renderSidebar();
+}
+
+/* ═══════════════════════════════════════════════════
+   ESC HELPER (XSS prevention)
+═══════════════════════════════════════════════════ */
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+</script>
+</body>
+</html>
