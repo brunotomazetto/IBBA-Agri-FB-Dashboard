@@ -260,22 +260,52 @@ async function init(){
    Returns a filtered array with one survey per (commodity, crop_year, uf).
 ══════════════════════════════════════════════════════════════════════ */
 function pickBestSurvey(rows){
-  // Group by produto + ano_agricola + uf
-  const groups = {};
+  // Step 1: for each (produto, ano_agricola), determine the best survey number
+  // across ALL states — 99 if any state has it, otherwise the highest available
+  const bestLevMap = {};
   rows.forEach(r => {
-    const key = `${r.produto}|${r.ano_agricola}|${r.uf}`;
-    if(!groups[key]) groups[key] = [];
-    groups[key].push(r);
+    const key = `${r.produto}|${r.ano_agricola}`;
+    const lev = Number(r.id_levantamento);
+    if(!bestLevMap[key]){
+      bestLevMap[key] = lev;
+    } else {
+      // 99 always wins; otherwise take the higher number
+      if(bestLevMap[key] !== 99){
+        if(lev === 99 || lev > bestLevMap[key]) bestLevMap[key] = lev;
+      }
+    }
   });
-  const result = [];
-  Object.values(groups).forEach(grp => {
-    const has99 = grp.find(r => Number(r.id_levantamento) === 99);
-    if(has99){ result.push(has99); return; }
-    // Pick highest levantamento number
-    grp.sort((a,b) => Number(b.id_levantamento) - Number(a.id_levantamento));
-    result.push(grp[0]);
+
+  // Step 2: keep only rows matching the best survey for their (produto, ano_agricola)
+  // Also aggregate milho safras (1ª+2ª+3ª) into a single row per (produto, ano, uf, lev)
+  const filtered = rows.filter(r => {
+    const key = `${r.produto}|${r.ano_agricola}`;
+    return Number(r.id_levantamento) === bestLevMap[key];
   });
-  return result;
+
+  // Step 3: aggregate milho by (produto, ano_agricola, uf, id_levantamento)
+  // summing area and producao across safras (1ª+2ª+3ª)
+  const aggMap = {};
+  filtered.forEach(r => {
+    const key = `${r.produto}|${r.ano_agricola}|${r.uf}|${r.id_levantamento}`;
+    if(!aggMap[key]){
+      aggMap[key] = {...r,
+        area_plantada_mil_ha: r.area_plantada_mil_ha||0,
+        producao_mil_t: r.producao_mil_t||0,
+      };
+    } else {
+      aggMap[key].area_plantada_mil_ha += r.area_plantada_mil_ha||0;
+      aggMap[key].producao_mil_t       += r.producao_mil_t||0;
+    }
+  });
+
+  // Step 4: calculate yield as producao/area (ignores stored produtividade_t_ha)
+  return Object.values(aggMap).map(r => {
+    const yld = r.area_plantada_mil_ha > 0
+      ? r.producao_mil_t / r.area_plantada_mil_ha
+      : 0;
+    return {...r, produtividade_calc: yld};
+  });
 }
 
 /* ══ GEOGRAPHY HELPERS ══════════════════════════════════════════════ */
@@ -412,7 +442,8 @@ function renderKPIs(rows){
   const w = rows.filter(r => r.area_plantada_mil_ha > 0);
   const totArea  = w.reduce((s,r)=>s+(r.area_plantada_mil_ha||0),0);
   const totProdc = rows.reduce((s,r)=>s+(r.producao_mil_t||0),0);
-  const avgProd  = w.length ? w.reduce((s,r)=>s+(r.produtividade_t_ha||0)*r.area_plantada_mil_ha,0)/totArea : 0;
+  // Yield = weighted average of (producao/area) per row, weighted by area
+  const avgProd  = totArea > 0 ? totProdc / totArea : 0;
   document.getElementById('kpi-area') .textContent = fmt(totArea,0);
   document.getElementById('kpi-prod') .textContent = fmt(avgProd,3);
   document.getElementById('kpi-prodc').textContent = fmt(totProdc,0);
@@ -459,7 +490,8 @@ function renderCharts(rows, geoSel, allUFs){
       const sub=sr.filter(r=>r.ano_agricola===a&&r.area_plantada_mil_ha>0);
       if(!sub.length) return null;
       const totA=sub.reduce((s,r)=>s+r.area_plantada_mil_ha,0);
-      return sub.reduce((s,r)=>s+(r.produtividade_t_ha||0)*r.area_plantada_mil_ha,0)/totA;
+      const totP=sub.reduce((s,r)=>s+(r.producao_mil_t||0),0);
+      return totA > 0 ? totP/totA : null;
     });
     const base={label,borderColor:color,backgroundColor:color+'22',
       borderWidth:2,pointRadius:3,pointHoverRadius:5,tension:.35,fill:false,spanGaps:true};
@@ -518,18 +550,16 @@ function renderMap(rows){
 
   const byUF = {};
   sub.forEach(r => {
-    if(!byUF[r.uf]) byUF[r.uf] = {area:0, prodc:0, prodW:0, areaW:0};
+    if(!byUF[r.uf]) byUF[r.uf] = {area:0, prodc:0};
     byUF[r.uf].area  += r.area_plantada_mil_ha||0;
     byUF[r.uf].prodc += r.producao_mil_t||0;
-    byUF[r.uf].prodW += (r.produtividade_t_ha||0)*(r.area_plantada_mil_ha||0);
-    byUF[r.uf].areaW += r.area_plantada_mil_ha||0;
   });
 
-  // Value per UF based on selected metric
+  // Value per UF based on selected metric — yield = producao/area
   const valOf = d => {
     if(MAP_METRIC==='area')  return d.area;
     if(MAP_METRIC==='prodc') return d.prodc;
-    if(MAP_METRIC==='prod')  return d.areaW>0 ? d.prodW/d.areaW : 0;
+    if(MAP_METRIC==='prod')  return d.area>0 ? d.prodc/d.area : 0;
     return 0;
   };
   const vals = Object.values(byUF).map(valOf);
