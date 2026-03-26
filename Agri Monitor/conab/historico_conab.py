@@ -26,8 +26,8 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 # ── Configurações ──────────────────────────────────────────────────────────────
-DB_PATH    = "conab/conab.db"
-EXCEL_PATH = "conab/conab_desde_2024.xlsx"
+DB_PATH    = "Agri Monitor/conab/conab.db"
+EXCEL_PATH = "Agri Monitor/conab/conab_desde_2024.xlsx"
 
 URLS = {
     "graos": "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/LevantamentoGraos.txt",
@@ -47,7 +47,7 @@ PRODUTOS_GRAOS = [
 ANO_CORTE_EXCEL = "2023/24"   # inclui safras >= 2023/24 (que começam em 2024)
 
 # ── Inicializa banco ───────────────────────────────────────────────────────────
-os.makedirs("conab", exist_ok=True)
+os.makedirs("Agri Monitor/conab", exist_ok=True)
 
 conn = sqlite3.connect(DB_PATH)
 conn.execute("""
