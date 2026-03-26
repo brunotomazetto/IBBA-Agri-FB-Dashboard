@@ -498,18 +498,18 @@ function getDashes(sector, subsector){
   return list;
 }
 
-/* ── Module registry: maps dashboard title → iframe src ─────────────────────
-   Add new modules here as they are built. The path is relative to index.html.
-   Example: 'Exportações': 'Agri Monitor/secex/exportacoes_dashboard.html'     */
+/* ── Module registry: maps dashboard ID → iframe src ────────────────────────
+   Use the numeric ID from the Supabase dashboards table.
+   To add a new module: 2: 'Agri Monitor/secex/exportacoes_dashboard.html'     */
 const DASH_MODULES = {
-  'Produção': 'Agri Monitor/conab/producao_dashboard.html',
+  1: 'Agri Monitor/conab/producao_dashboard.html',
 };
 
 function renderContent(){
   const area=document.getElementById('content-area');
   if(STATE.activeDash){
     const d=STATE.activeDash;
-    const moduleSrc=DASH_MODULES[d.title];
+    const moduleSrc=DASH_MODULES[d.id];
     const bodyHtml=moduleSrc
       ? `<iframe
            src="${moduleSrc}"
