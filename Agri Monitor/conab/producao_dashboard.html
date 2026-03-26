@@ -24,20 +24,17 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .filter-label{font-size:10px;font-weight:700;color:var(--gray-mid);
   text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;}
 
-/* Checkbox list */
-.cb-list{display:flex;flex-direction:column;gap:2px;max-height:130px;overflow-y:auto;
-  border:1.5px solid var(--border);border-radius:5px;padding:5px 8px;background:var(--white);min-width:130px;}
-.cb-list::-webkit-scrollbar{width:4px;}
-.cb-list::-webkit-scrollbar-thumb{background:#ddd;border-radius:2px;}
-.cb-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-dark);
-  cursor:pointer;user-select:none;white-space:nowrap;padding:2px 0;}
-.cb-item input[type=checkbox]{accent-color:var(--orange);width:13px;height:13px;cursor:pointer;flex-shrink:0;}
-.cb-item:hover{color:var(--orange);}
-.cb-section{font-size:10px;font-weight:700;color:var(--gray-mid);text-transform:uppercase;
-  letter-spacing:.5px;padding:5px 0 2px;border-top:1px solid var(--border);margin-top:2px;}
-.cb-section:first-child{border-top:none;margin-top:0;padding-top:2px;}
+/* Select multiple */
+.filter-select{border:1.5px solid var(--border);border-radius:5px;padding:4px 6px;
+  font-size:12.5px;font-family:var(--font);color:var(--gray-dark);background:var(--white);
+  cursor:pointer;outline:none;transition:border-color .15s;min-width:140px;height:110px;}
+.filter-select:focus{border-color:var(--orange);}
+.filter-select option{padding:3px 4px;}
+.filter-select option:checked{background:var(--orange);color:white;}
+.filter-select optgroup{font-size:10px;font-weight:700;color:var(--gray-mid);
+  text-transform:uppercase;letter-spacing:.4px;}
 
-.filter-sep{width:1px;height:60px;background:var(--border);align-self:center;}
+.filter-sep{width:1px;height:70px;background:var(--border);align-self:center;}
 .filter-actions{display:flex;gap:8px;align-self:flex-end;padding-bottom:2px;}
 .btn-apply{padding:7px 18px;background:var(--orange);color:white;border:none;
   border-radius:5px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:var(--font);}
@@ -109,15 +106,15 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
   <div class="filter-bar">
     <div class="filter-group">
       <div class="filter-label">Commodity</div>
-      <div class="cb-list" id="f-cultura"></div>
+      <select class="filter-select" id="f-cultura" multiple></select>
     </div>
     <div class="filter-group">
       <div class="filter-label">Crop Year</div>
-      <div class="cb-list" id="f-ano" style="min-width:110px;"></div>
+      <select class="filter-select" id="f-ano" multiple style="min-width:110px;"></select>
     </div>
     <div class="filter-group">
       <div class="filter-label">Geography</div>
-      <div class="cb-list" id="f-geo" style="min-width:170px;max-height:140px;"></div>
+      <select class="filter-select" id="f-geo" multiple style="min-width:180px;height:110px;"></select>
     </div>
     <div class="filter-sep"></div>
     <div class="filter-actions">
@@ -273,8 +270,8 @@ function pickBestSurvey(rows){
 /* ══ GEOGRAPHY HELPERS ══════════════════════════════════════════════ */
 // Returns selected geo items: array of {type:'brazil'|'region'|'state', value}
 function getSelectedGeo(){
-  return [...document.querySelectorAll('#f-geo input[type=checkbox]:checked')]
-    .map(cb => ({ type: cb.dataset.type, value: cb.dataset.value }));
+  return [...document.querySelectorAll('#f-geo option:checked')]
+    .map(o => { const [type, value] = o.value.split(':'); return {type, value}; });
 }
 
 // Expand geo selections to list of UFs
@@ -317,54 +314,41 @@ function buildFilters(){
   const anos     = [...new Set(ROWS.map(r => r.ano_agricola))].sort().reverse();
   const allUFs   = [...new Set(ROWS.map(r => r.uf))].sort();
 
-  // Commodity checkboxes
+  // Commodity select
   const elC = document.getElementById('f-cultura');
-  elC.innerHTML = culturas.map(c =>
-    `<label class="cb-item"><input type="checkbox" checked data-val="${esc(c)}"> ${esc(c)}</label>`
-  ).join('');
+  elC.innerHTML = culturas.map(c => `<option value="${esc(c)}" selected>${esc(c)}</option>`).join('');
 
-  // Crop year checkboxes — last 3 checked by default
+  // Crop year select — last 3 selected by default
   const elA = document.getElementById('f-ano');
-  elA.innerHTML = anos.map((a,i) =>
-    `<label class="cb-item"><input type="checkbox" ${i<3?'checked':''} data-val="${esc(a)}"> ${esc(a)}</label>`
-  ).join('');
+  elA.innerHTML = anos.map((a,i) => `<option value="${esc(a)}" ${i<3?'selected':''}>${esc(a)}</option>`).join('');
 
-  // Geography checkboxes: Brazil | Regions | States
+  // Geography select with optgroups: Brazil | Regions | States
   const elG = document.getElementById('f-geo');
   let geoHtml = '';
-
-  // Brazil
-  geoHtml += `<div class="cb-section">Brazil</div>`;
-  geoHtml += `<label class="cb-item"><input type="checkbox" checked data-type="brazil" data-value="Brazil"> Brazil (Total)</label>`;
-
-  // Regions
-  geoHtml += `<div class="cb-section">Regions</div>`;
+  geoHtml += `<optgroup label="── Brazil ──"><option value="brazil:Brazil" selected>Brazil (Total)</option></optgroup>`;
+  geoHtml += `<optgroup label="── Regions ──">`;
   Object.keys(REGIONS).forEach(reg => {
-    geoHtml += `<label class="cb-item"><input type="checkbox" data-type="region" data-value="${esc(reg)}"> ${esc(reg)}</label>`;
+    geoHtml += `<option value="region:${esc(reg)}">${esc(reg)}</option>`;
   });
-
-  // States — only those present in DB
-  geoHtml += `<div class="cb-section">States</div>`;
-  allUFs.forEach(uf => {
-    geoHtml += `<label class="cb-item"><input type="checkbox" data-type="state" data-value="${esc(uf)}"> ${esc(uf)}</label>`;
-  });
+  geoHtml += `</optgroup>`;
+  geoHtml += `<optgroup label="── States ──">`;
+  allUFs.forEach(uf => { geoHtml += `<option value="state:${esc(uf)}">${esc(uf)}</option>`; });
+  geoHtml += `</optgroup>`;
   elG.innerHTML = geoHtml;
 }
 
 function getChecked(listId){
-  return [...document.querySelectorAll(`#${listId} input[type=checkbox]:checked`)]
-    .map(cb => cb.dataset.val);
+  return [...document.querySelectorAll(`#${listId} option:checked`)].map(o => o.value);
 }
 
 function resetFilters(){
-  // All commodities checked
-  document.querySelectorAll('#f-cultura input').forEach(cb => cb.checked = true);
-  // Last 3 anos checked
-  const anos = document.querySelectorAll('#f-ano input');
-  anos.forEach((cb,i) => cb.checked = i < 3);
-  // Only Brazil checked
-  document.querySelectorAll('#f-geo input').forEach(cb => {
-    cb.checked = cb.dataset.type === 'brazil';
+  // All commodities selected
+  [...document.querySelectorAll('#f-cultura option')].forEach(o => o.selected = true);
+  // Last 3 anos selected
+  [...document.querySelectorAll('#f-ano option')].forEach((o,i) => o.selected = i < 3);
+  // Only Brazil (Total) selected
+  [...document.querySelectorAll('#f-geo option')].forEach(o => {
+    o.selected = o.value === 'brazil:Brazil';
   });
   applyFilters();
 }
