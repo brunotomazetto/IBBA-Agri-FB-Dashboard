@@ -33,6 +33,7 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .filter-select option:checked{background:var(--orange);color:white;}
 .filter-select optgroup{font-size:10px;font-weight:700;color:var(--gray-mid);
   text-transform:uppercase;letter-spacing:.4px;}
+.filter-select option.sel-all{color:var(--orange);font-weight:700;font-style:italic;}
 
 .filter-sep{width:1px;height:70px;background:var(--border);align-self:center;}
 .filter-actions{display:flex;gap:8px;align-self:flex-end;padding-bottom:2px;}
@@ -271,6 +272,7 @@ function pickBestSurvey(rows){
 // Returns selected geo items: array of {type:'brazil'|'region'|'state', value}
 function getSelectedGeo(){
   return [...document.querySelectorAll('#f-geo option:checked')]
+    .filter(o => !o.value.startsWith('all:'))
     .map(o => { const [type, value] = o.value.split(':'); return {type, value}; });
 }
 
@@ -322,19 +324,44 @@ function buildFilters(){
   const elA = document.getElementById('f-ano');
   elA.innerHTML = anos.map((a,i) => `<option value="${esc(a)}" ${i<3?'selected':''}>${esc(a)}</option>`).join('');
 
-  // Geography select with optgroups: Brazil | Regions | States
+  // Geography select with optgroups + "select all" triggers per group
   const elG = document.getElementById('f-geo');
   let geoHtml = '';
-  geoHtml += `<optgroup label="── Brazil ──"><option value="brazil:Brazil" selected>Brazil (Total)</option></optgroup>`;
-  geoHtml += `<optgroup label="── Regions ──">`;
+  geoHtml += `<optgroup label="────── Brazil ──────">`;
+  geoHtml += `<option value="all:brazil" class="sel-all">&#10003; Select Brazil</option>`;
+  geoHtml += `<option value="brazil:Brazil" selected>Brazil (Total)</option>`;
+  geoHtml += `</optgroup>`;
+  geoHtml += `<optgroup label="────── Regions ──────">`;
+  geoHtml += `<option value="all:regions" class="sel-all">&#10003; Select All Regions</option>`;
   Object.keys(REGIONS).forEach(reg => {
     geoHtml += `<option value="region:${esc(reg)}">${esc(reg)}</option>`;
   });
   geoHtml += `</optgroup>`;
-  geoHtml += `<optgroup label="── States ──">`;
+  geoHtml += `<optgroup label="────── States ──────">`;
+  geoHtml += `<option value="all:states" class="sel-all">&#10003; Select All States</option>`;
   allUFs.forEach(uf => { geoHtml += `<option value="state:${esc(uf)}">${esc(uf)}</option>`; });
   geoHtml += `</optgroup>`;
   elG.innerHTML = geoHtml;
+
+  // Click handler for "Select All" options
+  elG.addEventListener('mousedown', function(e){
+    if(!(e.target instanceof HTMLOptionElement)) return;
+    const val = e.target.value;
+    if(!val.startsWith('all:')) return;
+    e.preventDefault();
+    const group = val.split(':')[1];
+    const opts = [...elG.options];
+    if(group === 'brazil'){
+      opts.forEach(o => { if(o.value.startsWith('brazil:')) o.selected = !e.target.selected || true; });
+      e.target.selected = false;
+    } else if(group === 'regions'){
+      opts.forEach(o => { if(o.value.startsWith('region:')) o.selected = true; });
+      e.target.selected = false;
+    } else if(group === 'states'){
+      opts.forEach(o => { if(o.value.startsWith('state:')) o.selected = true; });
+      e.target.selected = false;
+    }
+  });
 }
 
 function getChecked(listId){
