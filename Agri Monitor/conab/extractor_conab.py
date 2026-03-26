@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 # ── Configurações ──────────────────────────────────────────────────────────────
-DB_PATH = "conab/conab.db"
+DB_PATH = "Agri Monitor/conab/conab.db"
 
 URLS = {
     "graos": "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/LevantamentoGraos.txt",
@@ -22,7 +22,7 @@ PRODUTOS_GRAOS = [
 ]
 
 # ── Inicializa banco ───────────────────────────────────────────────────────────
-os.makedirs("conab", exist_ok=True)
+os.makedirs("Agri Monitor/conab", exist_ok=True)
 
 conn = sqlite3.connect(DB_PATH)
 conn.execute("""
