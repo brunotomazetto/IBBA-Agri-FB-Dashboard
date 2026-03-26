@@ -1,0 +1,33 @@
+name: Carga Histórica CONAB (rodar 1x)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  historico:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configura Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instala dependências
+        run: pip install requests pandas openpyxl
+
+      - name: Roda carga histórica
+        run: python "Agri Monitor/conab/historico_conab.py"
+
+      - name: Commit do banco
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Agri Monitor/conab/conab.db"
+          git diff --cached --quiet || git commit -m "chore: carga histórica CONAB"
+          git push
