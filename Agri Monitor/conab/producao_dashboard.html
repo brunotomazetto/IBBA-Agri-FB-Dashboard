@@ -312,7 +312,10 @@ function buildFilters(){
 
 function fill(id, vals){
   const el = document.getElementById(id);
-  el.innerHTML = vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  el.innerHTML = vals.map(v => {
+    const label = (id === 'f-lev' && String(v) === '99') ? 'Safra Final' : esc(v);
+    return `<option value="${esc(v)}">${label}</option>`;
+  }).join('');
 }
 
 function getSelected(id){
