@@ -68,15 +68,23 @@ def parse_float(val):
         return None
 
 def normaliza_levantamento(val):
-    """Converte id_levantamento para inteiro 1-12. Descarta 99/099 (consolidado final)."""
+    """Converte id_levantamento para inteiro 1-12 ou 99 (safra final).
+    - 1 a 12  = levantamentos mensais
+    - 99/099  = levantamento final consolidado (salvo como 99)
+    - outros  = descartado
+    """
     try:
         v = int(str(val).strip())
-        return v if 1 <= v <= 12 else None
+        if 1 <= v <= 12:
+            return v
+        if v in (99, 99):
+            return 99
+        return None
     except (ValueError, TypeError):
         return None
 
 def upsert(conn, df):
-    # Normaliza levantamento para int 1-12 e descarta 99/099
+    # Normaliza levantamento: 1-12 mensais + 99 safra final
     df["id_levantamento"] = df["id_levantamento"].apply(normaliza_levantamento)
     df = df[df["id_levantamento"].notna()].copy()
     df["id_levantamento"] = df["id_levantamento"].astype(int)
