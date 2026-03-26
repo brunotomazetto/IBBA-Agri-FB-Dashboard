@@ -498,24 +498,40 @@ function getDashes(sector, subsector){
   return list;
 }
 
+/* ── Module registry: maps dashboard title → iframe src ─────────────────────
+   Add new modules here as they are built. The path is relative to index.html.
+   Example: 'Exportações': 'Agri Monitor/secex/exportacoes_dashboard.html'     */
+const DASH_MODULES = {
+  'Produção': 'Agri Monitor/conab/producao_dashboard.html',
+};
+
 function renderContent(){
   const area=document.getElementById('content-area');
   if(STATE.activeDash){
     const d=STATE.activeDash;
+    const moduleSrc=DASH_MODULES[d.title];
+    const bodyHtml=moduleSrc
+      ? `<iframe
+           src="${moduleSrc}"
+           style="width:100%;height:100%;border:none;display:block;"
+           allowfullscreen
+           title="${esc(d.title)}"
+         ></iframe>`
+      : `<div class="under-construction">
+           <div class="under-construction-icon">&#128679;</div>
+           <h2>Dashboard Under Construction</h2>
+           <p>The <strong>${esc(d.title)}</strong> dashboard is being prepared.<br>
+           The full interactive dashboard will be available in a future update.</p>
+           <div class="uc-badge">&#9203;&nbsp; Coming in a future release</div>
+         </div>`;
     area.innerHTML=`
-      <div style="display:flex;flex-direction:column;height:100%;">
+      <div style="display:flex;flex-direction:column;height:100%;min-height:0;">
         <div class="dash-view-header">
           <button class="btn-back" onclick="closeDashView()">&#8592; Back</button>
           <div class="dash-view-title">${esc(d.title)}</div>
         </div>
-        <div class="dash-view-body">
-          <div class="under-construction">
-            <div class="under-construction-icon">&#128679;</div>
-            <h2>Dashboard Under Construction</h2>
-            <p>The <strong>${esc(d.title)}</strong> dashboard is being prepared.<br>
-            The full interactive dashboard will be available in a future update.</p>
-            <div class="uc-badge">&#9203;&nbsp; Coming in a future release</div>
-          </div>
+        <div class="dash-view-body" style="flex:1;min-height:0;overflow:hidden;">
+          ${bodyHtml}
         </div>
       </div>`;
     return;
