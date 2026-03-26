@@ -227,21 +227,10 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 const DB_URL = 'https://raw.githubusercontent.com/brunotomazetto/IBBA-Agri-FB-Dashboard/main/Agri%20Monitor/conab/conab.db';
 
 const CULTURA_LABELS = {
-  'SOJA':                           'Soja',
-  'MILHO 1ª SAFRA':                 'Milho 1ª Safra',
-  'MILHO 1A SAFRA':                 'Milho 1ª Safra',
-  'MILHO 2ª SAFRA':                 'Milho 2ª Safra',
-  'MILHO 2A SAFRA':                 'Milho 2ª Safra',
-  'MILHO 3ª SAFRA':                 'Milho 3ª Safra',
-  'MILHO 3A SAFRA':                 'Milho 3ª Safra',
-  'MILHO TOTAL':                    'Milho Total',
-  'MILHO TOTAL (1ª+2ª SAFRAS)':    'Milho Total',
-  'MILHO TOTAL (1A+2A SAFRAS)':    'Milho Total',
-  'MILHO TOTAL (1ª+2ª+3ª SAFRAS)':'Milho Total',
-  'MILHO TOTAL (1A+2A+3A SAFRAS)':'Milho Total',
-  'ALGODAO EM PLUMA':               'Algodão em Pluma',
-  'ALGODAO TOTAL (PLUMA)':          'Algodão em Pluma',
-  'CANA-DE-ACUCAR':                 'Cana-de-Açúcar',
+  'SOJA':              'Soja',
+  'MILHO':             'Milho',
+  'ALGODAO EM PLUMA':  'Algodão em Pluma',
+  'CANA-DE-ACUCAR':    'Cana-de-Açúcar',
 };
 
 const PALETTE = ['#FF5500','#2980B9','#27AE60','#8E44AD','#F39C12','#16A085','#C0392B','#2C3E50'];
@@ -296,16 +285,15 @@ async function init(){
 function unique(arr){ return [...new Set(arr)].filter(x=>x!=null).sort(); }
 
 function buildFilters(){
-  // Normaliza id_levantamento: '1' → '001', '99' → '099' para consistência
-  ROWS.forEach(r => {
-    r.id_levantamento = r.id_levantamento.toString().trim().padStart(3, '0');
-  });
-
   const culturas  = unique(ROWS.map(r => CULTURA_LABELS[r.produto] || r.produto));
   const anos      = unique(ROWS.map(r => r.ano_agricola));
   const safras    = unique(ROWS.map(r => r.safra));
   const ufs       = unique(ROWS.map(r => r.uf));
-  const levs      = unique(ROWS.map(r => r.id_levantamento));
+  // Levantamentos são inteiros 1-12 — ordena numericamente
+  const levs      = [...new Set(ROWS.map(r => r.id_levantamento))]
+                      .filter(v => v != null)
+                      .sort((a,b) => Number(a) - Number(b))
+                      .map(String);
 
   fill('f-cultura', culturas);
   fill('f-ano',     anos.reverse()); // mais recente primeiro
@@ -318,9 +306,8 @@ function buildFilters(){
   selectLastN('f-ano', 3);
   selectAll('f-safra');
   selectAll('f-uf');
-  // Seleciona o levantamento mais alto disponível (último boletim ou consolidado)
-  const lastLev = levs[levs.length - 1];
-  selectVal('f-lev', lastLev);
+  // Seleciona o levantamento mais recente disponível
+  selectVal('f-lev', levs[levs.length - 1]);
 }
 
 function fill(id, vals){
@@ -346,14 +333,14 @@ function selectVal(id, val){
 }
 
 function resetFilters(){
-  ROWS.forEach(r => {
-    r.id_levantamento = r.id_levantamento.toString().trim().padStart(3, '0');
-  });
   selectAll('f-cultura');
   selectLastN('f-ano', 3);
   selectAll('f-safra');
   selectAll('f-uf');
-  const levs = unique(ROWS.map(r => r.id_levantamento));
+  const levs = [...new Set(ROWS.map(r => r.id_levantamento))]
+                 .filter(v => v != null)
+                 .sort((a,b) => Number(a) - Number(b))
+                 .map(String);
   selectVal('f-lev', levs[levs.length - 1]);
   applyFilters();
 }
