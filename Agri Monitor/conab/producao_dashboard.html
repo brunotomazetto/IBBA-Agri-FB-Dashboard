@@ -4,12 +4,10 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Production — CONAB</title>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<link  href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" rel="stylesheet"/>
-
+<link href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" rel="stylesheet"/>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -17,26 +15,30 @@
   --gray-light:#F4F4F4;--border:#E5E5E5;--white:#fff;--green:#27AE60;
   --font:'Segoe UI',Helvetica,Arial,sans-serif;--radius:8px;
 }
-/* Page scrolls normally — no fixed/overflow:hidden */
 html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-dark);}
 
 /* ── Filter bar ── */
-.filter-bar{
-  background:var(--white);border-bottom:1px solid var(--border);
-  padding:10px 20px;display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;
-}
-.filter-group{display:flex;flex-direction:column;gap:3px;}
+.filter-bar{background:var(--white);border-bottom:1px solid var(--border);
+  padding:12px 20px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;}
+.filter-group{display:flex;flex-direction:column;gap:4px;}
 .filter-label{font-size:10px;font-weight:700;color:var(--gray-mid);
-  text-transform:uppercase;letter-spacing:.5px;}
-.filter-select{
-  padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;
-  font-size:12px;font-family:var(--font);color:var(--gray-dark);
-  background:var(--white);cursor:pointer;outline:none;transition:border-color .15s;
-}
-.filter-select:focus{border-color:var(--orange);}
-.filter-select[multiple]{min-height:66px;padding:3px 6px;min-width:110px;}
-.filter-sep{width:1px;height:36px;background:var(--border);align-self:center;}
-.filter-actions{display:flex;gap:8px;align-self:flex-end;}
+  text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;}
+
+/* Checkbox list */
+.cb-list{display:flex;flex-direction:column;gap:2px;max-height:130px;overflow-y:auto;
+  border:1.5px solid var(--border);border-radius:5px;padding:5px 8px;background:var(--white);min-width:130px;}
+.cb-list::-webkit-scrollbar{width:4px;}
+.cb-list::-webkit-scrollbar-thumb{background:#ddd;border-radius:2px;}
+.cb-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-dark);
+  cursor:pointer;user-select:none;white-space:nowrap;padding:2px 0;}
+.cb-item input[type=checkbox]{accent-color:var(--orange);width:13px;height:13px;cursor:pointer;flex-shrink:0;}
+.cb-item:hover{color:var(--orange);}
+.cb-section{font-size:10px;font-weight:700;color:var(--gray-mid);text-transform:uppercase;
+  letter-spacing:.5px;padding:5px 0 2px;border-top:1px solid var(--border);margin-top:2px;}
+.cb-section:first-child{border-top:none;margin-top:0;padding-top:2px;}
+
+.filter-sep{width:1px;height:60px;background:var(--border);align-self:center;}
+.filter-actions{display:flex;gap:8px;align-self:flex-end;padding-bottom:2px;}
 .btn-apply{padding:7px 18px;background:var(--orange);color:white;border:none;
   border-radius:5px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:var(--font);}
 .btn-apply:hover{background:#e04a00;}
@@ -68,7 +70,14 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 /* ── Map ── */
 .map-card{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);
   padding:16px 18px;margin-bottom:14px;}
-#map{height:340px;border-radius:6px;overflow:hidden;}
+.map-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:8px;}
+.map-title{font-size:13px;font-weight:700;color:var(--black);}
+.map-metric-tabs{display:flex;gap:4px;}
+.map-tab{padding:4px 12px;border:1.5px solid var(--border);border-radius:4px;font-size:11.5px;
+  font-family:var(--font);cursor:pointer;background:var(--white);color:var(--gray-mid);transition:all .15s;}
+.map-tab.active{background:var(--orange);border-color:var(--orange);color:white;font-weight:700;}
+.map-tab:hover:not(.active){border-color:var(--orange);color:var(--orange);}
+#map{height:320px;border-radius:6px;overflow:hidden;}
 .map-legend{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;}
 .legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-mid);}
 .legend-swatch{width:14px;height:14px;border-radius:2px;flex-shrink:0;}
@@ -80,11 +89,9 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
   border-radius:50%;animation:spin .7s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .state-msg{font-size:13px;color:var(--gray-mid);}
-.error-box{background:white;border:1px solid #fcc;border-radius:8px;
-  padding:20px 28px;max-width:440px;text-align:center;}
+.error-box{background:white;border:1px solid #fcc;border-radius:8px;padding:20px 28px;max-width:440px;text-align:center;}
 .error-box h3{font-size:15px;font-weight:700;color:#c0392b;margin-bottom:8px;}
 .error-box p{font-size:12.5px;color:var(--gray-mid);line-height:1.6;}
-
 .source-note{font-size:11px;color:#bbb;text-align:right;margin-top:8px;}
 @media(max-width:720px){.kpi-row{grid-template-columns:1fr 1fr;}.chart-grid{grid-template-columns:1fr;}}
 </style>
@@ -102,19 +109,15 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
   <div class="filter-bar">
     <div class="filter-group">
       <div class="filter-label">Commodity</div>
-      <select class="filter-select" id="f-cultura" multiple size="3"></select>
+      <div class="cb-list" id="f-cultura"></div>
     </div>
     <div class="filter-group">
       <div class="filter-label">Crop Year</div>
-      <select class="filter-select" id="f-ano" multiple size="3"></select>
+      <div class="cb-list" id="f-ano" style="min-width:110px;"></div>
     </div>
     <div class="filter-group">
-      <div class="filter-label">State (UF)</div>
-      <select class="filter-select" id="f-uf" multiple size="3"></select>
-    </div>
-    <div class="filter-group">
-      <div class="filter-label">Survey</div>
-      <select class="filter-select" id="f-lev" multiple size="3"></select>
+      <div class="filter-label">Geography</div>
+      <div class="cb-list" id="f-geo" style="min-width:170px;max-height:140px;"></div>
     </div>
     <div class="filter-sep"></div>
     <div class="filter-actions">
@@ -167,9 +170,20 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 
     <!-- Map -->
     <div class="map-card">
-      <div class="chart-title">State Distribution</div>
-      <div class="chart-sub" id="map-sub">Planted area by state — apply filters to update</div>
-      <div id="map"></div>
+      <div class="map-header">
+        <div>
+          <div class="map-title">State Distribution</div>
+          <div class="chart-sub" id="map-sub" style="margin-bottom:0;">Apply filters to update</div>
+        </div>
+        <div class="map-metric-tabs">
+          <button class="map-tab active" onclick="setMapMetric('area',this)">Area</button>
+          <button class="map-tab"        onclick="setMapMetric('prod',this)">Yield</button>
+          <button class="map-tab"        onclick="setMapMetric('prodc',this)">Production</button>
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <div id="map"></div>
+      </div>
       <div class="map-legend" id="map-legend"></div>
     </div>
 
@@ -178,7 +192,7 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 </div>
 
 <script>
-/* ── CONFIG ── */
+/* ══ CONFIG ══════════════════════════════════════════════════════════ */
 const DB_URL = 'https://raw.githubusercontent.com/brunotomazetto/IBBA-Agri-FB-Dashboard/main/Agri%20Monitor/conab/conab.db';
 
 const CULTURA_LABELS = {
@@ -188,15 +202,29 @@ const CULTURA_LABELS = {
   'CANA-DE-ACUCAR':   'Sugarcane',
 };
 
-const PALETTE = ['#FF5500','#2980B9','#27AE60','#8E44AD','#F39C12','#16A085','#C0392B','#2C3E50',
-                 '#E67E22','#1ABC9C','#D35400','#3498DB','#2ECC71','#9B59B6'];
+// IBGE regions
+const REGIONS = {
+  'North':       ['AC','AM','AP','PA','RO','RR','TO'],
+  'Northeast':   ['AL','BA','CE','MA','PB','PE','PI','RN','SE'],
+  'Center-West': ['DF','GO','MS','MT'],
+  'Southeast':   ['ES','MG','RJ','SP'],
+  'South':       ['PR','RS','SC'],
+};
 
-/* ── STATE ── */
-let DB    = null;
-let ROWS  = [];
-let CHARTS = {};
+// Reverse lookup: UF → region name
+const UF_REGION = {};
+Object.entries(REGIONS).forEach(([reg, ufs]) => ufs.forEach(uf => UF_REGION[uf] = reg));
 
-/* ── INIT ── */
+const PALETTE = ['#FF5500','#2980B9','#27AE60','#8E44AD','#F39C12','#16A085',
+                 '#C0392B','#2C3E50','#E67E22','#1ABC9C','#D35400','#3498DB'];
+
+/* ══ STATE ══════════════════════════════════════════════════════════ */
+let DB = null, ROWS = [], CHARTS = {};
+let MAP_INSTANCE = null, MAP_MARKERS = [];
+let MAP_METRIC = 'area';   // 'area' | 'prod' | 'prodc'
+let LAST_FILTERED = [];    // cached filtered rows for map re-render
+
+/* ══ INIT ══════════════════════════════════════════════════════════ */
 async function init(){
   try {
     setMsg('Initializing sql.js...');
@@ -217,151 +245,227 @@ async function init(){
   } catch(e){ showError(e.message); }
 }
 
-/* ── FILTERS ── */
-function unique(arr){ return [...new Set(arr)].filter(x=>x!=null).sort(); }
+/* ══ SURVEY LOGIC ═══════════════════════════════════════════════════
+   For each (commodity, crop_year), pick:
+   - Survey 99 if available (final consolidated)
+   - Otherwise the highest survey number available
+   Returns a filtered array with one survey per (commodity, crop_year, uf).
+══════════════════════════════════════════════════════════════════════ */
+function pickBestSurvey(rows){
+  // Group by produto + ano_agricola + uf
+  const groups = {};
+  rows.forEach(r => {
+    const key = `${r.produto}|${r.ano_agricola}|${r.uf}`;
+    if(!groups[key]) groups[key] = [];
+    groups[key].push(r);
+  });
+  const result = [];
+  Object.values(groups).forEach(grp => {
+    const has99 = grp.find(r => Number(r.id_levantamento) === 99);
+    if(has99){ result.push(has99); return; }
+    // Pick highest levantamento number
+    grp.sort((a,b) => Number(b.id_levantamento) - Number(a.id_levantamento));
+    result.push(grp[0]);
+  });
+  return result;
+}
 
+/* ══ GEOGRAPHY HELPERS ══════════════════════════════════════════════ */
+// Returns selected geo items: array of {type:'brazil'|'region'|'state', value}
+function getSelectedGeo(){
+  return [...document.querySelectorAll('#f-geo input[type=checkbox]:checked')]
+    .map(cb => ({ type: cb.dataset.type, value: cb.dataset.value }));
+}
+
+// Expand geo selections to list of UFs
+function geoToUFs(geoSel, allUFs){
+  if(!geoSel.length) return allUFs; // nothing selected = all
+  const ufs = new Set();
+  geoSel.forEach(g => {
+    if(g.type === 'brazil') allUFs.forEach(u => ufs.add(u));
+    else if(g.type === 'region') (REGIONS[g.value]||[]).forEach(u => ufs.add(u));
+    else if(g.type === 'state') ufs.add(g.value);
+  });
+  return [...ufs];
+}
+
+// Returns series keys based on geo selection
+// brazil → one series per commodity
+// region → one series per (commodity × region)
+// state  → one series per (commodity × state)
+function buildSeriesKeys(geoSel, rows, allUFs){
+  const culturas = [...new Set(rows.map(r => CULTURA_LABELS[r.produto]||r.produto))].sort();
+  if(!geoSel.length){
+    // default: Brazil total
+    return culturas.map(c => ({ label: c, type:'brazil', value:'Brazil', culturas:[c] }));
+  }
+  const keys = [];
+  geoSel.forEach(g => {
+    culturas.forEach(cult => {
+      const label = g.type === 'brazil' ? cult
+        : g.type === 'region' ? `${cult} — ${g.value}`
+        : `${cult} — ${g.value}`;
+      keys.push({ label, type: g.type, value: g.value, cult });
+    });
+  });
+  return keys;
+}
+
+/* ══ FILTERS ════════════════════════════════════════════════════════ */
 function buildFilters(){
-  const culturas = unique(ROWS.map(r => CULTURA_LABELS[r.produto] || r.produto));
-  const anos     = unique(ROWS.map(r => r.ano_agricola));
-  const ufs      = unique(ROWS.map(r => r.uf));
-  const levs     = [...new Set(ROWS.map(r => r.id_levantamento))]
-                     .filter(v=>v!=null).sort((a,b)=>Number(a)-Number(b));
+  const culturas = [...new Set(ROWS.map(r => CULTURA_LABELS[r.produto]||r.produto))].sort();
+  const anos     = [...new Set(ROWS.map(r => r.ano_agricola))].sort().reverse();
+  const allUFs   = [...new Set(ROWS.map(r => r.uf))].sort();
 
-  fill('f-cultura', culturas, false);
-  fill('f-ano',     [...anos].reverse(), false);  // recent first
-  fill('f-uf',      ufs, false);
-  fill('f-lev',     levs, true);   // true = lev labels (Safra Final for 99)
+  // Commodity checkboxes
+  const elC = document.getElementById('f-cultura');
+  elC.innerHTML = culturas.map(c =>
+    `<label class="cb-item"><input type="checkbox" checked data-val="${esc(c)}"> ${esc(c)}</label>`
+  ).join('');
 
-  // Defaults: all commodities, last 3 years, Brazil total (no UF = all), latest survey
-  selectAll('f-cultura');
-  selectLastN('f-ano', 3);
-  selectNone('f-uf');   // no state = Brazil total mode
-  selectVal('f-lev', levs[levs.length-1]);
+  // Crop year checkboxes — last 3 checked by default
+  const elA = document.getElementById('f-ano');
+  elA.innerHTML = anos.map((a,i) =>
+    `<label class="cb-item"><input type="checkbox" ${i<3?'checked':''} data-val="${esc(a)}"> ${esc(a)}</label>`
+  ).join('');
+
+  // Geography checkboxes: Brazil | Regions | States
+  const elG = document.getElementById('f-geo');
+  let geoHtml = '';
+
+  // Brazil
+  geoHtml += `<div class="cb-section">Brazil</div>`;
+  geoHtml += `<label class="cb-item"><input type="checkbox" checked data-type="brazil" data-value="Brazil"> Brazil (Total)</label>`;
+
+  // Regions
+  geoHtml += `<div class="cb-section">Regions</div>`;
+  Object.keys(REGIONS).forEach(reg => {
+    geoHtml += `<label class="cb-item"><input type="checkbox" data-type="region" data-value="${esc(reg)}"> ${esc(reg)}</label>`;
+  });
+
+  // States — only those present in DB
+  geoHtml += `<div class="cb-section">States</div>`;
+  allUFs.forEach(uf => {
+    geoHtml += `<label class="cb-item"><input type="checkbox" data-type="state" data-value="${esc(uf)}"> ${esc(uf)}</label>`;
+  });
+  elG.innerHTML = geoHtml;
 }
 
-function fill(id, vals, isLev){
-  const el = document.getElementById(id);
-  el.innerHTML = vals.map(v => {
-    const label = isLev && String(v) === '99' ? 'Final (Season)' : esc(v);
-    return `<option value="${esc(v)}">${label}</option>`;
-  }).join('');
+function getChecked(listId){
+  return [...document.querySelectorAll(`#${listId} input[type=checkbox]:checked`)]
+    .map(cb => cb.dataset.val);
 }
-
-function getSelected(id){ return [...document.getElementById(id).selectedOptions].map(o=>o.value); }
-function selectAll(id){ [...document.getElementById(id).options].forEach(o=>o.selected=true); }
-function selectNone(id){ [...document.getElementById(id).options].forEach(o=>o.selected=false); }
-function selectLastN(id,n){ const opts=[...document.getElementById(id).options]; opts.forEach((o,i)=>o.selected=i<n); }
-function selectVal(id,val){ [...document.getElementById(id).options].forEach(o=>o.selected=String(o.value)===String(val)); }
 
 function resetFilters(){
-  selectAll('f-cultura');
-  selectLastN('f-ano', 3);
-  selectNone('f-uf');
-  const levs = [...new Set(ROWS.map(r=>r.id_levantamento))].filter(v=>v!=null).sort((a,b)=>Number(a)-Number(b));
-  selectVal('f-lev', levs[levs.length-1]);
+  // All commodities checked
+  document.querySelectorAll('#f-cultura input').forEach(cb => cb.checked = true);
+  // Last 3 anos checked
+  const anos = document.querySelectorAll('#f-ano input');
+  anos.forEach((cb,i) => cb.checked = i < 3);
+  // Only Brazil checked
+  document.querySelectorAll('#f-geo input').forEach(cb => {
+    cb.checked = cb.dataset.type === 'brazil';
+  });
   applyFilters();
 }
 
 function applyFilters(){
   if(!ROWS.length) return;
 
-  const selCultura = getSelected('f-cultura');
-  const selAno     = getSelected('f-ano');
-  const selUF      = getSelected('f-uf');
-  const selLev     = getSelected('f-lev').map(Number);
-  const brazilMode = selUF.length === 0; // no state selected = show Brazil total
+  const selCulturas = getChecked('f-cultura');
+  const selAnos     = getChecked('f-ano');
+  const geoSel      = getSelectedGeo();
+  const allUFs      = [...new Set(ROWS.map(r => r.uf))];
+  const activeUFs   = geoToUFs(geoSel, allUFs);
 
+  // Filter rows
   let filtered = ROWS.filter(r => {
-    const cultLabel = CULTURA_LABELS[r.produto] || r.produto;
-    return selCultura.includes(cultLabel)
-        && selAno.includes(r.ano_agricola)
-        && selLev.includes(Number(r.id_levantamento));
+    const cl = CULTURA_LABELS[r.produto]||r.produto;
+    return selCulturas.includes(cl)
+        && selAnos.includes(r.ano_agricola)
+        && activeUFs.includes(r.uf);
   });
 
-  if(!brazilMode){
-    filtered = filtered.filter(r => selUF.includes(r.uf));
-  }
+  // Pick best survey per (commodity, crop_year, uf)
+  filtered = pickBestSurvey(filtered);
+  LAST_FILTERED = filtered;
 
   renderKPIs(filtered);
-  renderCharts(filtered, brazilMode, selUF);
+  renderCharts(filtered, geoSel, allUFs);
   renderMap(filtered);
 }
 
-/* ── KPIs ── */
+/* ══ KPIs ═══════════════════════════════════════════════════════════ */
 function renderKPIs(rows){
-  const withArea = rows.filter(r=>r.area_plantada_mil_ha>0);
-  const totArea  = withArea.reduce((s,r)=>s+(r.area_plantada_mil_ha||0),0);
+  const w = rows.filter(r => r.area_plantada_mil_ha > 0);
+  const totArea  = w.reduce((s,r)=>s+(r.area_plantada_mil_ha||0),0);
   const totProdc = rows.reduce((s,r)=>s+(r.producao_mil_t||0),0);
-  const avgProd  = withArea.length
-    ? withArea.reduce((s,r)=>s+(r.produtividade_t_ha||0)*r.area_plantada_mil_ha,0)/totArea : 0;
-  document.getElementById('kpi-area').textContent  = fmt(totArea, 0);
-  document.getElementById('kpi-prod').textContent  = fmt(avgProd, 3);
-  document.getElementById('kpi-prodc').textContent = fmt(totProdc, 0);
+  const avgProd  = w.length ? w.reduce((s,r)=>s+(r.produtividade_t_ha||0)*r.area_plantada_mil_ha,0)/totArea : 0;
+  document.getElementById('kpi-area') .textContent = fmt(totArea,0);
+  document.getElementById('kpi-prod') .textContent = fmt(avgProd,3);
+  document.getElementById('kpi-prodc').textContent = fmt(totProdc,0);
 }
 
-/* ── CHARTS ── */
-function renderCharts(rows, brazilMode, selUF){
-  const anos = [...new Set(rows.map(r=>r.ano_agricola))].sort();
-  const datasets_area=[], datasets_prod=[], datasets_prodc=[];
+/* ══ CHARTS ══════════════════════════════════════════════════════════ */
+function renderCharts(rows, geoSel, allUFs){
+  const anos     = [...new Set(rows.map(r=>r.ano_agricola))].sort();
+  const culturas = [...new Set(rows.map(r=>CULTURA_LABELS[r.produto]||r.produto))].sort();
 
-  // Series key: in Brazil mode → commodity; in state mode → "commodity – UF"
-  let seriesKeys = [];
-  if(brazilMode){
-    seriesKeys = [...new Set(rows.map(r=>CULTURA_LABELS[r.produto]||r.produto))].sort();
-  } else {
-    const pairs = new Set();
-    rows.forEach(r => pairs.add(`${CULTURA_LABELS[r.produto]||r.produto}|${r.uf}`));
-    seriesKeys = [...pairs].sort();
-  }
+  // Determine series
+  const hasBrazil = !geoSel.length || geoSel.some(g=>g.type==='brazil');
+  const regions   = geoSel.filter(g=>g.type==='region').map(g=>g.value);
+  const states    = geoSel.filter(g=>g.type==='state').map(g=>g.value);
 
-  seriesKeys.forEach((key, ki) => {
-    const color = PALETTE[ki % PALETTE.length];
-    let seriesRows;
-    if(brazilMode){
-      seriesRows = rows.filter(r=>(CULTURA_LABELS[r.produto]||r.produto)===key);
-    } else {
-      const [cult, uf] = key.split('|');
-      seriesRows = rows.filter(r=>(CULTURA_LABELS[r.produto]||r.produto)===cult && r.uf===uf);
+  const series = []; // { label, rows }
+  culturas.forEach(cult => {
+    const cultRows = rows.filter(r=>(CULTURA_LABELS[r.produto]||r.produto)===cult);
+
+    if(hasBrazil || !geoSel.length){
+      series.push({ label: cult, rows: cultRows });
     }
-    const label = brazilMode ? key : key.replace('|',' — ');
-
-    const dArea = anos.map(a=>{
-      const sub=seriesRows.filter(r=>r.ano_agricola===a&&r.area_plantada_mil_ha>0);
-      return sub.length ? sub.reduce((s,r)=>s+(r.area_plantada_mil_ha||0),0) : null;
+    regions.forEach(reg => {
+      const regUFs = REGIONS[reg]||[];
+      series.push({ label:`${cult} — ${reg}`, rows: cultRows.filter(r=>regUFs.includes(r.uf)) });
     });
-    const dProdc = anos.map(a=>{
-      const sub=seriesRows.filter(r=>r.ano_agricola===a);
+    states.forEach(st => {
+      series.push({ label:`${cult} — ${st}`, rows: cultRows.filter(r=>r.uf===st) });
+    });
+  });
+
+  const ds_area=[], ds_prod=[], ds_prodc=[];
+  series.forEach(({label, rows:sr}, ki) => {
+    const color = PALETTE[ki % PALETTE.length];
+    const dArea = anos.map(a => {
+      const sub=sr.filter(r=>r.ano_agricola===a&&r.area_plantada_mil_ha>0);
+      return sub.length ? sub.reduce((s,r)=>s+r.area_plantada_mil_ha,0) : null;
+    });
+    const dProdc = anos.map(a => {
+      const sub=sr.filter(r=>r.ano_agricola===a);
       return sub.length ? sub.reduce((s,r)=>s+(r.producao_mil_t||0),0) : null;
     });
-    const dProd = anos.map(a=>{
-      const sub=seriesRows.filter(r=>r.ano_agricola===a&&r.area_plantada_mil_ha>0);
+    const dProd = anos.map(a => {
+      const sub=sr.filter(r=>r.ano_agricola===a&&r.area_plantada_mil_ha>0);
       if(!sub.length) return null;
       const totA=sub.reduce((s,r)=>s+r.area_plantada_mil_ha,0);
       return sub.reduce((s,r)=>s+(r.produtividade_t_ha||0)*r.area_plantada_mil_ha,0)/totA;
     });
-
     const base={label,borderColor:color,backgroundColor:color+'22',
       borderWidth:2,pointRadius:3,pointHoverRadius:5,tension:.35,fill:false,spanGaps:true};
-    datasets_area .push({...base,data:dArea});
-    datasets_prod .push({...base,data:dProd});
-    datasets_prodc.push({...base,data:dProdc});
+    ds_area .push({...base,data:dArea});
+    ds_prod .push({...base,data:dProd});
+    ds_prodc.push({...base,data:dProdc});
   });
 
-  const modeNote = brazilMode ? 'Brazil total' : `by state (${selUF.join(', ')})`;
-  document.getElementById('sub-area') .textContent = `Historical trend — thousand hectares (${modeNote})`;
-  document.getElementById('sub-prod') .textContent = `Historical trend — t/ha (${modeNote})`;
-  document.getElementById('sub-prodc').textContent = `Historical trend — thousand tonnes (${modeNote})`;
-
-  buildLine('ch-area',  anos, datasets_area,  'k ha');
-  buildLine('ch-prod',  anos, datasets_prod,  't/ha');
-  buildLine('ch-prodc', anos, datasets_prodc, 'k t');
+  buildLine('ch-area',  anos, ds_area,  'k ha');
+  buildLine('ch-prod',  anos, ds_prod,  't/ha');
+  buildLine('ch-prodc', anos, ds_prodc, 'k t');
 }
 
 function buildLine(id, labels, datasets, unit){
   if(CHARTS[id]) CHARTS[id].destroy();
   const ctx = document.getElementById(id).getContext('2d');
-  CHARTS[id] = new Chart(ctx, {
-    type:'line', data:{labels, datasets},
+  CHARTS[id] = new Chart(ctx,{
+    type:'line', data:{labels,datasets},
     options:{
       responsive:true, maintainAspectRatio:false,
       interaction:{mode:'index',intersect:false},
@@ -377,7 +481,7 @@ function buildLine(id, labels, datasets, unit){
   });
 }
 
-/* ── MAP ── */
+/* ══ MAP ══════════════════════════════════════════════════════════════ */
 const UF_COORDS = {
   AC:[-9.02,-70.81],AL:[-9.57,-36.78],AM:[-3.47,-65.10],AP:[1.41,-51.77],
   BA:[-12.96,-41.70],CE:[-5.50,-39.32],DF:[-15.78,-47.93],ES:[-19.19,-40.34],
@@ -387,82 +491,99 @@ const UF_COORDS = {
   RO:[-10.83,-63.34],RR:[1.99,-61.33],RS:[-30.03,-53.20],SC:[-27.45,-50.94],
   SE:[-10.57,-37.45],SP:[-22.25,-48.59],TO:[-10.25,-48.25],
 };
-let MAP_INSTANCE=null, MAP_MARKERS=[];
+
+function setMapMetric(metric, btn){
+  MAP_METRIC = metric;
+  document.querySelectorAll('.map-tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  renderMap(LAST_FILTERED);
+}
 
 function renderMap(rows){
-  const anos=[...new Set(rows.map(r=>r.ano_agricola))].sort();
-  const lastAno=anos[anos.length-1];
-  const sub=rows.filter(r=>r.ano_agricola===lastAno&&r.area_plantada_mil_ha>0);
-  const byUF={};
-  sub.forEach(r=>{ byUF[r.uf]=(byUF[r.uf]||0)+r.area_plantada_mil_ha; });
-  const maxV=Math.max(1,...Object.values(byUF));
+  const anos = [...new Set(rows.map(r=>r.ano_agricola))].sort();
+  const lastAno = anos[anos.length-1];
+  const sub = rows.filter(r=>r.ano_agricola===lastAno);
+
+  const byUF = {};
+  sub.forEach(r => {
+    if(!byUF[r.uf]) byUF[r.uf] = {area:0, prodc:0, prodW:0, areaW:0};
+    byUF[r.uf].area  += r.area_plantada_mil_ha||0;
+    byUF[r.uf].prodc += r.producao_mil_t||0;
+    byUF[r.uf].prodW += (r.produtividade_t_ha||0)*(r.area_plantada_mil_ha||0);
+    byUF[r.uf].areaW += r.area_plantada_mil_ha||0;
+  });
+
+  // Value per UF based on selected metric
+  const valOf = d => {
+    if(MAP_METRIC==='area')  return d.area;
+    if(MAP_METRIC==='prodc') return d.prodc;
+    if(MAP_METRIC==='prod')  return d.areaW>0 ? d.prodW/d.areaW : 0;
+    return 0;
+  };
+  const vals = Object.values(byUF).map(valOf);
+  const maxV = Math.max(1, ...vals);
+
+  const metricLabels = {area:'Area (k ha)', prod:'Yield (t/ha)', prodc:'Production (k t)'};
+  const metricFmt    = {area:0, prod:3, prodc:0};
 
   if(!MAP_INSTANCE){
-    MAP_INSTANCE=L.map('map',{zoomControl:true,scrollWheelZoom:false}).setView([-14,-52],4);
+    MAP_INSTANCE = L.map('map',{zoomControl:true,scrollWheelZoom:false}).setView([-14,-52],4);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
       {attribution:'© OpenStreetMap © Carto',maxZoom:18}).addTo(MAP_INSTANCE);
   }
   MAP_MARKERS.forEach(m=>MAP_INSTANCE.removeLayer(m));
   MAP_MARKERS=[];
 
-  Object.entries(byUF).forEach(([uf,val])=>{
+  Object.entries(byUF).forEach(([uf,d])=>{
     const coords=UF_COORDS[uf]; if(!coords) return;
+    const val=valOf(d);
+    if(val<=0) return;
     const ratio=val/maxV;
     const circle=L.circleMarker(coords,{
       radius:10+ratio*30, fillColor:interpColor(ratio),
-      color:'white',weight:1.5,fillOpacity:.82,opacity:1
-    }).bindTooltip(`<strong>${uf}</strong><br>Area: ${fmt(val,0)} k ha`,{sticky:true});
+      color:'white',weight:1.5,fillOpacity:.82
+    }).bindTooltip(`<strong>${uf}</strong><br>${metricLabels[MAP_METRIC]}: ${fmt(val,metricFmt[MAP_METRIC])}`,{sticky:true});
     circle.addTo(MAP_INSTANCE); MAP_MARKERS.push(circle);
   });
 
-  document.getElementById('map-sub').textContent=`Planted area by state — ${lastAno} (thousand hectares)`;
-  document.getElementById('map-legend').innerHTML=
+  document.getElementById('map-sub').textContent =
+    `${metricLabels[MAP_METRIC]} by state — ${lastAno}`;
+  document.getElementById('map-legend').innerHTML =
     [['#ffe0cc','Low'],['#ff8040','Medium'],['#FF5500','High']].map(([c,l])=>
       `<div class="legend-item"><div class="legend-swatch" style="background:${c}"></div>${l}</div>`
-    ).join('')+`<span style="font-size:11px;color:#bbb;margin-left:8px;">Relative planted area — ${lastAno}</span>`;
+    ).join('') + `<span style="font-size:11px;color:#bbb;margin-left:8px;">Relative ${metricLabels[MAP_METRIC]} — ${lastAno}</span>`;
 
   setTimeout(()=>MAP_INSTANCE.invalidateSize(),100);
 }
+
 function interpColor(t){ return `rgb(255,${Math.round(224-t*139)},${Math.round(204-t*204)})`; }
 
-/* ── EXPORT ── */
+/* ══ EXPORT ══════════════════════════════════════════════════════════ */
 function downloadCsv(){
-  if(!ROWS.length){ alert('No data loaded.'); return; }
-  const selCultura=getSelected('f-cultura');
-  const selAno=getSelected('f-ano');
-  const selUF=getSelected('f-uf');
-  const selLev=getSelected('f-lev').map(Number);
-  const brazilMode=selUF.length===0;
-
-  let filtered=ROWS.filter(r=>{
-    const cl=CULTURA_LABELS[r.produto]||r.produto;
-    return selCultura.includes(cl)&&selAno.includes(r.ano_agricola)&&selLev.includes(Number(r.id_levantamento));
-  });
-  if(!brazilMode) filtered=filtered.filter(r=>selUF.includes(r.uf));
-
-  const headers=['Crop Year','State (UF)','Commodity','Survey','Planted Area (k ha)','Production (k t)','Yield (t/ha)'];
-  const dataRows=filtered.map(r=>[
-    r.ano_agricola, r.uf,
+  if(!LAST_FILTERED.length){ alert('No data loaded.'); return; }
+  const headers=['Crop Year','State','Region','Commodity','Survey','Planted Area (k ha)','Production (k t)','Yield (t/ha)'];
+  const dataRows=LAST_FILTERED.map(r=>[
+    r.ano_agricola, r.uf, UF_REGION[r.uf]||'',
     CULTURA_LABELS[r.produto]||r.produto,
-    r.id_levantamento===99?'Final (Season)':r.id_levantamento,
+    Number(r.id_levantamento)===99?'Final':r.id_levantamento,
     r.area_plantada_mil_ha, r.producao_mil_t, r.produtividade_t_ha
   ]);
-  const bom='\uFEFF';
-  const csv=bom+[headers,...dataRows].map(r=>r.map(v=>v==null?'':String(v).replace(/;/g,',')).join(';')).join('\n');
+  const csv='\uFEFF'+[headers,...dataRows].map(r=>r.map(v=>v==null?'':String(v).replace(/;/g,',')).join(';')).join('\n');
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));
   a.download=`conab_production_${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
 }
 
-/* ── UTILS ── */
+/* ══ UTILS ══════════════════════════════════════════════════════════ */
 function fmt(v,dec){ if(v==null||isNaN(v)) return '—'; return Number(v).toLocaleString('en-US',{minimumFractionDigits:dec,maximumFractionDigits:dec}); }
 function esc(s){ return s==null?'':String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function setMsg(m){ document.getElementById('state-msg').textContent=m; }
 function hideOverlay(){ document.getElementById('state-overlay').style.display='none'; document.getElementById('app').style.display='block'; }
 function showError(msg){
-  document.getElementById('state-overlay').innerHTML=`<div class="error-box"><h3>Error loading data</h3>
-    <p>${esc(msg)}</p><p style="margin-top:10px;font-size:11px;">Check that <code>conab.db</code> exists at
+  document.getElementById('state-overlay').innerHTML=`<div class="error-box">
+    <h3>Error loading data</h3><p>${esc(msg)}</p>
+    <p style="margin-top:10px;font-size:11px;">Check that <code>conab.db</code> exists at
     <code>Agri Monitor/conab/conab.db</code> in the public repository.</p></div>`;
 }
 
