@@ -33,7 +33,11 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .filter-select option:checked{background:var(--orange);color:white;}
 .filter-select optgroup{font-size:10px;font-weight:700;color:var(--gray-mid);
   text-transform:uppercase;letter-spacing:.4px;}
-.filter-select option.sel-all{color:var(--orange);font-weight:700;font-style:italic;}
+.geo-btns{display:flex;gap:4px;margin-bottom:5px;flex-wrap:wrap;}
+.geo-btn{padding:3px 10px;border:1.5px solid var(--border);border-radius:4px;font-size:11px;
+  background:var(--white);cursor:pointer;color:var(--gray-mid);font-family:var(--font);
+  transition:border-color .15s,color .15s;}
+.geo-btn:hover{border-color:var(--orange);color:var(--orange);}
 
 .filter-sep{width:1px;height:70px;background:var(--border);align-self:center;}
 .filter-actions{display:flex;gap:8px;align-self:flex-end;padding-bottom:2px;}
@@ -115,6 +119,12 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
     </div>
     <div class="filter-group">
       <div class="filter-label">Geography</div>
+      <div class="geo-btns">
+        <button class="geo-btn" onclick="selectGeoGroup('brazil')">Brazil</button>
+        <button class="geo-btn" onclick="selectGeoGroup('regions')">All Regions</button>
+        <button class="geo-btn" onclick="selectGeoGroup('states')">All States</button>
+        <button class="geo-btn" onclick="selectGeoGroup('none')">Clear</button>
+      </div>
       <select class="filter-select" id="f-geo" multiple style="min-width:180px;height:110px;"></select>
     </div>
     <div class="filter-sep"></div>
@@ -270,9 +280,21 @@ function pickBestSurvey(rows){
 
 /* ══ GEOGRAPHY HELPERS ══════════════════════════════════════════════ */
 // Returns selected geo items: array of {type:'brazil'|'region'|'state', value}
+function selectGeoGroup(group){
+  const opts = [...document.getElementById('f-geo').options];
+  if(group === 'none'){
+    opts.forEach(o => o.selected = false);
+  } else if(group === 'brazil'){
+    opts.forEach(o => { if(o.value.startsWith('brazil:')) o.selected = true; });
+  } else if(group === 'regions'){
+    opts.forEach(o => { if(o.value.startsWith('region:')) o.selected = true; });
+  } else if(group === 'states'){
+    opts.forEach(o => { if(o.value.startsWith('state:')) o.selected = true; });
+  }
+}
+
 function getSelectedGeo(){
   return [...document.querySelectorAll('#f-geo option:checked')]
-    .filter(o => !o.value.startsWith('all:'))
     .map(o => { const [type, value] = o.value.split(':'); return {type, value}; });
 }
 
@@ -327,38 +349,20 @@ function buildFilters(){
   // Geography select with optgroups + "select all" triggers per group
   const elG = document.getElementById('f-geo');
   let geoHtml = '';
-  geoHtml += `<optgroup label="────── Brazil ──────">`;
-  geoHtml += `<option value="all:brazil" class="sel-all">&#10003; Select Brazil</option>`;
+  geoHtml += `<optgroup label="── Brazil ──">`;
   geoHtml += `<option value="brazil:Brazil" selected>Brazil (Total)</option>`;
   geoHtml += `</optgroup>`;
-  geoHtml += `<optgroup label="────── Regions ──────">`;
-  geoHtml += `<option value="all:regions" class="sel-all">&#10003; Select All Regions</option>`;
+  geoHtml += `<optgroup label="── Regions ──">`;
   Object.keys(REGIONS).forEach(reg => {
     geoHtml += `<option value="region:${esc(reg)}">${esc(reg)}</option>`;
   });
   geoHtml += `</optgroup>`;
-  geoHtml += `<optgroup label="────── States ──────">`;
-  geoHtml += `<option value="all:states" class="sel-all">&#10003; Select All States</option>`;
+  geoHtml += `<optgroup label="── States ──">`;
   allUFs.forEach(uf => { geoHtml += `<option value="state:${esc(uf)}">${esc(uf)}</option>`; });
   geoHtml += `</optgroup>`;
   elG.innerHTML = geoHtml;
 
-  // Change handler: when a "Select All" option is chosen, expand to full group
-  elG.addEventListener('change', function(){
-    const allOpts = [...elG.options];
-    // Check each "all:" option
-    allOpts.filter(o => o.value.startsWith('all:') && o.selected).forEach(trigger => {
-      const group = trigger.value.split(':')[1];
-      trigger.selected = false; // deselect the trigger itself
-      if(group === 'brazil'){
-        allOpts.forEach(o => { if(o.value.startsWith('brazil:')) o.selected = true; });
-      } else if(group === 'regions'){
-        allOpts.forEach(o => { if(o.value.startsWith('region:')) o.selected = true; });
-      } else if(group === 'states'){
-        allOpts.forEach(o => { if(o.value.startsWith('state:')) o.selected = true; });
-      }
-    });
-  });
+
 }
 
 function getChecked(listId){
