@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 # ── Configurações ──────────────────────────────────────────────────────────────
-DB_PATH = "conab/conab.db"
+DB_PATH = "Agri Monitor/conab/conab.db"
 
 URLS = {
     "graos": "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/LevantamentoGraos.txt",
