@@ -144,44 +144,50 @@ except Exception as e:
     print(f"  ERRO ao processar grãos: {e}")
     raise
 
-# ── Cana-de-Açúcar ─────────────────────────────────────────────────────────────
+# ── Cana-de-Acucar ─────────────────────────────────────────────────────────────
+# Estrutura real do arquivo (descoberta via DEBUG):
+# ano_agricola | dsc_safra_previsao | uf | produto | id_produto |
+# dsc_levantamento | id_levantamento | area_plantada_mil_ha | producao_mil_t |
+# producao_acucar_mil_t | producao_etanol_anidro_mil_l |
+# producao_etanol_hidratado_mil_l | producao_etanol_total_mil_l | produtcao_atr_kg_t
+# Nao tem coluna de produtividade — salva produtcao_atr_kg_t no campo produtividade_t_ha
 total_cana = 0
 try:
     df_cana = baixa_txt(URLS["cana"])
 
     print(f"\n[DEBUG] Colunas do arquivo de cana: {list(df_cana.columns)}")
 
-    # Cana pode ter nome de coluna ligeiramente diferente — adapta
-    col_area  = next((c for c in df_cana.columns if "AREA"          in c.upper()), None)
-    col_prod  = next((c for c in df_cana.columns if "PRODUCAO"      in c.upper()), None)
-    col_produ = next((c for c in df_cana.columns if "PRODUTIVIDADE" in c.upper()), None)
-    col_uf    = next((c for c in df_cana.columns if c.upper() in ("UF", "ESTADO")),  None)
-    col_ano   = next((c for c in df_cana.columns if "ANO"           in c.upper()), None)
-    col_safra = next((c for c in df_cana.columns if "SAFRA"         in c.upper()), None)
-    col_lev   = next((c for c in df_cana.columns if "LEVANTAMENTO"  in c.upper() and "DSC" not in c.upper()), None)
-    col_dlev  = next((c for c in df_cana.columns if "DSC" in c.upper() and "LEV" in c.upper()), None)
-    col_idp   = next((c for c in df_cana.columns if "ID_PRODUTO"    in c.upper()), None)
+    col_area  = next((c for c in df_cana.columns if "AREA"         in c.upper()), None)
+    col_prod  = next((c for c in df_cana.columns if c == "producao_mil_t"), None)
+    col_atr   = next((c for c in df_cana.columns if "ATR"          in c.upper()), None)
+    col_uf    = next((c for c in df_cana.columns if c.upper() == "UF"), None)
+    col_ano   = next((c for c in df_cana.columns if "ANO"          in c.upper()), None)
+    col_safra = next((c for c in df_cana.columns if "SAFRA"        in c.upper()), None)
+    col_lev   = next((c for c in df_cana.columns if c == "id_levantamento"), None)
+    col_dlev  = next((c for c in df_cana.columns if c == "dsc_levantamento"), None)
+    col_idp   = next((c for c in df_cana.columns if c == "id_produto"), None)
 
-    # Valida colunas obrigatorias antes de continuar
+    # Valida colunas obrigatorias
     faltando = [nome for nome, c in [("area", col_area), ("producao", col_prod),
-                                     ("produtividade", col_produ), ("uf", col_uf),
-                                     ("ano", col_ano), ("safra", col_safra),
-                                     ("levantamento", col_lev)] if c is None]
+                                     ("uf", col_uf), ("ano", col_ano),
+                                     ("safra", col_safra), ("levantamento", col_lev)]
+                if c is None]
     if faltando:
         raise ValueError(f"Colunas nao encontradas no arquivo de cana: {faltando}. "
                          f"Colunas disponiveis: {list(df_cana.columns)}")
 
-    df_cana["ano_agricola"]          = df_cana[col_ano]
-    df_cana["safra"]                 = df_cana[col_safra]
-    df_cana["uf"]                    = df_cana[col_uf]
-    df_cana["produto"]               = "CANA-DE-ACUCAR"
-    df_cana["id_produto"]            = df_cana[col_idp] if col_idp else ""
-    df_cana["id_levantamento"]       = df_cana[col_lev]
-    df_cana["dsc_levantamento"]      = df_cana[col_dlev] if col_dlev else ""
-    df_cana["area_plantada_mil_ha"]  = df_cana[col_area].apply(parse_float)
-    df_cana["producao_mil_t"]        = df_cana[col_prod].apply(parse_float)
-    df_cana["produtividade_t_ha"]    = df_cana[col_produ].apply(parse_float)
-    df_cana["updated_at"]            = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    df_cana["ano_agricola"]         = df_cana[col_ano]
+    df_cana["safra"]                = df_cana[col_safra]
+    df_cana["uf"]                   = df_cana[col_uf]
+    df_cana["produto"]              = "CANA-DE-ACUCAR"
+    df_cana["id_produto"]           = df_cana[col_idp] if col_idp else ""
+    df_cana["id_levantamento"]      = df_cana[col_lev]
+    df_cana["dsc_levantamento"]     = df_cana[col_dlev] if col_dlev else ""
+    df_cana["area_plantada_mil_ha"] = df_cana[col_area].apply(parse_float)
+    df_cana["producao_mil_t"]       = df_cana[col_prod].apply(parse_float)
+    # ATR (kg acucar / t cana) salvo no campo produtividade como melhor proxy disponivel
+    df_cana["produtividade_t_ha"]   = df_cana[col_atr].apply(parse_float) if col_atr else None
+    df_cana["updated_at"]           = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     df_final_c = df_cana[[
         "ano_agricola", "safra", "uf", "produto", "id_produto",
