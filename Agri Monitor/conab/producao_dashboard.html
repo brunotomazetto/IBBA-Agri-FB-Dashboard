@@ -343,24 +343,21 @@ function buildFilters(){
   geoHtml += `</optgroup>`;
   elG.innerHTML = geoHtml;
 
-  // Click handler for "Select All" options
-  elG.addEventListener('mousedown', function(e){
-    if(!(e.target instanceof HTMLOptionElement)) return;
-    const val = e.target.value;
-    if(!val.startsWith('all:')) return;
-    e.preventDefault();
-    const group = val.split(':')[1];
-    const opts = [...elG.options];
-    if(group === 'brazil'){
-      opts.forEach(o => { if(o.value.startsWith('brazil:')) o.selected = !e.target.selected || true; });
-      e.target.selected = false;
-    } else if(group === 'regions'){
-      opts.forEach(o => { if(o.value.startsWith('region:')) o.selected = true; });
-      e.target.selected = false;
-    } else if(group === 'states'){
-      opts.forEach(o => { if(o.value.startsWith('state:')) o.selected = true; });
-      e.target.selected = false;
-    }
+  // Change handler: when a "Select All" option is chosen, expand to full group
+  elG.addEventListener('change', function(){
+    const allOpts = [...elG.options];
+    // Check each "all:" option
+    allOpts.filter(o => o.value.startsWith('all:') && o.selected).forEach(trigger => {
+      const group = trigger.value.split(':')[1];
+      trigger.selected = false; // deselect the trigger itself
+      if(group === 'brazil'){
+        allOpts.forEach(o => { if(o.value.startsWith('brazil:')) o.selected = true; });
+      } else if(group === 'regions'){
+        allOpts.forEach(o => { if(o.value.startsWith('region:')) o.selected = true; });
+      } else if(group === 'states'){
+        allOpts.forEach(o => { if(o.value.startsWith('state:')) o.selected = true; });
+      }
+    });
   });
 }
 
