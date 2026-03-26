@@ -26,7 +26,7 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 # ── Configurações ──────────────────────────────────────────────────────────────
-DB_PATH = "Agri Monitor/conab/conab.db"
+DB_PATH    = "conab/conab.db"
 EXCEL_PATH = "conab/conab_desde_2024.xlsx"
 
 URLS = {
@@ -36,16 +36,11 @@ URLS = {
 
 # Nomes exatos da coluna 'produto' no arquivo da CONAB
 # O [DEBUG] no log vai imprimir todos os nomes disponíveis — ajuste aqui se necessário
+# Nomes exatos como aparecem na coluna 'produto' do arquivo CONAB.
 PRODUTOS_GRAOS = [
     "SOJA",
-    "MILHO 1ª SAFRA",   "MILHO 1A SAFRA",
-    "MILHO 2ª SAFRA",   "MILHO 2A SAFRA",
-    "MILHO 3ª SAFRA",   "MILHO 3A SAFRA",
-    "MILHO TOTAL",
-    "MILHO TOTAL (1ª+2ª SAFRAS)",    "MILHO TOTAL (1A+2A SAFRAS)",
-    "MILHO TOTAL (1ª+2ª+3ª SAFRAS)", "MILHO TOTAL (1A+2A+3A SAFRAS)",
+    "MILHO",
     "ALGODAO EM PLUMA",
-    "ALGODAO TOTAL (PLUMA)",
 ]
 
 # Ano agrícola de corte para o Excel (banco guarda tudo)
@@ -62,7 +57,7 @@ conn.execute("""
         uf                 TEXT,
         produto            TEXT,
         id_produto         TEXT,
-        id_levantamento    TEXT,
+        id_levantamento    INTEGER,
         dsc_levantamento   TEXT,
         area_plantada_mil_ha    REAL,
         producao_mil_t          REAL,
@@ -97,7 +92,21 @@ def parse_float(val):
     except (ValueError, AttributeError):
         return None
 
+def normaliza_levantamento(val):
+    """Converte id_levantamento para inteiro 1-12. Descarta 99/099 (consolidado final)."""
+    try:
+        v = int(str(val).strip())
+        return v if 1 <= v <= 12 else None
+    except (ValueError, TypeError):
+        return None
+
 def upsert(conn, df):
+    # Normaliza levantamento para int 1-12 e descarta 99/099
+    df["id_levantamento"] = df["id_levantamento"].apply(normaliza_levantamento)
+    df = df[df["id_levantamento"].notna()].copy()
+    df["id_levantamento"] = df["id_levantamento"].astype(int)
+    if df.empty:
+        return
     df.to_sql("safra", conn, if_exists="append", index=False, method="multi")
     conn.execute("""
         DELETE FROM safra WHERE rowid NOT IN (
