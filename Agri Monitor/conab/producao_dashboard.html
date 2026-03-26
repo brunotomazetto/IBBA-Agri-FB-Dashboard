@@ -296,6 +296,11 @@ async function init(){
 function unique(arr){ return [...new Set(arr)].filter(x=>x!=null).sort(); }
 
 function buildFilters(){
+  // Normaliza id_levantamento: '1' → '001', '99' → '099' para consistência
+  ROWS.forEach(r => {
+    r.id_levantamento = r.id_levantamento.toString().trim().padStart(3, '0');
+  });
+
   const culturas  = unique(ROWS.map(r => CULTURA_LABELS[r.produto] || r.produto));
   const anos      = unique(ROWS.map(r => r.ano_agricola));
   const safras    = unique(ROWS.map(r => r.safra));
@@ -308,12 +313,14 @@ function buildFilters(){
   fill('f-uf',      ufs);
   fill('f-lev',     levs);
 
-  // Default: all culturas, last 3 anos, levantamento 099
+  // Default: todas culturas, últimos 3 anos, último levantamento disponível, todas safras e UFs
   selectAll('f-cultura');
   selectLastN('f-ano', 3);
-  selectVal('f-lev', '099');
   selectAll('f-safra');
   selectAll('f-uf');
+  // Seleciona o levantamento mais alto disponível (último boletim ou consolidado)
+  const lastLev = levs[levs.length - 1];
+  selectVal('f-lev', lastLev);
 }
 
 function fill(id, vals){
@@ -339,11 +346,15 @@ function selectVal(id, val){
 }
 
 function resetFilters(){
+  ROWS.forEach(r => {
+    r.id_levantamento = r.id_levantamento.toString().trim().padStart(3, '0');
+  });
   selectAll('f-cultura');
   selectLastN('f-ano', 3);
-  selectVal('f-lev', '099');
   selectAll('f-safra');
   selectAll('f-uf');
+  const levs = unique(ROWS.map(r => r.id_levantamento));
+  selectVal('f-lev', levs[levs.length - 1]);
   applyFilters();
 }
 
