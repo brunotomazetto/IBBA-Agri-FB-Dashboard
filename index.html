@@ -509,7 +509,7 @@ function renderContent(){
   const area=document.getElementById('content-area');
   if(STATE.activeDash){
     const d=STATE.activeDash;
-    const moduleSrc=DASH_MODULES[d.id]||DASH_MODULES[String(d.id)]||DASH_MODULES[Number(d.id)];
+    const moduleSrc=DASH_MODULES[d.id]||DASH_MODULES[String(d.id)]||DASH_MODULES[Number(d.id)]; console.log("dash id:", d.id, typeof d.id, "src:", moduleSrc);
     const bodyHtml=moduleSrc
       ? `<iframe
            src="${moduleSrc}"
