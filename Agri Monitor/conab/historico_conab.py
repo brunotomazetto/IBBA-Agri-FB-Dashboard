@@ -201,7 +201,7 @@ try:
 
 except Exception as e:
     print(f"  ERRO ao processar cana: {e}")
-    raise
+    print("  Continuando sem dados de cana...")
 
 # ── Resumo do banco ────────────────────────────────────────────────────────────
 total = conn.execute("SELECT COUNT(*) FROM safra").fetchone()[0]
