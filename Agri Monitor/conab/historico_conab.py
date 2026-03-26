@@ -26,7 +26,7 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 # ── Configurações ──────────────────────────────────────────────────────────────
-DB_PATH    = "conab/conab.db"
+DB_PATH = "Agri Monitor/conab/conab.db"
 EXCEL_PATH = "conab/conab_desde_2024.xlsx"
 
 URLS = {
