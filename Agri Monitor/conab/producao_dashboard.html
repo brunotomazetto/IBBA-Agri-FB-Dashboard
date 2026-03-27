@@ -223,6 +223,30 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
       <div class="map-legend" id="map-legend"></div>
     </div>
 
+    <!-- ── Survey Revision Block ───────────────────────────────── -->
+    <div class="chart-card" style="margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+        <div>
+          <div class="chart-title">Survey Revision</div>
+          <div class="chart-sub" style="margin-bottom:0;" id="rev-sub">How estimates evolved across surveys for a given crop year</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+          <div class="filter-group">
+            <div class="filter-label">Metric</div>
+            <select class="filter-select" id="rev-metric" style="height:auto;min-width:130px;" onchange="renderRevision()">
+              <option value="area">Planted Area (k ha)</option>
+              <option value="prodc" selected>Production (k t)</option>
+              <option value="prod">Yield (t/ha)</option>
+            </select>
+          </div>
+
+        </div>
+      </div>
+      <div style="position:relative;height:260px;">
+        <canvas id="ch-revision"></canvas>
+      </div>
+    </div>
+
     <div class="source-note">Source: CONAB — Portal de Informações Agropecuárias | Updated monthly via GitHub Actions</div>
   </div>
 </div>
@@ -250,6 +274,13 @@ const CULT_FILTER = {
 };
 
 const COMMODITIES = ['Soy','Corn (1st Crop)','Corn (2nd Crop)','Corn (3rd Crop)','Corn (Total)','Cotton (Lint)','Sugarcane'];
+
+// Survey → Month label for grains (same calendar for soy, corn, cotton)
+// Cana has only 4 surveys, no fixed month mapping
+const LEV_MONTH_GRAINS = {
+  1:'Oct', 2:'Nov', 3:'Dec', 4:'Jan', 5:'Feb', 6:'Mar',
+  7:'Apr', 8:'May', 9:'Jun', 10:'Jul', 11:'Aug', 12:'Sep', 99:'Final'
+};
 
 // IBGE regions
 const REGIONS = {
@@ -290,6 +321,7 @@ async function init(){
     ROWS = res[0].values.map(r => { const o={}; cols.forEach((c,i)=>o[c]=r[i]); return o; });
     buildFilters();
     applyFilters();
+    buildRevisionFilters();
     hideOverlay();
   } catch(e){ showError(e.message); }
 }
@@ -471,6 +503,7 @@ function applyFilters(){
   renderKPIs(filtered);
   renderCharts(filtered, geoSel, allUFs);
   renderMap(filtered);
+  renderRevision();
 }
 
 /* ══ KPIs ═══════════════════════════════════════════════════════════ */
@@ -582,7 +615,7 @@ function buildChart(id, type, labels, datasets, unit){
         },
         y:{
           grid:{color:'#f0f0f0'},
-          ticks:{font:{size:10}, callback:v=>fmt(v,0)+' '+unit}
+          ticks:{font:{size:10}, callback:v=>fmt(v,0)}
         }
       }
     }
@@ -691,6 +724,124 @@ function showError(msg){
     <h3>Error loading data</h3><p>${esc(msg)}</p>
     <p style="margin-top:10px;font-size:11px;">Check that <code>conab.db</code> exists at
     <code>Agri Monitor/conab/conab.db</code> in the public repository.</p></div>`;
+}
+
+/* ══ REVISION BLOCK ═════════════════════════════════════════════════ */
+function buildRevisionFilters(){
+  // No separate filters — commodity and crop year come from main filters
+  renderRevision();
+}
+
+function renderRevision(){
+  const metric  = document.getElementById('rev-metric').value;
+
+  // Read commodity and crop years from main filters
+  const selCulturas = getChecked('f-cultura');
+  const selAnos     = getChecked('f-ano');
+  if(!selCulturas.length || !selAnos.length) return;
+
+  // Most recent ano in DB (to decide if we show lev 99 or not)
+  const maxAno = [...new Set(ROWS.map(r=>r.ano_agricola))].sort().reverse()[0];
+
+  // Collect all base rows for selected commodities and anos
+  const allBaseRows = [];
+  selCulturas.forEach(cult => {
+    const cfg = CULT_FILTER[cult];
+    if(!cfg) return;
+    ROWS.filter(r =>
+      r.produto === cfg.produto &&
+      cfg.safras.includes(r.safra) &&
+      selAnos.includes(r.ano_agricola)
+    ).forEach(r => allBaseRows.push({...r, _cult: cult}));
+  });
+
+  if(!allBaseRows.length) return;
+
+  // One line per (commodity × crop year)
+  const seriesKeys = [];
+  selCulturas.forEach(cult => {
+    selAnos.forEach(ano => {
+      seriesKeys.push({cult, ano});
+    });
+  });
+
+  // Determine if any selected commodity is cana
+  const isCana = selCulturas.every(c => CULT_FILTER[c]?.produto === 'CANA-DE-ACUCAR');
+
+  // All levantamentos across all series — exclude 99 for the most recent ano
+  const allLevs = [...new Set(allBaseRows.map(r=>Number(r.id_levantamento)))]
+    .filter(l => {
+      if(l !== 99) return true;
+      // Only show 99 if ALL selected anos have it (i.e., they are closed seasons)
+      return selAnos.every(ano => {
+        const hasMonthly = allBaseRows.some(r => r.ano_agricola===ano && Number(r.id_levantamento)!==99);
+        const has99      = allBaseRows.some(r => r.ano_agricola===ano && Number(r.id_levantamento)===99);
+        // Show 99 only if this ano has it AND is not the most recent (still ongoing)
+        return has99 && ano !== maxAno;
+      });
+    })
+    .sort((a,b) => a===99?1 : b===99?-1 : a-b);
+
+  const xLabels = allLevs.map(l => {
+    if(l === 99) return 'Final';
+    if(isCana)   return `Lev ${l}`;
+    return LEV_MONTH_GRAINS[l] || `Lev ${l}`;
+  });
+
+  const datasets = seriesKeys.map(({cult, ano}, i) => {
+    const cfg = CULT_FILTER[cult];
+    if(!cfg) return null;
+    const color = PALETTE[i % PALETTE.length];
+    const label = selCulturas.length > 1 ? `${cult} ${ano}` : ano;
+
+    const data = allLevs.map(lev => {
+      const sub = allBaseRows.filter(r =>
+        r._cult === cult &&
+        r.ano_agricola === ano &&
+        Number(r.id_levantamento) === lev &&
+        r.area_plantada_mil_ha > 0
+      );
+      if(!sub.length) return null;
+      const totA = sub.reduce((s,r)=>s+(r.area_plantada_mil_ha||0),0);
+      const totP = sub.reduce((s,r)=>s+(r.producao_mil_t||0),0);
+      if(metric==='area')  return totA;
+      if(metric==='prodc') return totP;
+      if(metric==='prod')  return totA>0?totP/totA:null;
+      return null;
+    });
+
+    return {
+      label, data, borderColor:color, backgroundColor:color+'22',
+      borderWidth:2, pointRadius:4, pointHoverRadius:7,
+      tension:.3, fill:false, spanGaps:true
+    };
+  }).filter(Boolean);
+
+  const unitMap = {area:'k ha', prodc:'k t', prod:'t/ha'};
+  const unit = unitMap[metric];
+
+  if(CHARTS['ch-revision']) CHARTS['ch-revision'].destroy();
+  const ctx = document.getElementById('ch-revision').getContext('2d');
+  CHARTS['ch-revision'] = new Chart(ctx, {
+    type:'line', data:{ labels: xLabels, datasets },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'bottom',labels:{boxWidth:11,font:{size:10},padding:8}},
+        tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmt(c.parsed.y,2)} ${unit}`}}
+      },
+      scales:{
+        x:{grid:{color:'#f0f0f0'},ticks:{font:{size:10}}},
+        y:{grid:{color:'#f0f0f0'},ticks:{font:{size:10},callback:v=>fmt(v,0)}}
+      }
+    }
+  });
+
+  const metricNames = {area:'Planted Area',prodc:'Production',prod:'Yield'};
+  const unitLabels = {area:'thousand hectares', prodc:'thousand tonnes', prod:'t / ha'};
+  document.getElementById('rev-sub').textContent =
+    `${metricNames[metric]} (${unitLabels[metric]}) — ${selCulturas.join(', ')} — ${selAnos.join(', ')}`;
 }
 
 init();
