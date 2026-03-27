@@ -512,7 +512,7 @@ function renderContent(){
     const moduleSrc=DASH_MODULES[d.id]||DASH_MODULES[String(d.id)]||DASH_MODULES[Number(d.id)]; console.log("dash id:", d.id, typeof d.id, "src:", moduleSrc);
     const bodyHtml=moduleSrc
       ? `<iframe
-           src="${moduleSrc}"
+           src="${moduleSrc}?v=${Date.now()}"
            style="width:100%;height:100%;border:none;display:block;"
            allowfullscreen
            title="${esc(d.title)}"
