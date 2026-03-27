@@ -435,13 +435,13 @@ function buildFilters(){
   const anos     = [...new Set(ROWS.map(r => r.ano_agricola))].sort().reverse();
   const allUFs   = [...new Set(ROWS.map(r => r.uf))].sort();
 
-  // Commodity select
+  // Commodity select — default: Soy only
   const elC = document.getElementById('f-cultura');
-  elC.innerHTML = culturas.map(c => `<option value="${esc(c)}" selected>${esc(c)}</option>`).join('');
+  elC.innerHTML = culturas.map(c => `<option value="${esc(c)}" ${c==='Soy'?'selected':''}>${esc(c)}</option>`).join('');
 
-  // Crop year select — last 3 selected by default
+  // Crop year select — default: last 6 anos (2020/21 → 2025/26)
   const elA = document.getElementById('f-ano');
-  elA.innerHTML = anos.map((a,i) => `<option value="${esc(a)}" ${i<3?'selected':''}>${esc(a)}</option>`).join('');
+  elA.innerHTML = anos.map((a,i) => `<option value="${esc(a)}" ${i<6?'selected':''}>${esc(a)}</option>`).join('');
 
   // Geography select with optgroups + "select all" triggers per group
   const elG = document.getElementById('f-geo');
@@ -588,15 +588,15 @@ function renderCharts(rows, geoSel, allUFs){
   ds_area .forEach(d=>{ d.borderRadius=3; d.borderWidth=1; });
   ds_prodc.forEach(d=>{ d.borderRadius=3; d.borderWidth=1; });
   ds_prod .forEach(d=>{ d.pointRadius=5; d.pointHoverRadius=8; d.borderWidth=2.5; d.tension=.35; d.fill=false; d.borderColor=d.borderColor||'#FF5500'; d.backgroundColor='transparent'; });
-  buildChart('ch-area',  'bar',  anos, ds_area,  'k ha');
-  buildChart('ch-prod',  'line', anos, ds_prod,  't/ha');
-  buildChart('ch-prodc', 'bar',  anos, ds_prodc, 'k t');
+  buildChart('ch-area',  'bar',  anos, ds_area,  'k ha', 0);
+  buildChart('ch-prod',  'line', anos, ds_prod,  't/ha', 3);
+  buildChart('ch-prodc', 'bar',  anos, ds_prodc, 'k t',  0);
 }
 
-function buildChart(id, type, labels, datasets, unit){
+function buildChart(id, type, labels, datasets, unit, decimals){
+  const dec = decimals !== undefined ? decimals : 0;
   if(CHARTS[id]) CHARTS[id].destroy();
   const ctx = document.getElementById(id).getContext('2d');
-  const isBar = type === 'bar';
   CHARTS[id] = new Chart(ctx,{
     type: type,
     data:{ labels, datasets },
@@ -605,7 +605,7 @@ function buildChart(id, type, labels, datasets, unit){
       interaction:{mode:'index',intersect:false},
       plugins:{
         legend:{position:'bottom',labels:{boxWidth:11,font:{size:10},padding:8}},
-        tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmt(c.parsed.y,2)} ${unit}`}}
+        tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmt(c.parsed.y, dec)} ${unit}`}}
       },
       scales:{
         x:{
@@ -615,7 +615,7 @@ function buildChart(id, type, labels, datasets, unit){
         },
         y:{
           grid:{color:'#f0f0f0'},
-          ticks:{font:{size:10}, callback:v=>fmt(v,0)}
+          ticks:{font:{size:10}, callback:v=>fmt(v, dec)}
         }
       }
     }
@@ -744,6 +744,11 @@ function renderRevision(){
   const maxAno = [...new Set(ROWS.map(r=>r.ano_agricola))].sort().reverse()[0];
 
   // Collect all base rows for selected commodities and anos
+  // Geography from main filter
+  const geoSelRev  = getSelectedGeo();
+  const allUFsRev  = [...new Set(ROWS.map(r=>r.uf))];
+  const activeUFsRev = geoToUFs(geoSelRev, allUFsRev);
+
   const allBaseRows = [];
   selCulturas.forEach(cult => {
     const cfg = CULT_FILTER[cult];
@@ -751,32 +756,41 @@ function renderRevision(){
     ROWS.filter(r =>
       r.produto === cfg.produto &&
       cfg.safras.includes(r.safra) &&
-      selAnos.includes(r.ano_agricola)
+      selAnos.includes(r.ano_agricola) &&
+      activeUFsRev.includes(r.uf)
     ).forEach(r => allBaseRows.push({...r, _cult: cult}));
   });
 
   if(!allBaseRows.length) return;
 
-  // One line per (commodity × crop year)
+  // Build geo keys same as main chart
+  const hasBrazilRev = !geoSelRev.length || geoSelRev.some(g=>g.type==='brazil');
+  const regionsRev   = geoSelRev.filter(g=>g.type==='region').map(g=>g.value);
+  const statesRev    = geoSelRev.filter(g=>g.type==='state').map(g=>g.value);
+  const geoKeysRev   = [];
+  if(hasBrazilRev || !geoSelRev.length) geoKeysRev.push({geo:'Brazil', ufs:null});
+  regionsRev.forEach(reg => geoKeysRev.push({geo:reg, ufs:REGIONS[reg]||[]}));
+  statesRev.forEach(st   => geoKeysRev.push({geo:st,  ufs:[st]}));
+
+  // One line per (commodity × geo × crop year)
   const seriesKeys = [];
   selCulturas.forEach(cult => {
-    selAnos.forEach(ano => {
-      seriesKeys.push({cult, ano});
+    geoKeysRev.forEach(({geo, ufs}) => {
+      selAnos.forEach(ano => {
+        seriesKeys.push({cult, geo, ufs, ano});
+      });
     });
   });
 
   // Determine if any selected commodity is cana
   const isCana = selCulturas.every(c => CULT_FILTER[c]?.produto === 'CANA-DE-ACUCAR');
 
-  // All levantamentos across all series — exclude 99 for the most recent ano
+  // All levantamentos — exclude 99 for most recent ano
   const allLevs = [...new Set(allBaseRows.map(r=>Number(r.id_levantamento)))]
     .filter(l => {
       if(l !== 99) return true;
-      // Only show 99 if ALL selected anos have it (i.e., they are closed seasons)
       return selAnos.every(ano => {
-        const hasMonthly = allBaseRows.some(r => r.ano_agricola===ano && Number(r.id_levantamento)!==99);
-        const has99      = allBaseRows.some(r => r.ano_agricola===ano && Number(r.id_levantamento)===99);
-        // Show 99 only if this ano has it AND is not the most recent (still ongoing)
+        const has99 = allBaseRows.some(r => r.ano_agricola===ano && Number(r.id_levantamento)===99);
         return has99 && ano !== maxAno;
       });
     })
@@ -788,19 +802,32 @@ function renderRevision(){
     return LEV_MONTH_GRAINS[l] || `Lev ${l}`;
   });
 
-  const datasets = seriesKeys.map(({cult, ano}, i) => {
+  const multiCult = selCulturas.length > 1;
+  const multiGeo  = geoKeysRev.length > 1;
+  const multiAno  = selAnos.length > 1;
+
+  const datasets = seriesKeys.map(({cult, geo, ufs, ano}, i) => {
     const cfg = CULT_FILTER[cult];
     if(!cfg) return null;
     const color = PALETTE[i % PALETTE.length];
-    const label = selCulturas.length > 1 ? `${cult} ${ano}` : ano;
+
+    // Build label intelligently based on what varies
+    const parts = [];
+    if(multiCult) parts.push(cult);
+    if(multiGeo)  parts.push(geo);
+    if(multiAno)  parts.push(ano);
+    if(!parts.length) parts.push(ano);
+    const label = parts.join(' — ');
 
     const data = allLevs.map(lev => {
-      const sub = allBaseRows.filter(r =>
-        r._cult === cult &&
-        r.ano_agricola === ano &&
-        Number(r.id_levantamento) === lev &&
-        r.area_plantada_mil_ha > 0
-      );
+      const sub = allBaseRows.filter(r => {
+        const ufMatch = ufs ? ufs.includes(r.uf) : true;
+        return r._cult === cult &&
+               r.ano_agricola === ano &&
+               Number(r.id_levantamento) === lev &&
+               r.area_plantada_mil_ha > 0 &&
+               ufMatch;
+      });
       if(!sub.length) return null;
       const totA = sub.reduce((s,r)=>s+(r.area_plantada_mil_ha||0),0);
       const totP = sub.reduce((s,r)=>s+(r.producao_mil_t||0),0);
@@ -820,6 +847,7 @@ function renderRevision(){
   const unitMap = {area:'k ha', prodc:'k t', prod:'t/ha'};
   const unit = unitMap[metric];
 
+  const revDec = metric === 'prod' ? 3 : 0;
   if(CHARTS['ch-revision']) CHARTS['ch-revision'].destroy();
   const ctx = document.getElementById('ch-revision').getContext('2d');
   CHARTS['ch-revision'] = new Chart(ctx, {
@@ -829,11 +857,11 @@ function renderRevision(){
       interaction:{mode:'index',intersect:false},
       plugins:{
         legend:{position:'bottom',labels:{boxWidth:11,font:{size:10},padding:8}},
-        tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmt(c.parsed.y,2)} ${unit}`}}
+        tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmt(c.parsed.y, revDec)} ${unit}`}}
       },
       scales:{
         x:{grid:{color:'#f0f0f0'},ticks:{font:{size:10}}},
-        y:{grid:{color:'#f0f0f0'},ticks:{font:{size:10},callback:v=>fmt(v,0)}}
+        y:{grid:{color:'#f0f0f0'},ticks:{font:{size:10},callback:v=>fmt(v, revDec)}}
       }
     }
   });
