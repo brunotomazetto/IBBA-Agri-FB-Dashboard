@@ -205,10 +205,23 @@ const DB_URL = 'https://raw.githubusercontent.com/brunotomazetto/IBBA-Agri-FB-Da
 
 const CULTURA_LABELS = {
   'SOJA':             'Soy',
-  'MILHO':            'Corn',
+  'MILHO':            'Corn (Total)',
   'ALGODAO EM PLUMA': 'Cotton (Lint)',
   'CANA-DE-ACUCAR':   'Sugarcane',
 };
+
+// Maps commodity filter label → (produto, safras[]) for querying
+const CULT_FILTER = {
+  'Soy':            { produto: 'SOJA',             safras: ['UNICA'] },
+  'Corn (1st Crop)':{ produto: 'MILHO',             safras: ['1ª SAFRA'] },
+  'Corn (2nd Crop)':{ produto: 'MILHO',             safras: ['2ª SAFRA'] },
+  'Corn (3rd Crop)':{ produto: 'MILHO',             safras: ['3ª SAFRA'] },
+  'Corn (Total)':   { produto: 'MILHO',             safras: ['1ª SAFRA','2ª SAFRA','3ª SAFRA'] },
+  'Cotton (Lint)':  { produto: 'ALGODAO EM PLUMA',  safras: ['UNICA'] },
+  'Sugarcane':      { produto: 'CANA-DE-ACUCAR',    safras: ['UNICA'] },
+};
+
+const COMMODITIES = ['Soy','Corn (1st Crop)','Corn (2nd Crop)','Corn (3rd Crop)','Corn (Total)','Cotton (Lint)','Sugarcane'];
 
 // IBGE regions
 const REGIONS = {
@@ -260,52 +273,46 @@ async function init(){
    Returns a filtered array with one survey per (commodity, crop_year, uf).
 ══════════════════════════════════════════════════════════════════════ */
 function pickBestSurvey(rows){
-  // Step 1: for each (produto, ano_agricola), determine the best survey number
-  // across ALL states — 99 if any state has it, otherwise the highest available
+  // Best survey per (produto, safra, ano_agricola)
   const bestLevMap = {};
   rows.forEach(r => {
-    const key = `${r.produto}|${r.ano_agricola}`;
+    const key = `${r.produto}|${r.safra}|${r.ano_agricola}`;
     const lev = Number(r.id_levantamento);
-    if(!bestLevMap[key]){
-      bestLevMap[key] = lev;
-    } else {
-      // 99 always wins; otherwise take the higher number
-      if(bestLevMap[key] !== 99){
-        if(lev === 99 || lev > bestLevMap[key]) bestLevMap[key] = lev;
-      }
+    if(!bestLevMap[key]) bestLevMap[key] = lev;
+    else if(bestLevMap[key] !== 99){
+      if(lev === 99 || lev > bestLevMap[key]) bestLevMap[key] = lev;
     }
   });
-
-  // Step 2: keep only rows matching the best survey for their (produto, ano_agricola)
-  // Also aggregate milho safras (1ª+2ª+3ª) into a single row per (produto, ano, uf, lev)
-  const filtered = rows.filter(r => {
-    const key = `${r.produto}|${r.ano_agricola}`;
+  return rows.filter(r => {
+    const key = `${r.produto}|${r.safra}|${r.ano_agricola}`;
     return Number(r.id_levantamento) === bestLevMap[key];
   });
+}
 
-  // Step 3: aggregate milho by (produto, ano_agricola, uf, id_levantamento)
-  // summing area and producao across safras (1ª+2ª+3ª)
-  const aggMap = {};
-  filtered.forEach(r => {
-    const key = `${r.produto}|${r.ano_agricola}|${r.uf}|${r.id_levantamento}`;
-    if(!aggMap[key]){
-      aggMap[key] = {...r,
-        area_plantada_mil_ha: r.area_plantada_mil_ha||0,
-        producao_mil_t: r.producao_mil_t||0,
-      };
-    } else {
-      aggMap[key].area_plantada_mil_ha += r.area_plantada_mil_ha||0;
-      aggMap[key].producao_mil_t       += r.producao_mil_t||0;
-    }
+// Expande filtro de commodity — agrega safras do milho conforme seleção
+function expandCultFilter(selCulturas, rows){
+  const result = [];
+  selCulturas.forEach(cult => {
+    const cfg = CULT_FILTER[cult];
+    if(!cfg) return;
+    const matching = rows.filter(r =>
+      r.produto === cfg.produto && cfg.safras.includes(r.safra)
+    );
+    const aggMap = {};
+    matching.forEach(r => {
+      const key = `${r.ano_agricola}|${r.uf}`;
+      if(!aggMap[key]){
+        aggMap[key] = {...r, _cult_label: cult,
+          area_plantada_mil_ha: r.area_plantada_mil_ha||0,
+          producao_mil_t: r.producao_mil_t||0};
+      } else {
+        aggMap[key].area_plantada_mil_ha += r.area_plantada_mil_ha||0;
+        aggMap[key].producao_mil_t       += r.producao_mil_t||0;
+      }
+    });
+    result.push(...Object.values(aggMap));
   });
-
-  // Step 4: calculate yield as producao/area (ignores stored produtividade_t_ha)
-  return Object.values(aggMap).map(r => {
-    const yld = r.area_plantada_mil_ha > 0
-      ? r.producao_mil_t / r.area_plantada_mil_ha
-      : 0;
-    return {...r, produtividade_calc: yld};
-  });
+  return result;
 }
 
 /* ══ GEOGRAPHY HELPERS ══════════════════════════════════════════════ */
@@ -364,7 +371,7 @@ function buildSeriesKeys(geoSel, rows, allUFs){
 
 /* ══ FILTERS ════════════════════════════════════════════════════════ */
 function buildFilters(){
-  const culturas = [...new Set(ROWS.map(r => CULTURA_LABELS[r.produto]||r.produto))].sort();
+  const culturas = COMMODITIES;
   const anos     = [...new Set(ROWS.map(r => r.ano_agricola))].sort().reverse();
   const allUFs   = [...new Set(ROWS.map(r => r.uf))].sort();
 
@@ -420,16 +427,16 @@ function applyFilters(){
   const allUFs      = [...new Set(ROWS.map(r => r.uf))];
   const activeUFs   = geoToUFs(geoSel, allUFs);
 
-  // Filter rows
-  let filtered = ROWS.filter(r => {
-    const cl = CULTURA_LABELS[r.produto]||r.produto;
-    return selCulturas.includes(cl)
-        && selAnos.includes(r.ano_agricola)
-        && activeUFs.includes(r.uf);
-  });
+  // Filter by year and UF first
+  let prefiltered = ROWS.filter(r =>
+    selAnos.includes(r.ano_agricola) && activeUFs.includes(r.uf)
+  );
 
-  // Pick best survey per (commodity, crop_year, uf)
-  filtered = pickBestSurvey(filtered);
+  // Pick best survey per (produto, safra, ano_agricola)
+  prefiltered = pickBestSurvey(prefiltered);
+
+  // Expand commodity selection (handles Corn Total aggregation)
+  let filtered = expandCultFilter(selCulturas, prefiltered);
   LAST_FILTERED = filtered;
 
   renderKPIs(filtered);
@@ -452,17 +459,15 @@ function renderKPIs(rows){
 /* ══ CHARTS ══════════════════════════════════════════════════════════ */
 function renderCharts(rows, geoSel, allUFs){
   const anos     = [...new Set(rows.map(r=>r.ano_agricola))].sort();
-  const culturas = [...new Set(rows.map(r=>CULTURA_LABELS[r.produto]||r.produto))].sort();
+  const culturas = [...new Set(rows.map(r=>r._cult_label||CULTURA_LABELS[r.produto]||r.produto))].sort();
 
-  // Determine series
   const hasBrazil = !geoSel.length || geoSel.some(g=>g.type==='brazil');
   const regions   = geoSel.filter(g=>g.type==='region').map(g=>g.value);
   const states    = geoSel.filter(g=>g.type==='state').map(g=>g.value);
 
-  const series = []; // { label, rows }
+  const series = [];
   culturas.forEach(cult => {
-    const cultRows = rows.filter(r=>(CULTURA_LABELS[r.produto]||r.produto)===cult);
-
+    const cultRows = rows.filter(r=>(r._cult_label||CULTURA_LABELS[r.produto]||r.produto)===cult);
     if(hasBrazil || !geoSel.length){
       series.push({ label: cult, rows: cultRows });
     }
