@@ -158,7 +158,7 @@ def get_indicadores(token: str, cadeia_id: str) -> list[dict]:
         if page >= data.get("PageCount", 1):
             break
         page += 1
-        time.sleep(0.3)
+        pass
 
     log.info(f"  {len(todos)} indicadores encontrados")
     return todos
@@ -255,7 +255,7 @@ for cultura, cfg in CULTURAS.items():
         log.error(f"  Erro ao buscar safras/indicadores: {e}")
         continue
 
-    for ind in indicadores[:3]:  # TESTE: remover [:3] para rodar completo
+    for ind in indicadores[:1]:  # TESTE  # TESTE: remover [:3] para rodar completo
         ind_id   = str(ind.get("Id", ""))
         ind_nome = ind.get("IndicadorNome", "")
 
@@ -265,13 +265,13 @@ for cultura, cfg in CULTURAS.items():
             dados = get_dados(token, cadeia_id, ind_id, safras)
         except Exception as e:
             log.error(f"    Erro ao buscar dados: {e}")
-            time.sleep(1)
+            pass
             continue
 
         inseridos = upsert_dados(cultura, cadeia_id, dados)
         total += inseridos
         log.info(f"    {inseridos} registros inseridos ({len(dados)} retornados)")
-        time.sleep(0.3)
+        pass
 
     log.info(f"[{cultura}] Concluído.")
 
