@@ -15,50 +15,39 @@ API_TOKEN       = "https://api1.imea.com.br/token"
 API_INDICADORES = "https://api1.imea.com.br/api/indicadorfinal/seriehistoricageral"
 API_DADOS       = "https://api1.imea.com.br/api/seriehistorica"
 
-GRUPO_CUSTO_ID  = "1121328740175912960"
 ESTADO_MT       = "51"
 TIPO_LOCALIDADE = "1"
 
-# Safras com janelas de 6 meses para contornar limite de 10 registros
-CULTURAS = {
-    "SOJA": {
-        "cadeia_id": "4",
-        "safras": [
-            # (safra_id, safra_desc, inicio, fim)
-            ("1595648460215812096", "25/26", "2025-09-01", "2026-12-31"),
-            ("1484351182193295360", "24/25", "2024-04-01", "2024-12-31"),
-            ("1484351182193295360", "24/25", "2023-09-01", "2024-03-31"),
-            ("1335026912394682368", "23/24", "2023-04-01", "2023-12-31"),
-            ("1335026912394682368", "23/24", "2022-09-01", "2023-03-31"),
-            ("1174122980756627456", "22/23", "2023-04-01", "2023-09-30"),
-            ("1174122980756627456", "22/23", "2022-09-01", "2023-03-31"),
-        ],
-    },
-    "MILHO": {
-        "cadeia_id": "3",
-        "safras": [
-            ("1595648460215812096", "25/26", "2025-09-01", "2026-12-31"),
-            ("1484351182193295360", "24/25", "2024-04-01", "2024-12-31"),
-            ("1484351182193295360", "24/25", "2023-09-01", "2024-03-31"),
-            ("1335026912394682368", "23/24", "2023-04-01", "2023-12-31"),
-            ("1335026912394682368", "23/24", "2022-09-01", "2023-03-31"),
-            ("1174122980756627456", "22/23", "2023-04-01", "2023-09-30"),
-            ("1174122980756627456", "22/23", "2022-09-01", "2023-03-31"),
-        ],
-    },
-    "ALGODAO": {
-        "cadeia_id": "1",
-        "safras": [
-            ("1595648460215812096", "25/26", "2025-09-01", "2026-12-31"),
-            ("1484351182193295360", "24/25", "2024-04-01", "2024-12-31"),
-            ("1484351182193295360", "24/25", "2023-09-01", "2024-03-31"),
-            ("1335026912394682368", "23/24", "2023-04-01", "2023-12-31"),
-            ("1335026912394682368", "23/24", "2022-09-01", "2023-03-31"),
-            ("1174122980756627456", "22/23", "2023-04-01", "2023-09-30"),
-            ("1174122980756627456", "22/23", "2022-09-01", "2023-03-31"),
-        ],
-    },
+# Grupos a coletar
+GRUPOS = {
+    "PRECO":        "697311317411758080",   # Preço — diário, sem safra
+    "PRODUTIVIDADE":"697311317415952387",   # Safra — com safra
 }
+
+CULTURAS = {
+    "SOJA":    "4",
+    "MILHO":   "3",
+    "ALGODAO": "1",
+}
+
+# Janelas de busca por ano (preço é diário — usar janelas anuais)
+JANELAS_ANUAIS = [
+    ("2020-01-01", "2020-12-31"),
+    ("2021-01-01", "2021-12-31"),
+    ("2022-01-01", "2022-12-31"),
+    ("2023-01-01", "2023-12-31"),
+    ("2024-01-01", "2024-12-31"),
+    ("2025-01-01", "2025-12-31"),
+    ("2026-01-01", "2026-12-31"),
+]
+
+# Safras para produtividade
+SAFRAS = [
+    "1595648460215812096",  # 25/26
+    "1484351182193295360",  # 24/25
+    "1335026912394682368",  # 23/24
+    "1174122980756627456",  # 22/23
+]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -74,24 +63,25 @@ conn.executescript("""
         indicador_nome   TEXT,
         safra            TEXT,
         safra_id         TEXT,
+        safra_tipo       TEXT,
         data_referencia  TEXT,
         ano              INTEGER,
         mes              INTEGER,
         valor            REAL,
         unidade          TEXT,
         estado           TEXT,
+        grupo            TEXT,
         updated_at       TEXT,
         UNIQUE(indicador_id, safra_id, data_referencia, estado)
     );
     CREATE INDEX IF NOT EXISTS idx_hist_cultura ON historico(cultura);
-    CREATE INDEX IF NOT EXISTS idx_hist_ind     ON historico(indicador_id);
-    CREATE INDEX IF NOT EXISTS idx_hist_safra   ON historico(safra_id);
+    CREATE INDEX IF NOT EXISTS idx_hist_grupo   ON historico(grupo);
 """)
 conn.commit()
 
 # ── Autenticação ───────────────────────────────────────────────────────────────
 def get_token() -> str:
-    log.info("Autenticando no portal IMEA...")
+    log.info("Autenticando...")
     resp = requests.post(
         API_TOKEN,
         data={"username": IMEA_USER, "password": IMEA_PASS,
@@ -111,14 +101,14 @@ def hdrs(token):
 
 
 # ── Buscar indicadores ─────────────────────────────────────────────────────────
-def get_indicadores(token, cadeia_id, safra_ids) -> list:
+def get_indicadores(token, cadeia_id, grupo_id, safras=[]) -> list:
     todos, page = [], 1
     while True:
         resp = requests.post(
             f"{API_INDICADORES}?nome=&pageSize=100&page={page}",
             json={"nome": "", "pageSize": 100, "page": page,
-                  "cadeia": [cadeia_id], "grupo": [GRUPO_CUSTO_ID],
-                  "indicador": [], "estado": [ESTADO_MT], "safra": safra_ids,
+                  "cadeia": [cadeia_id], "grupo": [grupo_id],
+                  "indicador": [], "estado": [ESTADO_MT], "safra": safras,
                   "tipolocalidade": [TIPO_LOCALIDADE], "regiao": [], "inicio": "", "fim": "",
                   "cidade": [], "cidadeDestino": [], "estadoDestino": [],
                   "regiaoDestino": [], "tipoDestino": []},
@@ -133,13 +123,13 @@ def get_indicadores(token, cadeia_id, safra_ids) -> list:
     return todos
 
 
-# ── Buscar dados por indicador + safra + período ───────────────────────────────
-def get_dados(token, cadeia_id, indicador_id, safra_id, inicio, fim) -> list:
+# ── Buscar dados ───────────────────────────────────────────────────────────────
+def get_dados(token, cadeia_id, grupo_id, indicador_id, inicio, fim, safras=[]) -> list:
     resp = requests.post(
         API_DADOS,
-        json={"cadeia": [cadeia_id], "grupo": [GRUPO_CUSTO_ID],
+        json={"cadeia": [cadeia_id], "grupo": [grupo_id],
               "indicador": [indicador_id], "estado": [ESTADO_MT],
-              "safra": [safra_id], "tipolocalidade": [TIPO_LOCALIDADE],
+              "safra": safras, "tipolocalidade": [TIPO_LOCALIDADE],
               "regiao": [], "inicio": inicio, "fim": fim,
               "cidade": [], "cidadeDestino": [], "estadoDestino": [],
               "regiaoDestino": [], "tipoDestino": []},
@@ -151,7 +141,7 @@ def get_dados(token, cadeia_id, indicador_id, safra_id, inicio, fim) -> list:
 
 
 # ── Upsert ─────────────────────────────────────────────────────────────────────
-def upsert(cultura, cadeia_id, rows) -> int:
+def upsert(cultura, cadeia_id, grupo_nome, rows) -> int:
     if not rows:
         return 0
     registros = []
@@ -165,18 +155,21 @@ def upsert(cultura, cadeia_id, rows) -> int:
             str(r.get("IndicadorFinalId", "")),
             r.get("IndicadorFinalNome", ""),
             r.get("SafraDescricao", ""),
-            str(r.get("SafraId", "")),
+            str(r.get("SafraId", "") or ""),
+            r.get("SafraTipoDescricao", ""),
             (r.get("Data") or "")[:10],
             r.get("Ano"), r.get("Mes"),
             valor, r.get("UnidadeSigla", ""),
             r.get("EstadoSigla", "MT"),
+            grupo_nome,
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         ))
     conn.executemany(
         """INSERT OR IGNORE INTO historico
            (cultura, cadeia_id, indicador_id, indicador_nome, safra, safra_id,
-            data_referencia, ano, mes, valor, unidade, estado, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            safra_tipo, data_referencia, ano, mes, valor, unidade, estado,
+            grupo, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         registros,
     )
     conn.commit()
@@ -184,33 +177,54 @@ def upsert(cultura, cadeia_id, rows) -> int:
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
-token = get_token()
-total = 0
+token  = get_token()
+total  = 0
 
-for cultura, cfg in CULTURAS.items():
-    cadeia_id = cfg["cadeia_id"]
-    safras    = cfg["safras"]
+for cultura, cadeia_id in CULTURAS.items():
+    log.info(f"\n{'='*50}\n{cultura}\n{'='*50}")
 
-    log.info(f"\n{'='*50}\nProcessando: {cultura}\n{'='*50}")
-
-    # Buscar lista de indicadores usando todas as safras únicas
-    safra_ids_unicos = list(dict.fromkeys(s[0] for s in safras))
-    indicadores = get_indicadores(token, cadeia_id, safra_ids_unicos)
-    log.info(f"  {len(indicadores)} indicadores encontrados")
+    # ── PREÇO (diário, sem safra) ──────────────────────────────────────────────
+    grupo_id   = GRUPOS["PRECO"]
+    indicadores = get_indicadores(token, cadeia_id, grupo_id)
+    log.info(f"  Preço: {len(indicadores)} indicadores")
 
     for ind in indicadores:
         ind_id   = str(ind.get("Id", ""))
         ind_nome = ind.get("IndicadorNome", "")
         ind_total = 0
 
-        for safra_id, safra_desc, inicio, fim in safras:
+        for inicio, fim in JANELAS_ANUAIS:
             try:
-                dados = get_dados(token, cadeia_id, ind_id, safra_id, inicio, fim)
+                dados = get_dados(token, cadeia_id, grupo_id, ind_id, inicio, fim)
             except Exception as e:
-                log.error(f"    Erro {safra_desc} {inicio}: {e}")
+                log.error(f"    Erro {inicio}: {e}")
                 continue
-            inseridos = upsert(cultura, cadeia_id, dados)
+            inseridos = upsert(cultura, cadeia_id, "PRECO", dados)
             ind_total += inseridos
+
+        if ind_total > 0:
+            log.info(f"  ✓ {ind_nome}: {ind_total} registros")
+
+    # ── PRODUTIVIDADE (por safra) ──────────────────────────────────────────────
+    grupo_id    = GRUPOS["PRODUTIVIDADE"]
+    indicadores = get_indicadores(token, cadeia_id, grupo_id, SAFRAS)
+    log.info(f"  Produtividade: {len(indicadores)} indicadores")
+
+    for ind in indicadores:
+        ind_id   = str(ind.get("Id", ""))
+        ind_nome = ind.get("IndicadorNome", "")
+        ind_total = 0
+
+        for safra_id in SAFRAS:
+            for inicio, fim in JANELAS_ANUAIS:
+                try:
+                    dados = get_dados(token, cadeia_id, grupo_id, ind_id,
+                                      inicio, fim, [safra_id])
+                except Exception as e:
+                    log.error(f"    Erro {safra_id} {inicio}: {e}")
+                    continue
+                inseridos = upsert(cultura, cadeia_id, "PRODUTIVIDADE", dados)
+                ind_total += inseridos
 
         if ind_total > 0:
             log.info(f"  ✓ {ind_nome}: {ind_total} registros")
