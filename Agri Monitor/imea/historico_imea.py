@@ -16,6 +16,7 @@ IMEA_PASS = os.environ["IMEA_PASS"]
 API_TOKEN      = "https://api1.imea.com.br/token"
 API_INDICADORES = "https://api1.imea.com.br/api/indicadorfinal/seriehistoricageral"
 API_DADOS      = "https://api1.imea.com.br/api/seriehistorica/dados"
+API_SAFRAS     = "https://api1.imea.com.br/api/safra"
 
 # Constantes fixas (descobertas via DevTools)
 GRUPO_CUSTO_ID  = "1121328740175912960"   # "Custo de Produção"
@@ -89,6 +90,23 @@ def auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+
+# ── Buscar safras disponíveis ──────────────────────────────────────────────────
+def get_safras(token: str, cadeia_id: str) -> list[str]:
+    """Retorna lista de IDs de todas as safras disponíveis para a cadeia."""
+    resp = requests.get(
+        f"{API_SAFRAS}?cadeia={cadeia_id}&pageSize=100&page=1",
+        headers=auth_headers(token),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    items = data if isinstance(data, list) else data.get("Result", [])
+    ids = [str(s.get("Id") or s.get("id") or "") for s in items if s.get("Id") or s.get("id")]
+    log.info(f"  {len(ids)} safras encontradas")
+    return ids
+
+
 # ── Buscar todos os indicadores de custo de uma cultura ───────────────────────
 def get_indicadores(token: str, cadeia_id: str) -> list[dict]:
     """
@@ -136,10 +154,10 @@ def get_indicadores(token: str, cadeia_id: str) -> list[dict]:
 
 
 # ── Buscar dados históricos de um indicador ────────────────────────────────────
-def get_dados(token: str, cadeia_id: str, indicador_id: str) -> list[dict]:
+def get_dados(token: str, cadeia_id: str, indicador_id: str, safras: list[str]) -> list[dict]:
     """
     Busca toda a série histórica de um indicador para MT.
-    Sem filtro de safra ou data — retorna tudo disponível.
+    Passa todas as safras disponíveis para garantir retorno completo.
     """
     resp = requests.post(
         API_DADOS,
@@ -149,7 +167,7 @@ def get_dados(token: str, cadeia_id: str, indicador_id: str) -> list[dict]:
             "indicador":      [indicador_id],
             "estado":         [ESTADO_MT],
             "regiao":         [],
-            "safra":          [],
+            "safra":          safras,
             "tipolocalidade": [TIPO_LOCALIDADE],
             "inicio":        "",
             "fim":           "",
@@ -218,9 +236,10 @@ for cultura, cadeia_id in CULTURAS.items():
     log.info(f"{'='*50}")
 
     try:
+        safras      = get_safras(token, cadeia_id)
         indicadores = get_indicadores(token, cadeia_id)
     except Exception as e:
-        log.error(f"  Erro ao buscar indicadores: {e}")
+        log.error(f"  Erro ao buscar safras/indicadores: {e}")
         continue
 
     for ind in indicadores:
@@ -230,7 +249,7 @@ for cultura, cadeia_id in CULTURAS.items():
         log.info(f"  → [{ind_id}] {ind_nome}")
 
         try:
-            dados = get_dados(token, cadeia_id, ind_id)
+            dados = get_dados(token, cadeia_id, ind_id, safras)
         except Exception as e:
             log.error(f"    Erro ao buscar dados: {e}")
             time.sleep(1)
