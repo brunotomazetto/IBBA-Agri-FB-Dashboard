@@ -423,9 +423,119 @@ def processa_precos_conab():
         log.info("  Nenhum preço encontrado para MT")
 
 
+# ── PARTE 3: Produtividade via CONAB safra ────────────────────────────────────
+URL_LEVANTAMENTO_CONAB = "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/LevantamentoGraos.txt"
+
+# Levantamento → (mês, delta_ano)
+# Soja/Algodão: safra out-set  → Lev1=out(ano1), Lev4=jan(ano2)...
+# Milho 2ª safra: safra jan-dez → Lev1=jan(ano2), Lev12=dez(ano2)
+LEV_SOJA_ALGODAO = {
+    1:(10,0), 2:(11,0), 3:(12,0), 4:(1,1),  5:(2,1),  6:(3,1),
+    7:(4,1),  8:(5,1),  9:(6,1),  10:(7,1), 11:(8,1), 12:(9,1),
+}
+LEV_MILHO = {
+    1:(1,1), 2:(2,1),  3:(3,1),  4:(4,1),  5:(5,1),  6:(6,1),
+    7:(7,1), 8:(8,1),  9:(9,1),  10:(10,1),11:(11,1),12:(12,1),
+}
+CONAB_PRODUTO_CULTURA = {
+    "SOJA":             ("SOJA",    LEV_SOJA_ALGODAO),
+    "MILHO":            ("MILHO",   LEV_MILHO),
+    "ALGODAO EM PLUMA": ("ALGODAO", LEV_SOJA_ALGODAO),
+}
+
+
+def processa_produtividade_conab():
+    log.info("\n=== PRODUTIVIDADE (CONAB Levantamento Grãos) ===")
+    try:
+        resp = requests.get(URL_LEVANTAMENTO_CONAB, timeout=120, verify=False)
+        resp.raise_for_status()
+        content = resp.content.decode("latin1")
+    except Exception as e:
+        log.error(f"  Erro download CONAB levantamento: {e}")
+        return
+
+    linhas = content.splitlines()
+    if not linhas:
+        return
+
+    cabecalho = [c.strip().lower() for c in linhas[0].split(";")]
+    registros = []
+
+    for linha in linhas[1:]:
+        cols = [c.strip() for c in linha.split(";")]
+        if len(cols) < len(cabecalho):
+            continue
+        row = dict(zip(cabecalho, cols))
+
+        if row.get("uf", "").strip().upper() != "MT":
+            continue
+
+        produto = row.get("produto", "").strip().upper()
+        if produto not in CONAB_PRODUTO_CULTURA:
+            continue
+
+        try:
+            lev = int(row.get("id_levantamento", 0))
+        except:
+            continue
+        if lev not in range(1, 13):
+            continue
+
+        cultura, lev_map = CONAB_PRODUTO_CULTURA[produto]
+        mes, delta = lev_map[lev]
+
+        ano_agr = row.get("ano_agricola", "").strip()
+        try:
+            ano1 = int(ano_agr[:4])
+            ano  = ano1 + delta
+        except:
+            continue
+
+        try:
+            prod_t_ha = float(row.get("produtividade_mil_ha_mil_t", "0").replace(",", "."))
+        except:
+            continue
+        if prod_t_ha <= 0:
+            continue
+
+        prod_sc_ha = round(prod_t_ha * 1000 / 60, 4)
+        data_ref   = f"{ano}-{mes:02d}-15"
+
+        registros.append((
+            cultura, None,
+            f"conab_prod_{cultura.lower()}_{lev}",
+            "Produtividade CONAB",
+            ano_agr, None, None,
+            data_ref, ano, mes,
+            prod_sc_ha, "sc/ha", "MT",
+            "PRODUTIVIDADE",
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ))
+
+    if registros:
+        conn.executemany("""
+            INSERT OR REPLACE INTO historico
+            (cultura, cadeia_id, indicador_id, indicador_nome, safra, safra_id,
+             safra_tipo, data_referencia, ano, mes, valor, unidade, estado,
+             grupo, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, registros)
+        conn.commit()
+        log.info(f"  {len(registros)} registros inseridos/atualizados")
+        for row in conn.execute("""
+            SELECT cultura, COUNT(*), MIN(data_referencia), MAX(data_referencia)
+            FROM historico WHERE grupo='PRODUTIVIDADE' AND indicador_nome='Produtividade CONAB'
+            GROUP BY cultura ORDER BY cultura
+        """):
+            log.info(f"  {row[0]}: {row[1]} | {row[2]} → {row[3]}")
+    else:
+        log.info("  Nenhum dado encontrado para MT")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 processa_custos()
 processa_precos_conab()
+processa_produtividade_conab()
 
 conn.close()
 print("\nConcluído.")
