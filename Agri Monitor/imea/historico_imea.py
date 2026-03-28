@@ -191,7 +191,10 @@ def get_dados(token: str, cadeia_id: str, indicador_id: str, safras: list[str]) 
         headers=auth_headers(token),
         timeout=60,
     )
+    log.info(f"    HTTP {resp.status_code} | tamanho={len(resp.content)} bytes | body={resp.text[:200]}")
     resp.raise_for_status()
+    if not resp.content:
+        return []
     data = resp.json()
     return data if isinstance(data, list) else data.get("Result", [])
 
