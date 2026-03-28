@@ -23,10 +23,21 @@ GRUPO_CUSTO_ID  = "1121328740175912960"   # "Custo de Produção"
 ESTADO_MT       = "51"
 TIPO_LOCALIDADE = "1"                     # "Estado"
 
+# safras descobertas via DevTools do portal IMEA
 CULTURAS = {
-    "SOJA":    "4",
-    "MILHO":   "3",
-    "ALGODAO": "1",
+    "SOJA": {
+        "cadeia_id": "4",
+        "safras": ["1484351182193295360", "1335026912394682368", "1174122980756627456"],
+    },
+    # descomentar após validar soja:
+    # "MILHO": {
+    #     "cadeia_id": "3",
+    #     "safras": ["1595648460215812096", "1335026912394682368", "1484351182193295360", "1174122980756627456"],
+    # },
+    # "ALGODAO": {
+    #     "cadeia_id": "1",
+    #     "safras": [],  # preencher após obter do DevTools
+    # },
 }
 
 logging.basicConfig(
@@ -230,13 +241,15 @@ def upsert_dados(cultura: str, cadeia_id: str, rows: list[dict]):
 token = get_token()
 total = 0
 
-for cultura, cadeia_id in CULTURAS.items():
+for cultura, cfg in CULTURAS.items():
+    cadeia_id = cfg["cadeia_id"]
+    safras    = cfg["safras"]
+
     log.info(f"\n{'='*50}")
-    log.info(f"Processando: {cultura} (cadeia={cadeia_id})")
+    log.info(f"Processando: {cultura} (cadeia={cadeia_id}, {len(safras)} safras)")
     log.info(f"{'='*50}")
 
     try:
-        safras      = get_safras(token, cadeia_id)
         indicadores = get_indicadores(token, cadeia_id)
     except Exception as e:
         log.error(f"  Erro ao buscar safras/indicadores: {e}")
@@ -256,6 +269,7 @@ for cultura, cadeia_id in CULTURAS.items():
             continue
 
         inseridos = upsert_dados(cultura, cadeia_id, dados)
+        total += inseridos
         log.info(f"    {inseridos} registros inseridos ({len(dados)} retornados)")
         time.sleep(0.3)
 
