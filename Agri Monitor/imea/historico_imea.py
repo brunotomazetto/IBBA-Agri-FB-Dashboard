@@ -255,7 +255,7 @@ for cultura, cfg in CULTURAS.items():
         log.error(f"  Erro ao buscar safras/indicadores: {e}")
         continue
 
-    for ind in indicadores:
+    for ind in indicadores[:3]:  # TESTE: remover [:3] para rodar completo
         ind_id   = str(ind.get("Id", ""))
         ind_nome = ind.get("IndicadorNome", "")
 
