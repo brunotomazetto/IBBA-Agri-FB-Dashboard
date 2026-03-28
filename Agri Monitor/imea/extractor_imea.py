@@ -6,361 +6,426 @@ import re
 import sqlite3
 import time
 from datetime import datetime
-import pandas as pd
+
+import openpyxl
 import requests
+
 # ── Configurações ──────────────────────────────────────────────────────────────
-DB_PATH      = os.path.join(os.path.dirname(__file__), "imea.db")
-# API do IMEA (descoberta via DevTools — endpoint direto, sem necessidade de Playwright)
-# Exemplo de chamada:
-# GET https://api1.imea.com.br/api/arquivo?cadeia=4&tipo=696277432068079616&page=1&pageSize=100&nome=&sort=1
-API_BASE  = "https://api1.imea.com.br/api/arquivo"
-TIPO_ID   = "696277432068079616"   # subcategoria "Custo de Produção" (fixo)
-PAGE_SIZE = 100                    # 100 por página garante histórico completo em 1 chamada
-CULTURAS = {
+DB_PATH = os.path.join(os.path.dirname(__file__), "imea.db")
+
+# API pública IMEA (custos — Excel mensal)
+API_ARQUIVO = "https://api1.imea.com.br/api/arquivo"
+TIPO_CUSTO  = "696277432068079616"
+
+# CONAB (preços mensais por UF — gratuito, sem login)
+URL_PRECO_CONAB = "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/PrecosMensalUF.txt"
+
+CULTURAS_IMEA = {
     "SOJA":    "4",
     "MILHO":   "3",
-    "ALGODAO": "2",
+    "ALGODAO": "1",
 }
-HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Referer":    "https://imea.com.br/",
+
+# Produtos CONAB por cultura (nome exato no arquivo, nível MT)
+PRODUTOS_CONAB = {
+    "SOJA":    ["SOJA EM GRAO", "SOJA"],
+    "MILHO":   ["MILHO EM GRAO", "MILHO"],
+    "ALGODAO": ["ALGODAO EM PLUMA", "ALGODAO"],
 }
+
+HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://imea.com.br/"}
+
 MESES_PT = {
-    "jan": 1, "fev": 2, "mar": 3, "abr": 4,
-    "mai": 5, "jun": 6, "jul": 7, "ago": 8,
-    "set": 9, "out": 10, "nov": 11, "dez": 12,
+    "janeiro":1,"fevereiro":2,"março":3,"abril":4,"maio":5,"junho":6,
+    "julho":7,"agosto":8,"setembro":9,"outubro":10,"novembro":11,"dezembro":12,
+    "jan":1,"fev":2,"mar":3,"abr":4,"mai":5,"jun":6,
+    "jul":7,"ago":8,"set":9,"out":10,"nov":11,"dez":12,
 }
-# Palavras-chave para identificar bloco de custo no Excel
-KW_COE = ("custo operacional efetivo", "coe", "sementes", "fertilizantes",
-           "defensivos", "insumos", "operacoes mecanizadas", "despesas")
-KW_COT = ("custo operacional total", "cot", "mao de obra", "mão de obra", "deprecia")
-KW_CT  = ("custo total", "oportunidade", "arrendamento", "pro-labore", "pró-labore")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+
+NOME_PARA_INDICADOR = {
+    "a. custeio":                    "Custeio",
+    "coe (a + b + ... + f + g)":    "Custo Operacional Efetivo",
+    "cot (coe + h + i)":            "Custo Operacional Total",
+    "ct (cot + j)":                 "Custo Total",
+    "1. sementes":                   "Sementes",
+    "2. fertilizantes e corretivos": "Fertilizantes e Corretivos",
+    "3. defensivos":                 "Defensivos",
+    "4. operações mecanizadas":      "Operações Mecanizadas",
+    "5. serviços terceirizados":     "Serviços Terceirizados",
+    "6. mão de obra":                "Mão de Obra",
+    "b. manutenção":                 "Manutenção",
+    "c. impostos e taxas":           "Impostos e Taxas",
+    "d. financeiras":                "Financeiras",
+    "e. pós-produção":               "Pós-Produção",
+    "f. outros custos":              "Outros Custos",
+    "g. arrendamento":               "Arrendamento",
+    "h. depreciações":               "Depreciações",
+    "i. mão-de-obra familiar":       "Mão-de-obra Familiar",
+    "j. custo de oportunidade":      "Custo de Oportunidade",
+    "custeio":                       "Custeio",
+    "operações mecanizadas":         "Operações Mecanizadas",
+}
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
+
 # ── Inicializa banco ───────────────────────────────────────────────────────────
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 conn = sqlite3.connect(DB_PATH)
+
 conn.executescript("""
-    CREATE TABLE IF NOT EXISTS relatorios (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        imea_id         TEXT    UNIQUE,
-        cultura         TEXT    NOT NULL,
-        nome            TEXT,
-        safra           TEXT,
-        mes_referencia  TEXT,
-        data_publicacao TEXT,
-        nome_arquivo    TEXT,
-        url_s3          TEXT,
-        hash_md5        TEXT    UNIQUE NOT NULL,
-        coletado_em     TEXT    NOT NULL
+    CREATE TABLE IF NOT EXISTS historico (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        cultura          TEXT    NOT NULL,
+        cadeia_id        TEXT,
+        indicador_id     TEXT,
+        indicador_nome   TEXT,
+        safra            TEXT,
+        safra_id         TEXT,
+        safra_tipo       TEXT,
+        data_referencia  TEXT,
+        ano              INTEGER,
+        mes              INTEGER,
+        valor            REAL,
+        unidade          TEXT,
+        estado           TEXT,
+        grupo            TEXT,
+        updated_at       TEXT,
+        UNIQUE(indicador_id, safra_id, data_referencia, estado)
     );
-    CREATE TABLE IF NOT EXISTS custos_itens (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        relatorio_id    INTEGER NOT NULL REFERENCES relatorios(id),
-        cultura         TEXT    NOT NULL,
-        nome_relatorio  TEXT,
-        safra           TEXT,
-        mes_referencia  TEXT,
-        regiao          TEXT,
-        grupo_custo     TEXT,
-        item            TEXT,
-        unidade         TEXT,
-        quantidade      REAL,
-        preco_unitario  REAL,
-        valor_ha        REAL,
-        tipo_custo      TEXT,
-        updated_at      TEXT
+    CREATE TABLE IF NOT EXISTS arquivos_processados (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        imea_id     TEXT    UNIQUE,
+        cultura     TEXT,
+        nome        TEXT,
+        hash_md5    TEXT    UNIQUE,
+        coletado_em TEXT
     );
-    CREATE TABLE IF NOT EXISTS custos_resumo (
-        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-        relatorio_id         INTEGER NOT NULL REFERENCES relatorios(id),
-        cultura              TEXT    NOT NULL,
-        nome_relatorio       TEXT,
-        safra                TEXT,
-        mes_referencia       TEXT,
-        regiao               TEXT,
-        coe_ha               REAL,
-        cot_ha               REAL,
-        ct_ha                REAL,
-        produtividade_sc_ha  REAL,
-        pe_coe_sc_ha         REAL,
-        pe_ct_sc_ha          REAL,
-        updated_at           TEXT
+    CREATE TABLE IF NOT EXISTS preco_conab (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        cultura          TEXT    NOT NULL,
+        produto_conab    TEXT,
+        uf               TEXT,
+        ano              INTEGER,
+        mes              INTEGER,
+        data_referencia  TEXT,
+        nivel_comercializacao TEXT,
+        valor_kg         REAL,
+        updated_at       TEXT,
+        UNIQUE(produto_conab, uf, ano, mes, nivel_comercializacao)
     );
-    CREATE INDEX IF NOT EXISTS idx_itens_rel  ON custos_itens(relatorio_id);
-    CREATE INDEX IF NOT EXISTS idx_resumo_rel ON custos_resumo(relatorio_id);
+    CREATE INDEX IF NOT EXISTS idx_hist_cultura  ON historico(cultura);
+    CREATE INDEX IF NOT EXISTS idx_hist_grupo    ON historico(grupo);
+    CREATE INDEX IF NOT EXISTS idx_preco_cultura ON preco_conab(cultura);
 """)
 conn.commit()
+
 # ── Utilitários ────────────────────────────────────────────────────────────────
-def parse_float(val):
-    try:
-        s = str(val).strip().replace("R$", "").replace(" ", "")
-        if "," in s and "." in s:
-            s = s.replace(".", "").replace(",", ".")
-        elif "," in s:
-            s = s.replace(",", ".")
-        return float(s)
-    except (ValueError, AttributeError):
-        return None
 def md5(content: bytes) -> str:
     return hashlib.md5(content).hexdigest()
-def hash_existe(conn, h: str) -> bool:
+
+def hash_existe(h: str) -> bool:
     return conn.execute(
-        "SELECT 1 FROM relatorios WHERE hash_md5 = ?", (h,)
+        "SELECT 1 FROM arquivos_processados WHERE hash_md5=?", (h,)
     ).fetchone() is not None
-def extrai_mes_ref(texto: str) -> str | None:
-    m = re.search(
-        r"(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*[\W_]?(\d{4})",
-        texto, re.IGNORECASE
-    )
-    if m:
-        mn = MESES_PT.get(m.group(1).lower()[:3], 1)
-        return f"{m.group(2)}-{mn:02d}"
+
+def normaliza(nome: str) -> str:
+    return re.sub(r"\*+$", "", str(nome).strip()).strip().lower()
+
+def extrai_mes(nome: str) -> int | None:
+    n = normaliza(nome)
+    for k, v in MESES_PT.items():
+        if k in n:
+            return v
     return None
-def extrai_safra(texto: str) -> str | None:
-    m = re.search(r"(20\d{2})[/_\-](2\d|\d{2})", texto)
-    return f"{m.group(1)}/{m.group(2)}" if m else None
-def detecta_tipo_custo(row_str: str, tipo_atual: str) -> str:
-    s = row_str.lower()
-    if any(k in s for k in KW_CT):
-        return "CT"
-    if any(k in s for k in KW_COT):
-        return "COT"
-    if any(k in s for k in KW_COE):
-        return "COE"
-    return tipo_atual
-def extrai_numericos(vals: list) -> list:
-    return [f for v in vals if (f := parse_float(v)) is not None and f > 0]
-def limpa(v) -> str:
-    s = str(v).strip()
-    return "" if s.lower() in ("nan", "none", "") else s
-def upsert_itens(conn, rows: list[dict]):
+
+def parse_float(val) -> float | None:
+    try:
+        return float(str(val).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+# ── PARTE 1: Custos + Produtividade via Excel IMEA ─────────────────────────────
+def parse_excel(content: bytes, cultura: str) -> list[dict]:
+    wb   = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    rows = []
+
+    for sheet_name in wb.sheetnames:
+        if sheet_name.lower() == "indice" or not sheet_name.upper().endswith("_MT"):
+            continue
+
+        ws = wb[sheet_name]
+        safra_row = ano_row = mes_row = None
+
+        for r in range(1, 15):
+            c0 = normaliza(ws.cell(r, 1).value or "")
+            if c0 == "safra":               safra_row = r
+            elif c0 == "ano":               ano_row   = r
+            elif c0 in ("mês", "mes"):      mes_row   = r
+
+        if not mes_row:
+            continue
+
+        colunas = {}
+        for c in range(2, ws.max_column + 1):
+            safra    = str(ws.cell(safra_row, c).value or "").strip() if safra_row else ""
+            ano      = str(ws.cell(ano_row,   c).value or "").strip() if ano_row   else ""
+            mes_nome = str(ws.cell(mes_row,   c).value or "").strip()
+            mes_num  = extrai_mes(mes_nome)
+            if not mes_num or not safra:
+                continue
+            try:
+                ano_int = int(float(ano))
+            except:
+                continue
+            colunas[c] = {"safra": safra, "ano": ano_int, "mes": mes_num,
+                          "data_ref": f"{ano_int}-{mes_num:02d}-15"}
+
+        for r in range(mes_row + 1, ws.max_row + 1):
+            nome_raw = str(ws.cell(r, 1).value or "").strip()
+            if not nome_raw:
+                continue
+
+            nome_lower = normaliza(nome_raw)
+
+            # Produtividade Modal — capturar separado como PRODUTIVIDADE
+            if nome_lower.startswith("produtividade modal"):
+                for c, ci in colunas.items():
+                    val = parse_float(ws.cell(r, c).value)
+                    if val is None:
+                        continue
+                    rows.append({
+                        "cultura":        cultura,
+                        "cadeia_id":      CULTURAS_IMEA[cultura],
+                        "indicador_id":   None,
+                        "indicador_nome": "Produtividade Modal",
+                        "safra":          ci["safra"],
+                        "safra_id":       None,
+                        "safra_tipo":     None,
+                        "data_referencia": ci["data_ref"],
+                        "ano":            ci["ano"],
+                        "mes":            ci["mes"],
+                        "valor":          val,
+                        "unidade":        "sc/ha",
+                        "estado":         "MT",
+                        "grupo":          "PRODUTIVIDADE",
+                        "updated_at":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    })
+                continue
+
+            # Ignorar rodapés
+            if nome_lower.startswith(("fonte","nota","unidade","*","dólar","dolar","produtividade")):
+                continue
+
+            # Resolver nome do indicador (custos)
+            ind_nome = NOME_PARA_INDICADOR.get(nome_lower)
+            if not ind_nome:
+                nc = re.sub(r"^[\w]\.\s+", "", nome_raw).strip()
+                nc = re.sub(r"\*+$", "", nc).strip()
+                nc = re.sub(r"\s*\(.*?\)\s*$", "", nc).strip()
+                ind_nome = nc
+
+            for c, ci in colunas.items():
+                val = parse_float(ws.cell(r, c).value)
+                if val is None:
+                    continue
+                rows.append({
+                    "cultura":        cultura,
+                    "cadeia_id":      CULTURAS_IMEA[cultura],
+                    "indicador_id":   None,
+                    "indicador_nome": ind_nome,
+                    "safra":          ci["safra"],
+                    "safra_id":       None,
+                    "safra_tipo":     None,
+                    "data_referencia": ci["data_ref"],
+                    "ano":            ci["ano"],
+                    "mes":            ci["mes"],
+                    "valor":          val,
+                    "unidade":        "R$/ha",
+                    "estado":         "MT",
+                    "grupo":          "CUSTO",
+                    "updated_at":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                })
+    return rows
+
+
+def upsert_historico(rows: list[dict]) -> int:
     if not rows:
-        return
-    pd.DataFrame(rows).to_sql(
-        "custos_itens", conn, if_exists="append", index=False, method="multi"
+        return 0
+    conn.executemany(
+        """INSERT OR IGNORE INTO historico
+           (cultura, cadeia_id, indicador_id, indicador_nome, safra, safra_id,
+            safra_tipo, data_referencia, ano, mes, valor, unidade, estado,
+            grupo, updated_at)
+           VALUES (:cultura,:cadeia_id,:indicador_id,:indicador_nome,:safra,:safra_id,
+                   :safra_tipo,:data_referencia,:ano,:mes,:valor,:unidade,:estado,
+                   :grupo,:updated_at)""",
+        rows,
     )
-    conn.execute("""
-        DELETE FROM custos_itens WHERE id NOT IN (
-            SELECT MAX(id) FROM custos_itens
-            GROUP BY relatorio_id, regiao, grupo_custo, item, tipo_custo
-        )
-    """)
     conn.commit()
-def upsert_resumo(conn, row: dict):
-    pd.DataFrame([row]).to_sql(
-        "custos_resumo", conn, if_exists="append", index=False, method="multi"
-    )
-    conn.execute("""
-        DELETE FROM custos_resumo WHERE id NOT IN (
-            SELECT MAX(id) FROM custos_resumo
-            GROUP BY relatorio_id, regiao
-        )
-    """)
-    conn.commit()
-# ── API IMEA: lista todos os relatórios disponíveis ────────────────────────────
-def lista_relatorios_api(cultura: str, cadeia_id: str) -> list[dict]:
-    """
-    Chama a API do IMEA e retorna todos os relatórios disponíveis para a cultura.
-    Usa paginação para garantir histórico completo.
-    """
-    todos = []
-    page  = 1
+    return len(rows)
+
+
+def lista_relatorios(cadeia_id: str) -> list[dict]:
+    todos, page = [], 1
     while True:
-        url = (
-            f"{API_BASE}"
-            f"?cadeia={cadeia_id}"
-            f"&tipo={TIPO_ID}"
-            f"&page={page}"
-            f"&pageSize={PAGE_SIZE}"
-            f"&nome=&sort=1"
-        )
+        url = f"{API_ARQUIVO}?cadeia={cadeia_id}&tipo={TIPO_CUSTO}&page={page}&pageSize=100&nome=&sort=1"
         try:
             resp = requests.get(url, headers=HEADERS, timeout=30)
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            log.error(f"[{cultura}] Erro na API (page={page}): {e}")
+            log.error(f"  Erro API: {e}")
             break
-        results = data.get("Result", [])
-        todos.extend(results)
-        log.info(
-            f"[{cultura}] API page={page} → {len(results)} itens "
-            f"(total={data.get('TotalCount')})"
-        )
+        todos.extend(data.get("Result", []))
         if page >= data.get("PageCount", 1):
             break
         page += 1
-        time.sleep(0.5)
+        time.sleep(0.3)
     return todos
-# ── Parse do Excel ─────────────────────────────────────────────────────────────
-def parse_excel(content: bytes, cultura: str, nome_relatorio: str) -> dict:
-    """
-    Lê todas as abas do Excel do IMEA e extrai:
-    - itens de custo linha a linha (grupo, item, unidade, qtd, preço, R$/ha, COE/COT/CT)
-    - resumo (COE/COT/CT totais, produtividade, ponto de equilíbrio)
-    - safra e mês de referência
-    O nome da aba é usado como campo 'regiao' (ex: "Médio Norte", "Sul MT").
-    """
-    xls = pd.ExcelFile(io.BytesIO(content))
-    log.info(f"  Abas: {xls.sheet_names}")
-    itens  = []
-    resumo = {
-        "coe_ha": None, "cot_ha": None, "ct_ha": None,
-        "produtividade_sc_ha": None,
-        "pe_coe_sc_ha": None, "pe_ct_sc_ha": None,
-    }
-    safra   = extrai_safra(nome_relatorio)
-    mes_ref = extrai_mes_ref(nome_relatorio)
-    SKIP = ("total", "subtotal", "nan", "", "item", "grupo", "descricao",
-            "r$/ha", "r$", "unidade", "quantidade", "custo")
-    for sheet in xls.sheet_names:
-        try:
-            df = pd.read_excel(io.BytesIO(content), sheet_name=sheet, header=None)
-        except Exception as e:
-            log.warning(f"  Erro aba '{sheet}': {e}")
-            continue
-        regiao           = sheet   # nome da aba = região
-        tipo_custo_atual = "COE"
-        for r in range(len(df)):
-            row_vals = [limpa(v) for v in df.iloc[r]]
-            row_str  = " ".join(row_vals).lower()
-            # Captura safra/mês no cabeçalho
-            if r < 20:
-                for cell in row_vals:
-                    safra   = safra   or extrai_safra(cell)
-                    mes_ref = mes_ref or extrai_mes_ref(cell)
-            # Detectar bloco COE / COT / CT
-            tipo_custo_atual = detecta_tipo_custo(row_str, tipo_custo_atual)
-            # Capturar totais para resumo
-            if "custo operacional efetivo" in row_str or "total coe" in row_str:
-                nums = extrai_numericos(row_vals)
-                resumo["coe_ha"] = resumo["coe_ha"] or (nums[-1] if nums else None)
-            if "custo operacional total" in row_str or "total cot" in row_str:
-                nums = extrai_numericos(row_vals)
-                resumo["cot_ha"] = resumo["cot_ha"] or (nums[-1] if nums else None)
-            if re.search(r"\bcusto total\b", row_str) and "operacional" not in row_str:
-                nums = extrai_numericos(row_vals)
-                resumo["ct_ha"] = resumo["ct_ha"] or (nums[-1] if nums else None)
-            if "produtividade" in row_str and "sc" in row_str:
-                nums = extrai_numericos(row_vals)
-                resumo["produtividade_sc_ha"] = resumo["produtividade_sc_ha"] or (nums[-1] if nums else None)
-            if "ponto de equil" in row_str or "ponto equil" in row_str:
-                nums = extrai_numericos(row_vals)
-                if nums:
-                    if not resumo["pe_coe_sc_ha"]:
-                        resumo["pe_coe_sc_ha"] = nums[-1]
-                    elif not resumo["pe_ct_sc_ha"]:
-                        resumo["pe_ct_sc_ha"] = nums[-1]
-            # Extrair linha de item de custo
-            primeiro = row_vals[0].lower() if row_vals else ""
-            if not primeiro or primeiro in SKIP or primeiro.startswith("custo"):
+
+
+def processa_custos():
+    log.info("\n=== CUSTOS + PRODUTIVIDADE (Excel IMEA) ===")
+    for cultura, cadeia_id in CULTURAS_IMEA.items():
+        log.info(f"\n[{cultura}]")
+        relatorios = lista_relatorios(cadeia_id)
+        log.info(f"  {len(relatorios)} relatório(s)")
+
+        for rel in relatorios:
+            imea_id = rel.get("Id", "")
+            nome    = rel.get("Nome", "")
+            url_s3  = rel.get("Path", "")
+            if not url_s3:
                 continue
-            nums = extrai_numericos(row_vals)
-            if len(nums) < 2:
+            log.info(f"  → {nome}")
+            try:
+                content = requests.get(url_s3, headers=HEADERS, timeout=60).content
+            except Exception as e:
+                log.error(f"    Download: {e}")
                 continue
-            grupo  = limpa(row_vals[0])
-            item   = limpa(row_vals[1]) if len(row_vals) > 1 else grupo
-            unidad = limpa(row_vals[2]) if len(row_vals) > 2 else ""
-            if not item or len(item) < 3:
+
+            h = md5(content)
+            if hash_existe(h):
+                log.info(f"    Já processado — pulando.")
                 continue
-            itens.append({
-                "cultura":        cultura,
-                "nome_relatorio": nome_relatorio,
-                "safra":          safra,
-                "mes_referencia": mes_ref,
-                "regiao":         regiao,
-                "grupo_custo":    grupo,
-                "item":           item,
-                "unidade":        unidad,
-                "quantidade":     nums[0] if len(nums) > 0 else None,
-                "preco_unitario": nums[1] if len(nums) > 1 else None,
-                "valor_ha":       nums[-1],
-                "tipo_custo":     tipo_custo_atual,
-                "updated_at":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "relatorio_id":   None,
-            })
-    log.info(f"  Itens: {len(itens)} | COE={resumo['coe_ha']} | CT={resumo['ct_ha']}")
-    return {"safra": safra, "mes_ref": mes_ref, "itens": itens, "resumo": resumo}
-# ── Pipeline por cultura ───────────────────────────────────────────────────────
-def processa_cultura(cultura: str, cadeia_id: str):
-    relatorios = lista_relatorios_api(cultura, cadeia_id)
-    if not relatorios:
-        log.info(f"[{cultura}] Nenhum relatório encontrado na API — nada a fazer.")
+
+            try:
+                rows = parse_excel(content, cultura)
+            except Exception as e:
+                log.error(f"    Parse: {e}", exc_info=True)
+                continue
+
+            custos = [r for r in rows if r["grupo"] == "CUSTO"]
+            produt = [r for r in rows if r["grupo"] == "PRODUTIVIDADE"]
+            ins_c  = upsert_historico(custos)
+            ins_p  = upsert_historico(produt)
+
+            conn.execute(
+                "INSERT OR IGNORE INTO arquivos_processados (imea_id,cultura,nome,hash_md5,coletado_em) VALUES (?,?,?,?,?)",
+                (imea_id, cultura, nome, h, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            )
+            conn.commit()
+            log.info(f"    {ins_c} custos + {ins_p} produtividades inseridos")
+            time.sleep(0.5)
+
+        if not relatorios:
+            log.info(f"  Nenhum relatório novo.")
+
+
+# ── PARTE 2: Preços mensais via CONAB ─────────────────────────────────────────
+def processa_precos_conab():
+    log.info("\n=== PREÇOS MENSAIS (CONAB) ===")
+    try:
+        resp = requests.get(URL_PRECO_CONAB, timeout=120, verify=False)
+        resp.raise_for_status()
+        content = resp.content.decode("latin1")
+    except Exception as e:
+        log.error(f"  Erro download CONAB: {e}")
         return
-    novos = 0
-    for rel in relatorios:
-        imea_id  = rel.get("Id", "")
-        nome     = rel.get("Nome", "")
-        url_s3   = rel.get("Path", "")
-        data_pub = (rel.get("Data") or "")[:10]   # "2026-03-16T00:00:00" → "2026-03-16"
-        if not url_s3:
-            log.warning(f"  Sem URL para '{nome}' — pulando.")
+
+    linhas = content.splitlines()
+    if not linhas:
+        return
+
+    cabecalho = [c.strip().lower() for c in linhas[0].split(";")]
+    log.info(f"  Colunas: {cabecalho}")
+
+    # Mapear todos os nomes de produto CONAB que queremos
+    produtos_alvo = {}
+    for cultura, nomes in PRODUTOS_CONAB.items():
+        for nome in nomes:
+            produtos_alvo[nome.upper().strip()] = cultura
+
+    registros = []
+    for linha in linhas[1:]:
+        cols = [c.strip() for c in linha.split(";")]
+        if len(cols) < len(cabecalho):
             continue
-        log.info(f"  → {nome} ({data_pub})")
+
+        row = dict(zip(cabecalho, cols))
+        produto = row.get("produto", "").strip().upper()
+        uf      = row.get("uf", "").strip().upper()
+
+        # Filtrar: só MT e produtos alvo
+        if uf != "MT":
+            continue
+
+        cultura = None
+        for nome_alvo, cult in produtos_alvo.items():
+            if nome_alvo in produto:
+                cultura = cult
+                break
+        if not cultura:
+            continue
+
         try:
-            resp = requests.get(url_s3, headers=HEADERS, timeout=60)
-            resp.raise_for_status()
-            content = resp.content
-        except Exception as e:
-            log.error(f"  Erro no download: {e}")
+            ano = int(row.get("ano", 0))
+            mes = int(row.get("mes", 0))
+            val = float(row.get("valor_produto_kg", "0").replace(",", "."))
+        except (ValueError, TypeError):
             continue
-        h = md5(content)
-        if hash_existe(conn, h):
-            log.info(f"  ↳ Já existe no banco (md5={h[:8]}…) — pulando.")
+
+        if ano < 2020 or mes < 1 or mes > 12 or val <= 0:
             continue
-        nome_arquivo = f"{cultura}_{imea_id}.xlsx"
-        # Parse do Excel
-        try:
-            parsed = parse_excel(content, cultura, nome)
-        except Exception as e:
-            log.error(f"  Erro no parse: {e}", exc_info=True)
-            continue
-        safra   = parsed["safra"]   or extrai_safra(data_pub)
-        mes_ref = parsed["mes_ref"] or data_pub[:7]   # fallback: "2026-03"
-        # Inserir meta do relatório
-        cur = conn.execute(
-            """INSERT OR IGNORE INTO relatorios
-               (imea_id, cultura, nome, safra, mes_referencia, data_publicacao,
-                nome_arquivo, url_s3, hash_md5, coletado_em)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (imea_id, cultura, nome, safra, mes_ref, data_pub,
-             nome_arquivo, url_s3, h, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+
+        nivel = row.get("dsc_nivel_comercializacao", "").strip()
+        registros.append((
+            cultura,
+            produto,
+            uf,
+            ano,
+            mes,
+            f"{ano}-{mes:02d}-15",
+            nivel,
+            val,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ))
+
+    if registros:
+        conn.executemany(
+            """INSERT OR REPLACE INTO preco_conab
+               (cultura, produto_conab, uf, ano, mes, data_referencia,
+                nivel_comercializacao, valor_kg, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            registros,
         )
         conn.commit()
-        rel_id = cur.lastrowid
-        log.info(f"  ↳ Inserido: id={rel_id} | safra={safra} | mes={mes_ref}")
-        # Inserir itens
-        itens = parsed["itens"]
-        for item in itens:
-            item["relatorio_id"] = rel_id
-        upsert_itens(conn, itens)
-        log.info(f"  ↳ {len(itens)} itens inseridos")
-        # Inserir resumo
-        resumo = parsed["resumo"]
-        resumo.update({
-            "relatorio_id":   rel_id,
-            "cultura":        cultura,
-            "nome_relatorio": nome,
-            "safra":          safra,
-            "mes_referencia": mes_ref,
-            "regiao":         None,
-            "updated_at":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        })
-        upsert_resumo(conn, resumo)
-        novos += 1
-        time.sleep(0.5)   # respeita o servidor
-    if novos == 0:
-        log.info(f"[{cultura}] Base já atualizada — nenhum arquivo novo.")
+        log.info(f"  {len(registros)} preços inseridos/atualizados (MT)")
+
+        # Resumo por cultura
+        for row in conn.execute("""
+            SELECT cultura, COUNT(*) as n, MIN(data_referencia), MAX(data_referencia)
+            FROM preco_conab GROUP BY cultura ORDER BY cultura
+        """):
+            log.info(f"  {row[0]}: {row[1]} registros | {row[2]} → {row[3]}")
     else:
-        log.info(f"[{cultura}] {novos} novo(s) relatório(s) inserido(s).")
+        log.info("  Nenhum preço encontrado para MT")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
-for cultura, cadeia_id in CULTURAS.items():
-    try:
-        processa_cultura(cultura, cadeia_id)
-    except Exception as e:
-        log.error(f"ERRO em {cultura}: {e}", exc_info=True)
+processa_custos()
+processa_precos_conab()
+
 conn.close()
 print("\nConcluído.")
