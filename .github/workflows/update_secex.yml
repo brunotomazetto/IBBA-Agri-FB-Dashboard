@@ -1,0 +1,34 @@
+name: Update Secex
+
+on:
+  schedule:
+    # Roda todo dia de 1 a 10 de cada mês às 11h UTC (8h Brasília)
+    - cron: "0 11 1-10 * *"
+  workflow_dispatch: # permite rodar manualmente pelo GitHub
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+
+      - name: Configura Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instala dependências
+        run: pip install requests pandas
+
+      - name: Roda extractor
+        run: python secex/extractor_secex.py
+
+      - name: Commit e push do .db atualizado
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add secex/secex.db
+          git diff --cached --quiet || git commit -m "chore: atualiza secex.db $(date +'%Y-%m')"
+          git push
