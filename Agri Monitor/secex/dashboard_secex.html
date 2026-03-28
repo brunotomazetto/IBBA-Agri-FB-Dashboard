@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Exportações — Secex</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --orange:#FF5500;--black:#1A1A1A;--gray-dark:#333;--gray-mid:#888;
+  --gray-light:#F4F4F4;--border:#E5E5E5;--white:#fff;--green:#27AE60;
+  --font:'Segoe UI',Helvetica,Arial,sans-serif;--radius:8px;
+}
+html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-dark);}
+
+/* ── Filter bar ── */
+.filter-bar{background:var(--white);border-bottom:1px solid var(--border);
+  padding:12px 20px;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;}
+.filter-group{display:flex;flex-direction:column;gap:4px;}
+.filter-label{font-size:10px;font-weight:700;color:var(--gray-mid);text-transform:uppercase;letter-spacing:.5px;}
+.filter-sep{width:1px;height:44px;background:var(--border);align-self:center;}
+.seg{display:inline-flex;background:var(--gray-light);border:1px solid var(--border);border-radius:5px;padding:2px;gap:2px;}
+.seg-btn{padding:5px 12px;border:none;border-radius:4px;font-size:12px;font-weight:600;
+  cursor:pointer;font-family:var(--font);background:transparent;color:var(--gray-mid);transition:all .15s;}
+.seg-btn.on{background:var(--white);color:var(--orange);box-shadow:0 1px 3px rgba(0,0,0,.1);}
+.seg-btn:hover:not(.on){color:var(--gray-dark);}
+.cmdty-pills{display:flex;gap:6px;flex-wrap:wrap;}
+.pill{display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;
+  border:1.5px solid var(--border);cursor:pointer;font-size:12px;font-weight:600;
+  color:var(--gray-mid);background:var(--white);transition:all .15s;user-select:none;}
+.pill .dot{width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0;transition:background .15s;}
+.pill:hover{border-color:#bbb;color:var(--gray-dark);}
+.pill.on{border-color:var(--c);color:var(--c);background:rgba(0,0,0,.04);}
+.pill.on .dot{background:var(--c);}
+
+/* ── Body ── */
+.body{padding:16px 20px 50px;}
+
+/* ── KPIs ── */
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:16px;}
+.kpi-card{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);
+  padding:13px 15px;border-top:3px solid var(--border);}
+.kpi-label{font-size:9.5px;font-weight:700;color:var(--gray-mid);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;}
+.kpi-value{font-size:19px;font-weight:700;color:var(--black);line-height:1;}
+.kpi-unit{font-size:10px;color:var(--gray-mid);margin-top:3px;}
+
+/* ── Section header ── */
+.section-hdr{display:flex;align-items:center;justify-content:space-between;margin:20px 0 10px;flex-wrap:wrap;gap:8px;}
+.section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
+  color:var(--gray-mid);border-left:3px solid var(--orange);padding-left:8px;}
+
+/* ── Charts ── */
+.chart-card{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:12px;}
+.chart-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px;}
+.chart-title{font-size:13px;font-weight:700;color:var(--black);margin-bottom:2px;}
+.chart-sub{font-size:11px;color:var(--gray-mid);}
+.chart-wrap{position:relative;height:240px;}
+
+/* ── Loading ── */
+.state-overlay{position:fixed;inset:0;background:var(--gray-light);display:flex;
+  align-items:center;justify-content:center;z-index:50;flex-direction:column;gap:14px;}
+.spinner{width:32px;height:32px;border:3px solid #ddd;border-top-color:var(--orange);
+  border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.state-msg{font-size:13px;color:var(--gray-mid);}
+.error-box{background:white;border:1px solid #fcc;border-radius:8px;padding:20px 28px;max-width:440px;text-align:center;}
+.error-box h3{font-size:15px;font-weight:700;color:#c0392b;margin-bottom:8px;}
+.error-box p{font-size:12.5px;color:var(--gray-mid);line-height:1.6;}
+.source-note{font-size:11px;color:#bbb;text-align:right;margin-top:14px;font-style:italic;}
+.btn-dl{padding:6px 14px;background:transparent;border:1.5px solid var(--border);
+  border-radius:5px;font-size:12px;color:var(--gray-dark);cursor:pointer;font-family:var(--font);}
+.btn-dl:hover{border-color:var(--orange);color:var(--orange);}
+@media(max-width:720px){.kpi-row{grid-template-columns:repeat(2,1fr);}}
+</style>
+</head>
+<body>
+
+<div id="state-overlay" class="state-overlay">
+  <div class="spinner"></div>
+  <div class="state-msg" id="state-msg">Carregando banco de dados...</div>
+</div>
+
+<div id="app" style="display:none;">
+
+  <div class="filter-bar">
+    <div class="filter-group">
+      <div class="filter-label">Categoria</div>
+      <div class="cmdty-pills" id="pills"></div>
+    </div>
+    <div class="filter-sep"></div>
+    <div class="filter-group">
+      <div class="filter-label">Período</div>
+      <div class="seg">
+        <button class="seg-btn on" onclick="setPeriod('monthly',this)">Mensal</button>
+        <button class="seg-btn"    onclick="setPeriod('annual',this)">Anual</button>
+      </div>
+    </div>
+    <div class="filter-sep"></div>
+    <div class="filter-group">
+      <div class="filter-label">Janela</div>
+      <div class="seg">
+        <button class="seg-btn on" onclick="setYears(5,this)">5 anos</button>
+        <button class="seg-btn"    onclick="setYears(10,this)">10 anos</button>
+        <button class="seg-btn"    onclick="setYears(99,this)">Histórico</button>
+      </div>
+    </div>
+    <div class="filter-sep"></div>
+    <div class="filter-group">
+      <div class="filter-label">Exportar</div>
+      <button class="btn-dl" onclick="downloadCsv()">&#8659; CSV</button>
+    </div>
+  </div>
+
+  <div class="body">
+
+    <div class="section-hdr">
+      <div class="section-title">Últimos 12 meses disponíveis</div>
+    </div>
+    <div class="kpi-row" id="kpi-row"></div>
+
+    <div class="section-hdr">
+      <div class="section-title">Exportações</div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title" id="title-exp">Exportações — Valor FOB</div>
+          <div class="chart-sub"   id="sub-exp">Série histórica — USD</div>
+        </div>
+        <div class="seg">
+          <button class="seg-btn on" onclick="setMetric('fob',this)">FOB (USD)</button>
+          <button class="seg-btn"    onclick="setMetric('kg',this)">Volume (kg)</button>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="ch-exp"></canvas></div>
+    </div>
+
+    <div class="section-hdr">
+      <div class="section-title">Preço Médio (USD/t)</div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Preço Médio de Exportação</div>
+          <div class="chart-sub" id="sub-preco">Série histórica — USD por tonelada (FOB ÷ peso)</div>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="ch-preco"></canvas></div>
+    </div>
+
+    <div class="source-note">Fonte: Secex / MDIC — Atualizado mensalmente via GitHub Actions</div>
+  </div>
+</div>
+
+<script>
+const DB_URL = 'https://raw.githubusercontent.com/ryumatsuyama98/agrimonitor/main/secex/secex.db';
+
+const CAT_COLORS = {
+  'Soja':    '#1A1A1A',
+  'Milho':   '#FF5500',
+  'Algodão': '#2980B9',
+  'Açúcar':  '#27AE60',
+};
+
+const MESES = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+let ROWS = [], CHARTS = {};
+let ACTIVE  = new Set(Object.keys(CAT_COLORS));
+let PERIOD  = 'monthly';
+let N_YEARS = 5;
+let METRIC  = 'fob';
+
+async function init(){
+  try {
+    setMsg('Inicializando sql.js...');
+    const SQL = await initSqlJs({ locateFile: f=>`https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
+    setMsg('Baixando banco de dados...');
+    const resp = await fetch(DB_URL, { cache:'no-cache' });
+    if(!resp.ok) throw new Error(`HTTP ${resp.status} ao buscar secex.db`);
+    const buf = await resp.arrayBuffer();
+    setMsg('Carregando dados...');
+    const db = new SQL.Database(new Uint8Array(buf));
+    const res = db.exec('SELECT * FROM exportacoes ORDER BY co_ano, co_mes, categoria, co_ncm');
+    if(!res.length) throw new Error('Tabela exportacoes vazia ou não encontrada.');
+    const cols = res[0].columns;
+    ROWS = res[0].values.map(r=>{ const o={}; cols.forEach((c,i)=>o[c]=r[i]); return o; });
+    buildPills();
+    render();
+    hideOverlay();
+  } catch(e){ showError(e.message); }
+}
+
+function buildPills(){
+  const el = document.getElementById('pills');
+  el.innerHTML = '';
+  Object.entries(CAT_COLORS).forEach(([cat, color])=>{
+    const div = document.createElement('div');
+    div.className = 'pill on';
+    div.style.setProperty('--c', color);
+    div.id = 'pill-'+cat;
+    div.innerHTML = `<span class="dot"></span>${cat}`;
+    div.onclick = ()=>toggleCat(cat);
+    el.appendChild(div);
+  });
+}
+
+function toggleCat(cat){
+  if(ACTIVE.has(cat)) ACTIVE.delete(cat); else ACTIVE.add(cat);
+  document.getElementById('pill-'+cat).classList.toggle('on', ACTIVE.has(cat));
+  render();
+}
+
+function setPeriod(p,btn){
+  PERIOD=p;
+  btn.closest('.seg').querySelectorAll('.seg-btn').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  render();
+}
+
+function setYears(n,btn){
+  N_YEARS=n;
+  btn.closest('.seg').querySelectorAll('.seg-btn').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  render();
+}
+
+function setMetric(m,btn){
+  METRIC=m;
+  btn.closest('.seg').querySelectorAll('.seg-btn').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  renderExp(filteredRows());
+}
+
+function filteredRows(){
+  const maxYear = Math.max(...ROWS.map(r=>r.co_ano));
+  const minYear = N_YEARS>=99 ? 1997 : maxYear-N_YEARS+1;
+  return ROWS.filter(r=>ACTIVE.has(r.categoria) && r.co_ano>=minYear);
+}
+
+function buildSeries(rows, getVal){
+  if(PERIOD==='monthly'){
+    const rawLabels = [...new Set(rows.map(r=>`${r.co_ano}-${String(r.co_mes).padStart(2,'0')}`))]
+      .sort();
+    const datasets = [...ACTIVE].map(cat=>{
+      const byMonth={};
+      rows.filter(r=>r.categoria===cat).forEach(r=>{
+        const k=`${r.co_ano}-${String(r.co_mes).padStart(2,'0')}`;
+        if(!byMonth[k]) byMonth[k]={fob:0,kg:0};
+        byMonth[k].fob += r.vl_fob    ||0;
+        byMonth[k].kg  += r.kg_liquido||0;
+      });
+      return {
+        label:cat, borderColor:CAT_COLORS[cat], backgroundColor:CAT_COLORS[cat]+'22',
+        borderWidth:2, pointRadius:2, pointHoverRadius:5, tension:.3, fill:false, spanGaps:true,
+        data: rawLabels.map(l=>getVal(byMonth[l]))
+      };
+    });
+    const labels = rawLabels.map(l=>{ const [y,m]=l.split('-'); return MESES[parseInt(m)]+'/'+y.slice(2); });
+    return {labels, datasets, type:'line'};
+  } else {
+    const years = [...new Set(rows.map(r=>r.co_ano))].sort();
+    const datasets = [...ACTIVE].map(cat=>{
+      const byYear={};
+      rows.filter(r=>r.categoria===cat).forEach(r=>{
+        if(!byYear[r.co_ano]) byYear[r.co_ano]={fob:0,kg:0};
+        byYear[r.co_ano].fob += r.vl_fob    ||0;
+        byYear[r.co_ano].kg  += r.kg_liquido||0;
+      });
+      return {
+        label:cat, backgroundColor:CAT_COLORS[cat]+'CC', borderColor:CAT_COLORS[cat],
+        borderWidth:1, borderRadius:3, spanGaps:true,
+        data: years.map(y=>getVal(byYear[y]))
+      };
+    });
+    return {labels:years.map(String), datasets, type:'bar'};
+  }
+}
+
+function drawChart(id, {labels,datasets,type}, yFmt, tooltipFmt){
+  if(CHARTS[id]) CHARTS[id].destroy();
+  CHARTS[id] = new Chart(document.getElementById(id).getContext('2d'),{
+    type,
+    data:{labels,datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'bottom',labels:{boxWidth:11,font:{size:10},padding:8}},
+        tooltip:{callbacks:{label:c=>{ const v=c.parsed.y; return v==null?null:' '+c.dataset.label+': '+tooltipFmt(v); }}}
+      },
+      scales:{
+        x:{grid:{color:'#f0f0f0'},ticks:{font:{size:10},maxRotation:45,maxTicksLimit:24}},
+        y:{grid:{color:'#f0f0f0'},ticks:{font:{size:10},callback:yFmt}}
+      }
+    }
+  });
+}
+
+function render(){
+  const rows = filteredRows();
+  renderKPIs(rows);
+  renderExp(rows);
+  renderPreco(rows);
+}
+
+function renderExp(rows){
+  const isFob = METRIC==='fob';
+  document.getElementById('title-exp').textContent = isFob ? 'Exportações — Valor FOB' : 'Exportações — Volume';
+  document.getElementById('sub-exp').textContent   = (isFob ? 'Série histórica — USD' : 'Série histórica — kg líquido') + (PERIOD==='annual'?' — anual':' — mensal');
+  const series = buildSeries(rows, d=>d ? (isFob ? d.fob : d.kg) : null);
+  const yFmt   = isFob ? v=>'US$ '+fmtShort(v) : v=>fmtShort(v)+' kg';
+  const ttFmt  = isFob ? v=>'US$ '+fmt(v,0) : v=>fmt(v,0)+' kg';
+  drawChart('ch-exp', series, yFmt, ttFmt);
+}
+
+function renderPreco(rows){
+  document.getElementById('sub-preco').textContent =
+    'Série histórica — USD/t'+(PERIOD==='annual'?' — anual':' — mensal');
+  const series = buildSeries(rows, d=>d && d.kg>0 ? (d.fob/d.kg*1000) : null);
+  series.datasets.forEach(ds=>{ ds.type='line'; ds.fill=false; ds.backgroundColor='transparent'; ds.pointRadius=PERIOD==='monthly'?2:3; });
+  series.type = 'line';
+  drawChart('ch-preco', series,
+    v=>'US$ '+fmtShort(v),
+    v=>'US$ '+fmt(v,2)+'/t'
+  );
+}
+
+function renderKPIs(rows){
+  const maxYear  = Math.max(...ROWS.map(r=>r.co_ano));
+  const maxMonth = Math.max(...ROWS.filter(r=>r.co_ano===maxYear).map(r=>r.co_mes));
+  const last12 = ROWS.filter(r=>{
+    if(!ACTIVE.has(r.categoria)) return false;
+    if(r.co_ano===maxYear && r.co_mes<=maxMonth) return true;
+    if(r.co_ano===maxYear-1 && r.co_mes>maxMonth) return true;
+    return false;
+  });
+  const el = document.getElementById('kpi-row');
+  el.innerHTML = '';
+  [...ACTIVE].forEach(cat=>{
+    const cr = last12.filter(r=>r.categoria===cat);
+    const fob = cr.reduce((s,r)=>s+(r.vl_fob||0),0);
+    const kg  = cr.reduce((s,r)=>s+(r.kg_liquido||0),0);
+    const prc = kg>0 ? fob/kg*1000 : 0;
+    const col = CAT_COLORS[cat];
+    el.innerHTML += `
+      <div class="kpi-card" style="border-top-color:${col}">
+        <div class="kpi-label">${cat} — FOB</div>
+        <div class="kpi-value">US$ ${fmtB(fob)}</div>
+        <div class="kpi-unit">últimos 12 meses</div>
+      </div>
+      <div class="kpi-card" style="border-top-color:${col}">
+        <div class="kpi-label">${cat} — Volume</div>
+        <div class="kpi-value">${fmt(kg/1e6,1)} Mt</div>
+        <div class="kpi-unit">milhões de toneladas</div>
+      </div>
+      <div class="kpi-card" style="border-top-color:${col}">
+        <div class="kpi-label">${cat} — Preço médio</div>
+        <div class="kpi-value">US$ ${fmt(prc,0)}</div>
+        <div class="kpi-unit">por tonelada</div>
+      </div>`;
+  });
+}
+
+function downloadCsv(){
+  const rows=filteredRows();
+  if(!rows.length){alert('Nenhum dado carregado.');return;}
+  const h=['Ano','Mês','NCM','Categoria','Produto','Valor FOB (USD)','Kg Líquido','Atualizado em'];
+  const csv='\uFEFF'+[h,...rows.map(r=>[r.co_ano,r.co_mes,r.co_ncm,r.categoria,r.produto,r.vl_fob,r.kg_liquido,r.updated_at])]
+    .map(r=>r.map(v=>v==null?'':String(v).replace(/;/g,',')).join(';')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));
+  a.download=`secex_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+function fmt(v,d){ if(v==null||isNaN(v))return'—'; return Number(v).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function fmtB(v){ if(v>=1e9)return(v/1e9).toFixed(1)+'Bi'; if(v>=1e6)return(v/1e6).toFixed(0)+'Mi'; return fmt(v,0); }
+function fmtShort(v){ const a=Math.abs(v); if(a>=1e9)return(v/1e9).toFixed(1)+'B'; if(a>=1e6)return(v/1e6).toFixed(0)+'M'; if(a>=1e3)return(v/1e3).toFixed(0)+'k'; return v; }
+function esc(s){ return s==null?'':String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function setMsg(m){ document.getElementById('state-msg').textContent=m; }
+function hideOverlay(){ document.getElementById('state-overlay').style.display='none'; document.getElementById('app').style.display='block'; }
+function showError(msg){
+  document.getElementById('state-overlay').innerHTML=`<div class="error-box">
+    <h3>Erro ao carregar dados</h3><p>${esc(msg)}</p>
+    <p style="margin-top:10px;font-size:11px;">Verifique se <code>secex.db</code> existe em
+    <code>agrimonitor/secex/secex.db</code> no repositório público.</p></div>`;
+}
+
+init();
+</script>
+</body>
+</html>
