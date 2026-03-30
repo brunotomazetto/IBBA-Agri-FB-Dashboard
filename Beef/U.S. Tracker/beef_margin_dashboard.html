@@ -1,549 +1,694 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>U.S. Beef Packer Margin Tracker</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
-<style>
-:root{
-  --or:#FF5500;--bk:#333333;--gy:#888888;
-  --bg:#F4F4F4;--bd:#E5E5E5;--wh:#FFFFFF;
-  --gr:#27AE60;--rd:#C0392B;
-  --font:'Segoe UI',Arial,sans-serif;
-}
-*{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:var(--font);background:var(--bg);color:var(--bk);font-size:12px;}
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>U.S. Beef Packer Margin Tracker</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.2/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #F4F4F4; color: #333; font-size: 13px; }
 
-.hdr{background:var(--wh);border-bottom:3px solid var(--or);padding:13px 24px;display:flex;align-items:center;justify-content:space-between;}
-.hdr-title{font-size:14px;font-weight:700;color:var(--or);}
-.hdr-sub{font-size:10px;color:var(--gy);margin-top:2px;}
-.hdr-right{font-size:10px;color:var(--gy);}
+    /* ── HEADER ─────────────────────────────────────────────────── */
+    .header {
+      background: #1A1A1A; color: #fff;
+      padding: 14px 24px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .header-title { font-size: 17px; font-weight: 700; letter-spacing: 0.3px; }
+    .header-sub   { font-size: 11px; color: #999; margin-top: 2px; }
+    .header-logo  { color: #FF5500; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; }
 
-.nav-strip{background:var(--wh);border-bottom:1px solid var(--bd);padding:0 24px;display:flex;align-items:center;justify-content:space-between;}
-.tabs{display:flex;}
-.tab{padding:9px 18px;font-size:12px;font-weight:600;color:var(--gy);cursor:pointer;border-bottom:3px solid transparent;transition:all .15s;}
-.tab:hover{color:var(--bk);}
-.tab.active{color:var(--or);border-bottom-color:var(--or);}
+    /* ── NAV STRIP ──────────────────────────────────────────────── */
+    .nav-strip {
+      background: #fff; border-bottom: 2px solid #E5E5E5;
+      padding: 0 24px;
+      display: flex; align-items: center; gap: 24px;
+    }
+    .tab {
+      padding: 13px 0; font-size: 13px; font-weight: 600;
+      color: #888; cursor: pointer;
+      border-bottom: 3px solid transparent; margin-bottom: -2px;
+      transition: color 0.15s;
+    }
+    .tab.active { color: #FF5500; border-bottom-color: #FF5500; }
+    .nav-sep { width: 1px; height: 20px; background: #E5E5E5; }
+    .toggle-group { display: flex; gap: 4px; margin-left: auto; }
+    .tog-btn {
+      padding: 5px 13px; font-size: 11px; font-weight: 600;
+      border: 1px solid #ddd; background: #fff; color: #888;
+      border-radius: 3px; cursor: pointer; transition: all 0.15s;
+    }
+    .tog-btn.active { background: #1A1A1A; color: #fff; border-color: #1A1A1A; }
 
-.view-ctrl{display:flex;align-items:center;gap:8px;padding:6px 0;}
-.view-lbl{font-size:10px;font-weight:700;color:var(--gy);text-transform:uppercase;letter-spacing:.4px;}
-.toggle-group{display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden;}
-.tog-btn{padding:4px 12px;font-size:11px;font-weight:600;cursor:pointer;background:var(--wh);color:var(--gy);border:none;font-family:var(--font);transition:all .15s;}
-.tog-btn.active{background:var(--or);color:var(--wh);}
+    /* ── FOOTNOTE ───────────────────────────────────────────────── */
+    .footnote { font-size: 10px; color: #aaa; margin-top: 8px; }
 
-.content{padding:14px 24px;display:flex;flex-direction:column;gap:14px;}
-.row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-.row-bot{display:grid;grid-template-columns:290px 1fr;gap:14px;}
+    /* ── MAIN LAYOUT ────────────────────────────────────────────── */
+    .main  { padding: 14px 24px; display: flex; flex-direction: column; gap: 14px; }
+    .row   { display: flex; gap: 14px; }
 
-.card{background:var(--wh);border:1px solid var(--bd);border-radius:6px;padding:16px;}
-.card-hdr{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--or);}
-.card-title{font-size:12px;font-weight:700;color:var(--bk);}
-.card-stat{font-size:10px;color:var(--gy);}
-canvas{max-height:215px;}
+    /* ── CARDS ──────────────────────────────────────────────────── */
+    .chart-card {
+      background: #fff; border: 1px solid #E5E5E5;
+      border-radius: 4px; padding: 16px; flex: 1; min-width: 0;
+    }
+    .card-title {
+      font-size: 11px; font-weight: 700; color: #1A1A1A;
+      text-transform: uppercase; letter-spacing: 0.6px;
+      margin-bottom: 4px;
+    }
+    .card-sub {
+      font-size: 10px; color: #999; margin-bottom: 12px;
+    }
 
-/* Control panel */
-.cp-section{margin-bottom:12px;}
-.cp-section-label{font-size:10px;font-weight:700;color:var(--or);text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px;}
-.cp-row{display:flex;align-items:center;margin-bottom:6px;gap:6px;}
-.cp-lbl{font-size:11px;color:var(--bk);width:80px;flex-shrink:0;}
-.cp-lbl.auto{color:var(--gy);font-style:italic;}
-.cp-slider{flex:1;accent-color:var(--or);cursor:pointer;}
-.cp-val{font-size:11px;font-weight:700;color:var(--or);width:38px;text-align:right;flex-shrink:0;}
-.cp-val.auto{color:var(--gy);font-weight:400;}
-/* cap warning */
-.cp-warn{font-size:9px;color:var(--rd);margin-top:-4px;margin-bottom:4px;display:none;}
-.cp-warn.show{display:block;}
-.cp-divider{border:none;border-top:1px solid var(--bd);margin:10px 0;}
-.btn-reset{width:100%;padding:7px;background:transparent;border:1.5px solid var(--or);color:var(--or);font-size:11px;font-weight:700;cursor:pointer;border-radius:4px;transition:all .15s;font-family:var(--font);}
-.btn-reset:hover{background:var(--or);color:var(--wh);}
+    /* ── CONTROL PANEL ──────────────────────────────────────────── */
+    .control-card {
+      background: #fff; border: 1px solid #E5E5E5;
+      border-radius: 4px; padding: 16px;
+      width: 310px; flex-shrink: 0;
+    }
+    .ctrl-section {
+      font-size: 10px; font-weight: 700; color: #aaa;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      margin: 12px 0 6px;
+    }
+    .slider-row   { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .slider-label { font-size: 11px; color: #555; width: 110px; flex-shrink: 0; }
+    .slider-row input[type=range] { flex: 1; accent-color: #FF5500; cursor: pointer; }
+    .slider-val   { font-size: 11px; font-weight: 700; color: #333; width: 36px; text-align: right; flex-shrink: 0; }
 
-/* Table */
-.tbl-wrap{overflow-x:auto;margin-top:4px;}
-table{width:100%;border-collapse:collapse;font-size:10.5px;}
-thead th{padding:7px 9px;text-align:right;color:var(--gy);font-weight:700;text-transform:uppercase;font-size:9.5px;letter-spacing:.3px;border-bottom:2px solid var(--or);white-space:nowrap;}
-thead th:first-child{text-align:left;}
-tbody tr{border-bottom:1px solid var(--bd);}
-tbody tr:hover{background:#FFF5EC;}
-tbody td{padding:5px 9px;text-align:right;white-space:nowrap;}
-tbody td:first-child{text-align:left;font-weight:600;}
-.ov{color:var(--or);font-weight:700;}
-.pos{color:var(--gr);}
-.neg{color:var(--rd);}
+    .weight-warn {
+      display: none; font-size: 10px; color: #FF5500;
+      font-weight: 600; margin-top: 2px; padding-left: 2px;
+    }
+    .weight-warn.show { display: block; }
 
-.src{font-size:9px;color:#BBB;margin-top:10px;}
-.loading{text-align:center;padding:60px 24px;color:var(--gy);}
-.spinner{width:26px;height:26px;border:3px solid var(--bd);border-top-color:var(--or);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 10px;}
-@keyframes spin{to{transform:rotate(360deg);}}
-.error-box{background:#FFF8F8;border:1px solid #FFCCCC;border-radius:6px;padding:16px;color:var(--rd);margin:24px;font-size:12px;line-height:1.8;}
-</style>
+    .reset-btn {
+      width: 100%; padding: 8px; font-size: 11px; font-weight: 600;
+      background: #1A1A1A; color: #fff; border: none;
+      border-radius: 3px; cursor: pointer; margin-top: 12px;
+      transition: background 0.15s;
+    }
+    .reset-btn:hover { background: #FF5500; }
+
+    /* ── COST BREAKDOWN ─────────────────────────────────────────── */
+    .cb-wrap {
+      margin-top: 14px; padding-top: 12px;
+      border-top: 1px solid #F0F0F0;
+    }
+    .cb-head {
+      font-size: 10px; font-weight: 700; color: #aaa;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      margin-bottom: 10px;
+    }
+    .cb-row   { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+    .cb-lbl   { font-size: 11px; color: #555; width: 110px; flex-shrink: 0; }
+    .cb-track { flex: 1; background: #F4F4F4; border-radius: 2px; height: 7px; overflow: hidden; }
+    .cb-fill  { height: 100%; border-radius: 2px; transition: width 0.35s ease; }
+    .cb-pct   { font-size: 11px; font-weight: 700; color: #333; width: 36px; text-align: right; flex-shrink: 0; }
+
+    .cb-row.sub .cb-lbl { font-size: 10px; color: #aaa; padding-left: 14px; }
+    .cb-row.sub .cb-pct { font-size: 10px; color: #aaa; font-weight: 400; }
+
+    /* ── TABLE ──────────────────────────────────────────────────── */
+    .table-card { background: #fff; border: 1px solid #E5E5E5; border-radius: 4px; overflow: auto; flex: 1; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th {
+      background: #1A1A1A; color: #fff;
+      padding: 7px 10px; text-align: center;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+      white-space: nowrap; position: sticky; top: 0;
+    }
+    td { padding: 6px 10px; text-align: center; border-bottom: 1px solid #F4F4F4; color: #333; }
+    tr:nth-child(even) td { background: #FAFAFA; }
+    tr:hover td { background: #FFF3E0; }
+    .neg { color: #CC2200; font-weight: 600; }
+    .pos { color: #007722; font-weight: 600; }
+  </style>
 </head>
 <body>
 
-<div class="hdr">
+<!-- ── HEADER ─────────────────────────────────────────────────────────────── -->
+<div class="header">
   <div>
-    <div class="hdr-title">U.S. Beef Packer Margin Tracker</div>
-    <div class="hdr-sub">Quarterly spread model vs. reported gross margins — MBRF / National Beef · JBS North America</div>
+    <div class="header-title">U.S. Beef Packer Margin Tracker</div>
+    <div class="header-sub">Spread proxy model · USDA/EIA data</div>
   </div>
-  <div class="hdr-right" id="last-upd">—</div>
+  <div class="header-logo">ITAÚ BBA</div>
 </div>
 
+<!-- ── NAV STRIP ──────────────────────────────────────────────────────────── -->
 <div class="nav-strip">
-  <div class="tabs">
-    <div class="tab active" onclick="setCompany('MBRF',this)">MBRF</div>
-    <div class="tab" onclick="setCompany('JBS',this)">JBS</div>
-    <div class="tab" onclick="setCompany('Industry',this)">Industry</div>
-  </div>
-  <div class="view-ctrl">
-    <span class="view-lbl">View:</span>
-    <div class="toggle-group" id="view-toggles">
-      <button class="tog-btn" onclick="setView('ALL',this)">All</button>
-      <button class="tog-btn active" onclick="setView('L3Y',this)">Last 3 Years</button>
-      <button class="tog-btn" onclick="setView('L12M',this)">Last 12 Months</button>
-    </div>
+  <div class="tab active" onclick="setCompany('MBRF',this)">MBRF</div>
+  <div class="tab"        onclick="setCompany('JBS',this)">JBS</div>
+  <div class="nav-sep"></div>
+  <div class="toggle-group">
+    <button class="tog-btn"        onclick="setView('ALL',this)">All</button>
+    <button class="tog-btn active" onclick="setView('L3Y',this)">Last 3 Years</button>
+    <button class="tog-btn"        onclick="setView('L12M',this)">Last 12 Months</button>
   </div>
 </div>
 
-<div id="root"><div class="loading"><div class="spinner"></div>Loading beef.db…</div></div>
+<!-- ── MAIN ───────────────────────────────────────────────────────────────── -->
+<div class="main">
 
+  <!-- ROW 1: charts -->
+  <div class="row">
+
+    <!-- Left: ΔSpread vs ΔGross Margin — single axis, grouped bars -->
+    <div class="chart-card">
+      <div class="card-title" id="left-title">ΔSpread vs. ΔMargem Bruta — MBRF</div>
+      <div class="card-sub">Variação trimestral (pp) · Spread estimado vs. Margem bruta reportada</div>
+      <canvas id="chartDelta" height="190"></canvas>
+    </div>
+
+    <!-- Right: Spread % & Gross Margin % — always MBRF + JBS -->
+    <div class="chart-card">
+      <div class="card-title">Spread Proxy % &amp; Margem Bruta % — MBRF &amp; JBS</div>
+      <div class="card-sub">Sólido = Spread (eixo esq.) · Tracejado = Margem Bruta % (eixo dir.) · Cores por empresa</div>
+      <canvas id="chartTimeline" height="190"></canvas>
+      <div class="footnote" id="disc-footnote">* Pesos ajustam MBRF apenas; JBS exibido com pesos default.</div>
+    </div>
+
+  </div>
+
+  <!-- ROW 2: control panel + table -->
+  <div class="row">
+
+    <!-- Control panel -->
+    <div class="control-card">
+      <div class="card-title">Parâmetros — <span id="ctrl-co">MBRF</span></div>
+
+      <div class="ctrl-section">Revenue Mix</div>
+      <div class="slider-row">
+        <span class="slider-label">Choice %</span>
+        <input type="range" id="sl-choiceP" min="0" max="100" step="1"
+               oninput="onSlider('choiceP',this.value,false)">
+        <span class="slider-val" id="vl-choiceP">100%</span>
+      </div>
+
+      <div class="ctrl-section">Cattle Mix</div>
+      <div class="slider-row">
+        <span class="slider-label">Kansas %</span>
+        <input type="range" id="sl-ksP" min="0" max="100" step="1"
+               oninput="onSlider('ksP',this.value,false)">
+        <span class="slider-val" id="vl-ksP">100%</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">Nebraska %</span>
+        <input type="range" id="sl-neP" min="0" max="100" step="1"
+               oninput="onSlider('neP',this.value,false)">
+        <span class="slider-val" id="vl-neP">0%</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label" style="color:#bbb;">5-Area (auto)</span>
+        <input type="range" id="sl-ctP" min="0" max="100" disabled style="opacity:0.35;cursor:default;">
+        <span class="slider-val" id="vl-ctP" style="color:#bbb;">0%</span>
+      </div>
+      <div class="weight-warn" id="weight-warn">⚠ Mix bovino em 100% (KS + NE)</div>
+
+      <div class="ctrl-section">Other Costs</div>
+      <div class="slider-row">
+        <span class="slider-label">Henry Hub w.</span>
+        <input type="range" id="sl-wEnergy" min="0" max="1" step="0.01"
+               oninput="onSlider('wEnergy',this.value,true)">
+        <span class="slider-val" id="vl-wEnergy">0.00</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">Drop Credit w.</span>
+        <input type="range" id="sl-wDrop" min="0" max="1" step="0.01"
+               oninput="onSlider('wDrop',this.value,true)">
+        <span class="slider-val" id="vl-wDrop">0.00</span>
+      </div>
+
+      <button class="reset-btn" onclick="resetToDefault()">↺ Reset para defaults</button>
+
+      <!-- ── COST BREAKDOWN ── -->
+      <div class="cb-wrap">
+        <div class="cb-head">Estrutura de Custo (último tri.)</div>
+
+        <div class="cb-row">
+          <span class="cb-lbl">🐄 Custo Bovino</span>
+          <div class="cb-track">
+            <div class="cb-fill" id="cb-cattle-fill" style="background:#FF5500;width:100%"></div>
+          </div>
+          <span class="cb-pct" id="cb-cattle-pct">100%</span>
+        </div>
+
+        <div class="cb-row">
+          <span class="cb-lbl">📦 Outros Custos</span>
+          <div class="cb-track">
+            <div class="cb-fill" id="cb-other-fill" style="background:#777;width:0%"></div>
+          </div>
+          <span class="cb-pct" id="cb-other-pct">0%</span>
+        </div>
+
+        <div class="cb-row sub" id="cb-hh-row" style="opacity:0.4">
+          <span class="cb-lbl">↳ Henry Hub</span>
+          <div class="cb-track">
+            <div class="cb-fill" id="cb-hh-fill" style="background:#999;width:0%"></div>
+          </div>
+          <span class="cb-pct" id="cb-hh-pct">—</span>
+        </div>
+
+        <div class="cb-row sub" id="cb-drop-row" style="opacity:0.4">
+          <span class="cb-lbl">↳ Drop Credit</span>
+          <div class="cb-track">
+            <div class="cb-fill" id="cb-drop-fill" style="background:#bbb;width:0%"></div>
+          </div>
+          <span class="cb-pct" id="cb-drop-pct">—</span>
+        </div>
+      </div><!-- /cb-wrap -->
+    </div><!-- /control-card -->
+
+    <!-- Table -->
+    <div class="table-card">
+      <table>
+        <thead>
+          <tr>
+            <th>Quarter</th>
+            <th>Choice $/cwt</th>
+            <th>Select $/cwt</th>
+            <th>Cattle $/cwt</th>
+            <th>Drop $/cwt</th>
+            <th>HH $/MMBtu</th>
+            <th>Spread %</th>
+            <th>Gross Mgn % (Rep.)</th>
+            <th>ΔSpread (pp)</th>
+            <th>ΔGross Mgn (pp)</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+
+  </div><!-- /row -->
+</div><!-- /main -->
+
+<!-- ── SCRIPT ─────────────────────────────────────────────────────────────── -->
 <script>
-// ══ CONSTANTS ════════════════════════════════════════════════════════════════
-const CO_COLORS = { MBRF:'#FF5500', JBS:'#333333' };
-
-// V4 optimal weights (choiceP: % of Choice in revenue; ksP/neP: % cattle mix)
-const V4 = {
-  MBRF:     { choiceP:100, ksP:100, neP:0,   wDrop:0,    wEnergy:0    },
-  JBS:      { choiceP:70,  ksP:0,   neP:100, wDrop:0,    wEnergy:0    },
-  Industry: { choiceP:75,  ksP:45,  neP:35,  wDrop:0,    wEnergy:0.10 },
+// ─── CONFIG ──────────────────────────────────────────────────────────────────
+const V4_DEFAULTS = {
+  MBRF: { choiceP:100, ksP:100, neP:0,   wDrop:0.00, wEnergy:0.00 },
+  JBS:  { choiceP:70,  ksP:0,   neP:100, wDrop:0.00, wEnergy:0.00 },
 };
 
-const CORR_WIN = { MBRF:['2Q23','4Q25'], JBS:['1Q24','3Q25'] };
+// Per-company independent weight state
+const WByCompany = {
+  MBRF: { ...V4_DEFAULTS.MBRF },
+  JBS:  { ...V4_DEFAULTS.JBS  },
+};
 
-// ══ STATE ════════════════════════════════════════════════════════════════════
-let allQtr=[], allWk=[], allMon=[];
-let company='MBRF', viewFrom='L3Y', tblMode='quarterly';
-let W={ ...V4.MBRF };
-const CHARTS={};
+// Line colors (axes use neutral palette — no company color on axes)
+const CO_COLORS = { MBRF:'#FF5500', JBS:'#1A1A1A' };
 
-// ══ WEIGHT / SPREAD ══════════════════════════════════════════════════════════
-function ctP(w){ w=w||W; return Math.max(0,100-w.ksP-w.neP); }
+let activeCompany = 'MBRF';
+let viewFrom      = 'L3Y';
+let allQtr        = [];
+let chartDelta    = null;
+let chartTimeline = null;
 
-function calcSpread(row, snap){
-  const w=snap||W;
-  const ct=row.ct150_steer??row.ct150_all;
-  if(!row.choice||!row.select_||!ct) return null;
-  const ks=row.ks_avg??ct, ne=row.ne_avg??ct;
-  const dr=row.drop_credit??0, hh=row.henry_hub??0;
-  const rev=(w.choiceP/100)*row.choice+(1-w.choiceP/100)*row.select_;
-  const _ks=w.ksP/100, _ne=w.neP/100, _ct=ctP(w)/100;
-  const sum=_ks+_ne+_ct||1;
-  const cattle=(_ks*ks+_ne*ne+_ct*ct)/sum;
-  return rev>0?(rev-cattle+w.wDrop*dr-w.wEnergy*hh)/rev:null;
-}
-
-// ══ DATE / FILTER ════════════════════════════════════════════════════════════
-function filteredQtr(){
-  if(viewFrom==='ALL') return allQtr;
-  // anchor to last available quarter, not today
-  if(!allQtr.length) return [];
-  const lastD=new Date(allQtr[allQtr.length-1].quarter_start);
-  let cutoff;
-  if(viewFrom==='L3Y')  cutoff=new Date(lastD.getFullYear()-3, lastD.getMonth(),1);
-  if(viewFrom==='L12M') cutoff=new Date(lastD.getFullYear()-1, lastD.getMonth(),1);
-  return allQtr.filter(r=>new Date(r.quarter_start)>=cutoff);
-}
-
-function qToDate(q){
-  const m=q.match(/([1-4])Q(\d{2})/);
-  if(!m) return new Date(0);
-  return new Date(2000+parseInt(m[2]),(parseInt(m[1])-1)*3,1);
-}
-
-// ══ FORMAT ═══════════════════════════════════════════════════════════════════
-const p1 =v=>v==null?'—':(v*100).toFixed(1)+'%';
-const n1 =v=>v==null?'—':v.toFixed(1);
-const n2 =v=>v==null?'—':v.toFixed(2);
-const cls=v=>v==null?'':v>0?'pos':'neg';
-
-function pearson(xs,ys){
-  const pairs=xs.map((x,i)=>[x,ys[i]]).filter(([a,b])=>a!=null&&b!=null);
-  if(pairs.length<3) return null;
-  const mx=pairs.reduce((s,[a])=>s+a,0)/pairs.length;
-  const my=pairs.reduce((s,[,b])=>s+b,0)/pairs.length;
-  const num=pairs.reduce((s,[a,b])=>s+(a-mx)*(b-my),0);
-  const dx=Math.sqrt(pairs.reduce((s,[a])=>s+(a-mx)**2,0));
-  const dy=Math.sqrt(pairs.reduce((s,[,b])=>s+(b-my)**2,0));
-  return dx*dy<1e-10?0:num/(dx*dy);
-}
-
-// ══ CHART HELPERS ════════════════════════════════════════════════════════════
-const TT={backgroundColor:'#fff',titleColor:'#333',bodyColor:'#555',borderColor:'#E5E5E5',borderWidth:1};
-
-function axisL(label,color,unit='%'){
-  return{position:'left',border:{color:color||'#333'},grid:{color:'#EEEEEE'},
-    ticks:{color:color||'#333',font:{size:10},callback:v=>v+unit},
-    title:{display:!!label,text:label,color:color||'#333',font:{size:10}}};
-}
-function axisR(label,color,unit='%'){
-  return{position:'right',border:{color:color||'#888'},grid:{drawOnChartArea:false},
-    ticks:{color:color||'#888',font:{size:10},callback:v=>v+unit},
-    title:{display:!!label,text:label,color:color||'#888',font:{size:10}}};
-}
-const axisX=()=>({border:{color:'#333'},grid:{color:'#EEEEEE'},
-  ticks:{color:'#333',font:{size:9},maxRotation:45}});
-
-function mkChart(id,cfg){
-  if(CHARTS[id]) CHARTS[id].destroy();
-  CHARTS[id]=new Chart(document.getElementById(id).getContext('2d'),cfg);
-}
-
-// ══ RENDER ═══════════════════════════════════════════════════════════════════
-function renderAll(){ renderBars(); renderTimeline(); renderTable(); }
-
-// ── Left: ΔSpread vs ΔMargin — Grouped Bars ─────────────────────────────────
-function renderBars(){
-  const rows=filteredQtr();
-  const statEl=document.getElementById('corr-stat');
-
-  if(company==='Industry'){
-    // Both companies' ΔSpread side by side
-    const datasets=Object.entries(CO_COLORS).map(([co,col])=>{
-      const snap=V4[co];
-      const diffs=[];
-      for(let i=1;i<rows.length;i++){
-        const sc=calcSpread(rows[i],snap), sp=calcSpread(rows[i-1],snap);
-        diffs.push(sc!=null&&sp!=null?+((sc-sp)*100).toFixed(2):null);
-      }
-      return{label:`${co} ΔSpread`,data:diffs,backgroundColor:col+'CC',yAxisID:'y'};
+// ─── DB LOAD ─────────────────────────────────────────────────────────────────
+initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` })
+  .then(SQL => fetch('./beef.db'))
+  .then(r   => r.arrayBuffer())
+  .then(buf => {
+    const db  = new SQL.Database(new Uint8Array(buf));
+    const res = db.exec(`
+      SELECT quarter, quarter_start,
+             choice_cutout, select_cutout,
+             ks_price, ne_price, ct150_price,
+             drop_credit, henry_hub,
+             gross_margin_mbrf, gross_margin_jbs
+      FROM beef_quarterly ORDER BY quarter_start
+    `);
+    if (!res.length) throw new Error('No quarterly data found in beef.db');
+    const { columns, values } = res[0];
+    allQtr = values.map(row => {
+      const o = {};
+      columns.forEach((c, i) => o[c] = row[i]);
+      return o;
     });
-    statEl.textContent='';
-    mkChart('chartCorr',{type:'bar',
-      data:{labels:rows.slice(1).map(r=>r.quarter),datasets},
-      options:{plugins:{legend:{display:true,labels:{color:'#333',font:{size:10}}},tooltip:{...TT,callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.raw>0?'+':''}${ctx.raw}pp`}}},
-        scales:{x:axisX(),y:axisL('ΔSpread (pp)','#FF5500','pp')}}});
-    return;
-  }
-
-  // Single company
-  const [qs,qe]=CORR_WIN[company]||['1Q18','9Q99'];
-  const slice=rows.filter(r=>new Date(r.quarter_start)>=qToDate(qs)&&new Date(r.quarter_start)<=qToDate(qe));
-  const getM=r=>company==='MBRF'?r.mbrf_gm:r.jbs_gm;
-  const labels=[],dsSp=[],dsMg=[];
-  for(let i=1;i<slice.length;i++){
-    const c=slice[i],p=slice[i-1];
-    const sc=calcSpread(c),sp=calcSpread(p);
-    const mc=getM(c),mp=getM(p);
-    labels.push(c.quarter);
-    dsSp.push(sc!=null&&sp!=null?+((sc-sp)*100).toFixed(2):null);
-    dsMg.push(mc!=null&&mp!=null?+((mc-mp)*100).toFixed(2):null);
-  }
-  const r=pearson(dsSp,dsMg);
-  statEl.textContent=r!=null?`r = ${r.toFixed(3)}   R² = ${(r*r).toFixed(3)}   N = ${dsSp.filter(v=>v!=null).length}`:'Insufficient data';
-  mkChart('chartCorr',{type:'bar',
-    data:{labels,datasets:[
-      {label:'ΔSpread',    data:dsSp,backgroundColor:'#FF5500CC',yAxisID:'y'},
-      {label:'ΔGross Mgn',data:dsMg,backgroundColor:'#33333388',yAxisID:'y2'},
-    ]},
-    options:{
-      plugins:{legend:{display:true,labels:{color:'#333',font:{size:10}}},
-        tooltip:{...TT,callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.raw>0?'+':''}${ctx.raw}pp`}}},
-      scales:{x:axisX(),y:axisL('ΔSpread (pp)','#FF5500','pp'),y2:axisR('ΔGross Mgn (pp)','#888888','pp')},
-    }});
-}
-
-// ── Right: Spread % & Gross Margin % — All companies, dual axis ─────────────
-function renderTimeline(){
-  const rows=filteredQtr();
-  const labels=rows.map(r=>r.quarter);
-
-  // Always show both MBRF and JBS: spread (solid) + GM% (dashed, same color)
-  const datasets=[];
-  Object.entries(CO_COLORS).forEach(([co,col])=>{
-    const snap=V4[co];  // use each co's own V4 weights for spread display
-    // Spread line — solid, left axis
-    datasets.push({
-      label:`${co} Spread`,
-      data:rows.map(r=>{const s=calcSpread(r,co===company?undefined:snap);return s!=null?+(s*100).toFixed(2):null;}),
-      borderColor:col, borderWidth:co===company?2.5:1.5,
-      pointRadius:co===company?3:2, tension:.3, fill:false, spanGaps:true,
-      yAxisID:'y',
-    });
-    // Gross Margin % — dashed, same color, right axis
-    const gm=r=>co==='MBRF'?r.mbrf_gm:r.jbs_gm;
-    datasets.push({
-      label:`${co} Gross Mgn%`,
-      data:rows.map(r=>{const m=gm(r);return m!=null?+(m*100).toFixed(2):null;}),
-      borderColor:col, borderWidth:co===company?1.5:1,
-      borderDash:[6,3], pointRadius:co===company?2:1,
-      tension:.3, fill:false, spanGaps:true,
-      yAxisID:'y2',
-    });
-  });
-
-  mkChart('chartTimeline',{type:'line',
-    data:{labels,datasets},
-    options:{
-      plugins:{
-        legend:{display:true,labels:{color:'#333',font:{size:10},
-          generateLabels:chart=>chart.data.datasets.map((ds,i)=>({
-            text:ds.label, fillStyle:ds.borderColor,
-            strokeStyle:ds.borderColor, lineWidth:ds.borderWidth,
-            lineDash:ds.borderDash||[], datasetIndex:i, hidden:false,
-          }))}},
-        tooltip:{...TT},
-      },
-      scales:{
-        x:axisX(),
-        y: axisL('Spread %','#FF5500','%'),
-        y2:axisR('Gross Margin %','#888888','%'),
-      },
-    }});
-}
-
-// ── Table ───────────────────────────────────────────────────────────────────
-function renderTable(){
-  const showMargin=(company!=='Industry')&&(tblMode==='quarterly');
-  const mLabel=company==='JBS'?'JBS GM%':'MBRF GM%';
-  document.getElementById('tbl-head').innerHTML=`<tr>
-    <th style="text-align:left">Period</th>
-    <th>Choice $/cwt</th><th>Select $/cwt</th>
-    <th>CT150 $/cwt</th><th>KS Avg $/cwt</th><th>NE Avg $/cwt</th>
-    <th>HH $/MMBtu</th><th>Drop $/cwt</th>
-    <th style="color:var(--or)">Spread%</th>
-    ${showMargin?`<th style="color:var(--or)">${mLabel}</th>`:''}
-  </tr>`;
-  const rows=tblMode==='quarterly'?[...allQtr].reverse().slice(0,24):[...allMon].reverse().slice(0,24);
-  const getM=r=>company==='MBRF'?r.mbrf_gm:r.jbs_gm;
-  document.getElementById('tbl-body').innerHTML=rows.map(r=>{
-    const sp=calcSpread(r), mg=showMargin?getM(r):null;
-    return`<tr>
-      <td>${r.quarter??r.month}</td>
-      <td>${n1(r.choice)}</td><td>${n1(r.select_)}</td>
-      <td>${n1(r.ct150_steer??r.ct150_all)}</td>
-      <td>${n1(r.ks_avg)}</td><td>${n1(r.ne_avg)}</td>
-      <td>${n2(r.henry_hub)}</td><td>${n2(r.drop_credit)}</td>
-      <td class="ov">${p1(sp)}</td>
-      ${showMargin?`<td class="${cls(mg)}">${p1(mg)}</td>`:''}
-    </tr>`;
-  }).join('');
-}
-
-// ══ CONTROLS ═════════════════════════════════════════════════════════════════
-function setCompany(co,el){
-  company=co;
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-  el.classList.add('active');
-  W={...V4[co]};
-  syncSliders();
-  renderAll();
-}
-function setView(v,el){
-  viewFrom=v;
-  document.querySelectorAll('#view-toggles .tog-btn').forEach(b=>b.classList.remove('active'));
-  el.classList.add('active');
-  renderAll();
-}
-function setTblMode(mode,el){
-  tblMode=mode;
-  document.querySelectorAll('.tbl-tog').forEach(b=>b.classList.remove('active'));
-  el.classList.add('active');
-  renderTable();
-}
-
-// ── Sliders with 100% cap on cattle mix ────────────────────────────────────
-function onSlider(key,val,isFloat){
-  if(key==='ksP'){
-    W.ksP=parseInt(val);
-    if(W.ksP+W.neP>100){ W.neP=100-W.ksP; }    // cap NE
-  } else if(key==='neP'){
-    W.neP=parseInt(val);
-    if(W.ksP+W.neP>100){ W.ksP=100-W.neP; }    // cap KS
-  } else {
-    W[key]=isFloat?parseFloat(val):parseInt(val);
-  }
-  syncSliders();
-  renderAll();
-}
-
-function syncSliders(){
-  document.getElementById('sl-choice').value = W.choiceP;
-  document.getElementById('sl-ks').value     = W.ksP;
-  document.getElementById('sl-ne').value     = W.neP;
-  document.getElementById('sl-drop').value   = W.wDrop;
-  document.getElementById('sl-energy').value = W.wEnergy;
-  updateLabels();
-}
-function updateLabels(){
-  const total=W.ksP+W.neP;
-  document.getElementById('v-choice').textContent  = W.choiceP+'%';
-  document.getElementById('v-select').textContent  = (100-W.choiceP)+'%';
-  document.getElementById('v-ks').textContent      = W.ksP+'%';
-  document.getElementById('v-ne').textContent      = W.neP+'%';
-  document.getElementById('v-ct').textContent      = ctP()+'%';
-  document.getElementById('v-drop').textContent    = W.wDrop.toFixed(2);
-  document.getElementById('v-energy').textContent  = W.wEnergy.toFixed(2);
-  // Show cap warning if KS+NE hit 100%
-  const warn=document.getElementById('cattle-warn');
-  if(warn) warn.classList.toggle('show', total>=100);
-}
-function resetWeights(){ W={...V4[company]}; syncSliders(); renderAll(); }
-
-// ══ MONTHLY AGG ══════════════════════════════════════════════════════════════
-function buildMonthly(wk){
-  const grp={};
-  wk.forEach(r=>{
-    const d=new Date(r.week_ending);
-    const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    (grp[k]||(grp[k]=[])).push(r);
-  });
-  const avg=(rows,col)=>{const vs=rows.map(r=>r[col]).filter(v=>v!=null);return vs.length?vs.reduce((a,b)=>a+b)/vs.length:null;};
-  return Object.entries(grp).sort().map(([month,rows])=>({month,
-    choice:avg(rows,'choice'),select_:avg(rows,'select_'),
-    ct150_steer:avg(rows,'ct150_steer'),ct150_all:avg(rows,'ct150_all'),
-    ks_avg:avg(rows,'ks_avg'),ne_avg:avg(rows,'ne_avg'),
-    henry_hub:avg(rows,'henry_hub'),drop_credit:avg(rows,'drop_credit')}));
-}
-
-// ══ LAYOUT ═══════════════════════════════════════════════════════════════════
-function buildLayout(){
-  document.getElementById('root').innerHTML=`
-  <div class="content">
-    <div class="row2">
-
-      <!-- Left: delta bars -->
-      <div class="card">
-        <div class="card-hdr">
-          <span class="card-title">QoQ ΔSpread vs. ΔGross Margin — by Quarter</span>
-          <span class="card-stat" id="corr-stat"></span>
-        </div>
-        <canvas id="chartCorr"></canvas>
-      </div>
-
-      <!-- Right: spread + GM% dual axis -->
-      <div class="card">
-        <div class="card-hdr">
-          <span class="card-title">Spread Proxy % vs. Gross Margin % — MBRF &amp; JBS</span>
-          <span class="card-stat">Solid = Spread · Dashed = Gross Mgn</span>
-        </div>
-        <canvas id="chartTimeline"></canvas>
-      </div>
-
-    </div>
-    <div class="row-bot">
-
-      <!-- Control panel -->
-      <div class="card">
-        <div class="card-hdr"><span class="card-title">Weight Parameters</span></div>
-
-        <div class="cp-section">
-          <div class="cp-section-label">Revenue Mix</div>
-          <div class="cp-row">
-            <span class="cp-lbl">Choice</span>
-            <input id="sl-choice" class="cp-slider" type="range" min="0" max="100" step="1"
-              oninput="onSlider('choiceP',this.value)">
-            <span class="cp-val" id="v-choice">100%</span>
-          </div>
-          <div class="cp-row">
-            <span class="cp-lbl auto">Select (auto)</span>
-            <div style="flex:1"></div>
-            <span class="cp-val auto" id="v-select">0%</span>
-          </div>
-        </div>
-        <hr class="cp-divider">
-
-        <div class="cp-section">
-          <div class="cp-section-label">Cattle Price Mix — max 100%</div>
-          <div class="cp-row">
-            <span class="cp-lbl">KS Avg</span>
-            <input id="sl-ks" class="cp-slider" type="range" min="0" max="100" step="5"
-              oninput="onSlider('ksP',this.value)">
-            <span class="cp-val" id="v-ks">100%</span>
-          </div>
-          <div class="cp-row">
-            <span class="cp-lbl">NE Avg</span>
-            <input id="sl-ne" class="cp-slider" type="range" min="0" max="100" step="5"
-              oninput="onSlider('neP',this.value)">
-            <span class="cp-val" id="v-ne">0%</span>
-          </div>
-          <div id="cattle-warn" class="cp-warn">KS + NE = 100% — 5-Area excluded</div>
-          <div class="cp-row">
-            <span class="cp-lbl auto">5-Area (auto)</span>
-            <div style="flex:1"></div>
-            <span class="cp-val auto" id="v-ct">0%</span>
-          </div>
-        </div>
-        <hr class="cp-divider">
-
-        <div class="cp-section">
-          <div class="cp-section-label">Adjustments</div>
-          <div class="cp-row">
-            <span class="cp-lbl">Drop Credit</span>
-            <input id="sl-drop" class="cp-slider" type="range" min="0" max="1" step="0.05"
-              oninput="onSlider('wDrop',this.value,true)">
-            <span class="cp-val" id="v-drop">0.00</span>
-          </div>
-          <div class="cp-row">
-            <span class="cp-lbl">Henry Hub</span>
-            <input id="sl-energy" class="cp-slider" type="range" min="0" max="1" step="0.05"
-              oninput="onSlider('wEnergy',this.value,true)">
-            <span class="cp-val" id="v-energy">0.00</span>
-          </div>
-        </div>
-        <hr class="cp-divider">
-        <button class="btn-reset" onclick="resetWeights()">↺ Reset to default</button>
-      </div>
-
-      <!-- Table -->
-      <div class="card">
-        <div class="card-hdr">
-          <span class="card-title">Spread Analysis</span>
-          <div class="toggle-group">
-            <button class="tog-btn tbl-tog active" onclick="setTblMode('quarterly',this)">Quarterly</button>
-            <button class="tog-btn tbl-tog" onclick="setTblMode('monthly',this)">Monthly</button>
-          </div>
-        </div>
-        <div class="tbl-wrap">
-          <table><thead id="tbl-head"></thead><tbody id="tbl-body"></tbody></table>
-        </div>
-        <div class="src">Sources: USDA AMS rpt 2461/2527/2484/2667/2829 · EIA NG.RNGWHHD.D · MBRF/IFRS · JBS/US GAAP</div>
-      </div>
-
-    </div>
-  </div>`;
-}
-
-// ══ INIT ═════════════════════════════════════════════════════════════════════
-async function init(){
-  try{
-    const SQL=await initSqlJs({locateFile:f=>`https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}`});
-    const resp=await fetch('./beef.db');
-    if(!resp.ok) throw new Error(`beef.db not found (HTTP ${resp.status}). Run extractor_beef.py --history first, then commit beef.db.`);
-    const db=new SQL.Database(new Uint8Array(await resp.arrayBuffer()));
-    const toArr=res=>{
-      if(!res.length) return [];
-      const{columns,values}=res[0];
-      return values.map(row=>Object.fromEntries(columns.map((c,i)=>[c,row[i]])));
-    };
-    allQtr=toArr(db.exec('SELECT * FROM beef_quarterly ORDER BY quarter_start ASC'));
-    allWk =toArr(db.exec('SELECT * FROM beef_weekly  ORDER BY week_ending  ASC'));
-    allMon=buildMonthly(allWk);
-    db.close();
-    if(!allQtr.length) throw new Error('beef_quarterly is empty — run extractor_beef.py --history first.');
-    document.getElementById('last-upd').textContent=`Latest: ${allQtr[allQtr.length-1].quarter}`;
-    buildLayout();
-    syncSliders();
     renderAll();
-  }catch(e){
-    document.getElementById('root').innerHTML=`<div class="error-box">
-      <strong>⚠ ${e.message}</strong><br><br>
-      1. Run <code>python extractor_beef.py --history US_Beef_Packer_Margin_Tracker_v4.xlsx</code><br>
-      2. Commit <code>beef.db</code> to <code>Beef/U.S. Tracker/</code> no GitHub<br>
-      3. Reload this page
-    </div>`;
+  })
+  .catch(err => {
+    document.querySelector('.main').innerHTML =
+      `<div style="color:#CC2200;padding:24px;font-size:13px">
+         ⚠ Erro ao carregar dados: ${err.message}
+       </div>`;
+  });
+
+// ─── SPREAD FORMULA ───────────────────────────────────────────────────────────
+function calcSpread(r, snap) {
+  const rev = (snap.choiceP/100)*r.choice_cutout + (1 - snap.choiceP/100)*r.select_cutout;
+  if (!rev) return null;
+  const ks = snap.ksP/100, ne = snap.neP/100;
+  const ct  = Math.max(0, 1 - ks - ne);
+  const sum = ks + ne + ct || 1;
+  const normCattle = (ks*(r.ks_price||0) + ne*(r.ne_price||0) + ct*(r.ct150_price||0)) / sum;
+  const spread = (rev - normCattle + snap.wDrop*(r.drop_credit||0) - snap.wEnergy*(r.henry_hub||0)) / rev;
+  return +(spread * 100).toFixed(2);
+}
+
+function calcGM(r, co) {
+  return co === 'MBRF' ? r.gross_margin_mbrf : r.gross_margin_jbs;
+}
+
+// ─── VIEW FILTER ──────────────────────────────────────────────────────────────
+function filteredQtr() {
+  if (viewFrom === 'ALL' || !allQtr.length) return allQtr;
+  const lastD = new Date(allQtr[allQtr.length-1].quarter_start);
+  let cutoff;
+  if (viewFrom === 'L3Y')  cutoff = new Date(lastD.getFullYear()-3, lastD.getMonth(), 1);
+  if (viewFrom === 'L12M') cutoff = new Date(lastD.getFullYear()-1, lastD.getMonth(), 1);
+  return allQtr.filter(r => new Date(r.quarter_start) >= cutoff);
+}
+
+// ─── RENDER ALL ───────────────────────────────────────────────────────────────
+function renderAll() {
+  updateDisclaimer();
+  syncSliders();
+  renderDeltaChart();
+  renderTimelineChart();
+  renderTable();
+  updateCostBreakdown();
+}
+
+// ─── LEFT CHART: ΔSpread vs ΔGross Margin — SINGLE AXIS ─────────────────────
+function renderDeltaChart() {
+  const rows   = filteredQtr();
+  const snap   = WByCompany[activeCompany];
+  const labels = rows.map(r => r.quarter);
+
+  const spreads = rows.map(r => calcSpread(r, snap));
+  const gms     = rows.map(r => calcGM(r, activeCompany));
+
+  const dSpread = spreads.map((v,i) => i===0||v==null||spreads[i-1]==null ? null : +(v-spreads[i-1]).toFixed(2));
+  const dGM     = gms.map((v,i)     => i===0||v==null||gms[i-1]==null     ? null : +(v-gms[i-1]).toFixed(2));
+
+  if (chartDelta) { chartDelta.destroy(); chartDelta = null; }
+  chartDelta = new Chart(document.getElementById('chartDelta'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'ΔSpread Estimado',
+          data: dSpread,
+          backgroundColor: 'rgba(255,85,0,0.75)',
+          borderColor: '#FF5500',
+          borderWidth: 1,
+          borderRadius: 2,
+        },
+        {
+          label: 'ΔMargem Bruta (Rep.)',
+          data: dGM,
+          backgroundColor: 'rgba(80,80,80,0.65)',
+          borderColor: '#555',
+          borderWidth: 1,
+          borderRadius: 2,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: { labels: { font:{size:10}, boxWidth:11, padding:12 } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y != null ? ctx.parsed.y.toFixed(1)+'pp' : '—'}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { font:{size:9}, maxRotation:45, color:'#888' },
+          grid:  { display:false }
+        },
+        y: {
+          // Single axis — no secondary axis
+          title: { display:true, text:'pp', font:{size:10}, color:'#666' },
+          ticks: { font:{size:9}, color:'#666', callback: v => v+'pp' },
+          grid:  { color:'#F0F0F0' }
+        }
+      }
+    }
+  });
+
+  document.getElementById('left-title').textContent =
+    `ΔSpread vs. ΔMargem Bruta — ${activeCompany}`;
+}
+
+// ─── RIGHT CHART: Spread & GM% timeline — always MBRF + JBS ─────────────────
+// Each company uses its own WByCompany weights independently.
+// Axis colors are neutral gray — NOT tied to any company color.
+function renderTimelineChart() {
+  const rows   = filteredQtr();
+  const labels = rows.map(r => r.quarter);
+  const datasets = [];
+
+  Object.entries(CO_COLORS).forEach(([co, col]) => {
+    const snap = WByCompany[co];   // independent per-company weights
+
+    const spreads = rows.map(r => { const v=calcSpread(r,snap); return v!=null?+v.toFixed(2):null; });
+    const gms     = rows.map(r => { const v=calcGM(r,co);       return v!=null?+v.toFixed(2):null; });
+
+    // Spread — solid line, left axis
+    datasets.push({
+      label: `${co} Spread`,
+      data: spreads,
+      borderColor: col,
+      backgroundColor: 'transparent',
+      borderWidth: 2.5,
+      tension: 0.3,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      yAxisID: 'y',
+      spanGaps: true,
+    });
+
+    // Gross Margin % — dashed line, right axis
+    datasets.push({
+      label: `${co} Marg. Bruta%`,
+      data: gms,
+      borderColor: col,
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      borderDash: [6, 3],
+      tension: 0.3,
+      pointRadius: 3,
+      pointStyle: 'triangle',
+      pointHoverRadius: 5,
+      yAxisID: 'y2',
+      spanGaps: true,
+    });
+  });
+
+  if (chartTimeline) { chartTimeline.destroy(); chartTimeline = null; }
+  chartTimeline = new Chart(document.getElementById('chartTimeline'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: {
+          labels: {
+            font:{size:10}, boxWidth:11, padding:12,
+            generateLabels: chart => chart.data.datasets.map((ds, i) => ({
+              text: ds.label,
+              fillStyle: ds.borderColor,
+              strokeStyle: ds.borderColor,
+              lineWidth: 2,
+              lineDash: ds.borderDash || [],
+              hidden: !chart.isDatasetVisible(i),
+              datasetIndex: i,
+            }))
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y != null ? ctx.parsed.y.toFixed(1)+'%' : '—'}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { font:{size:9}, maxRotation:45, color:'#888' },
+          grid:  { display:false }
+        },
+        // Left axis — neutral dark (not orange, not tied to any company)
+        y: {
+          position: 'left',
+          title: { display:true, text:'Spread %', font:{size:10}, color:'#444' },
+          ticks: { font:{size:9}, color:'#444', callback: v => v+'%' },
+          grid:  { color:'#F0F0F0' }
+        },
+        // Right axis — neutral medium gray
+        y2: {
+          position: 'right',
+          title: { display:true, text:'Margem Bruta %', font:{size:10}, color:'#888' },
+          ticks: { font:{size:9}, color:'#888', callback: v => v+'%' },
+          grid:  { drawOnChartArea:false }
+        }
+      }
+    }
+  });
+}
+
+// ─── TABLE ────────────────────────────────────────────────────────────────────
+function renderTable() {
+  const rows  = filteredQtr();
+  const snap  = WByCompany[activeCompany];
+
+  const spreads = rows.map(r => calcSpread(r, snap));
+  const gms     = rows.map(r => calcGM(r, activeCompany));
+
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+
+  rows.forEach((r, i) => {
+    const sp  = spreads[i];
+    const gm  = gms[i];
+    const dSp = i>0 && sp!=null && spreads[i-1]!=null ? +(sp - spreads[i-1]).toFixed(1) : null;
+    const dGm = i>0 && gm!=null && gms[i-1]!=null     ? +(gm - gms[i-1]).toFixed(1)     : null;
+
+    const ks=snap.ksP/100, ne=snap.neP/100, ct=Math.max(0,1-ks-ne), sum=ks+ne+ct||1;
+    const cattleVal = (ks*(r.ks_price||0)+ne*(r.ne_price||0)+ct*(r.ct150_price||0))/sum;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${r.quarter}</strong></td>
+      <td>${r.choice_cutout!=null ? r.choice_cutout.toFixed(2) : '—'}</td>
+      <td>${r.select_cutout!=null ? r.select_cutout.toFixed(2) : '—'}</td>
+      <td>${cattleVal > 0 ? cattleVal.toFixed(2) : '—'}</td>
+      <td>${r.drop_credit!=null ? r.drop_credit.toFixed(2) : '—'}</td>
+      <td>${r.henry_hub!=null   ? r.henry_hub.toFixed(2)   : '—'}</td>
+      <td>${sp!=null ? sp.toFixed(1)+'%' : '—'}</td>
+      <td>${gm!=null ? gm.toFixed(1)+'%' : '—'}</td>
+      <td class="${dSp!=null?(dSp>=0?'pos':'neg'):''}">${dSp!=null?(dSp>=0?'+':'')+dSp+'pp':'—'}</td>
+      <td class="${dGm!=null?(dGm>=0?'pos':'neg'):''}">${dGm!=null?(dGm>=0?'+':'')+dGm+'pp':'—'}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ─── COST BREAKDOWN ───────────────────────────────────────────────────────────
+// Shows the relative contribution of cattle vs. other costs (HH, Drop)
+// based on the last available quarter's actual price data and current weights.
+function updateCostBreakdown() {
+  if (!allQtr.length) return;
+  const last = allQtr[allQtr.length-1];
+  const snap = WByCompany[activeCompany];
+
+  // Cattle cost ($/cwt normalized by mix)
+  const ks=snap.ksP/100, ne=snap.neP/100, ct=Math.max(0,1-ks-ne), sum=ks+ne+ct||1;
+  const cattleVal = (ks*(last.ks_price||0)+ne*(last.ne_price||0)+ct*(last.ct150_price||0))/sum;
+
+  // Other cost inputs (same $/cwt units as stored in DB)
+  const hhVal   = snap.wEnergy * (last.henry_hub   || 0);
+  const dropVal = snap.wDrop   * (last.drop_credit || 0);
+  const othersVal = hhVal + dropVal;
+  const total     = cattleVal + othersVal || 1;
+
+  const cattlePct = Math.round(cattleVal  / total * 100);
+  const otherPct  = 100 - cattlePct;
+
+  // Top-level split
+  document.getElementById('cb-cattle-fill').style.width = cattlePct+'%';
+  document.getElementById('cb-cattle-pct').textContent  = cattlePct+'%';
+  document.getElementById('cb-other-fill').style.width  = otherPct+'%';
+  document.getElementById('cb-other-pct').textContent   = otherPct+'%';
+
+  // Within others: HH and Drop sum to 100%
+  const hasOthers = othersVal > 0;
+  document.getElementById('cb-hh-row').style.opacity   = hasOthers ? '1' : '0.4';
+  document.getElementById('cb-drop-row').style.opacity = hasOthers ? '1' : '0.4';
+
+  if (hasOthers) {
+    const hhPct   = Math.round(hhVal   / othersVal * 100);
+    const dropPct = 100 - hhPct;
+    document.getElementById('cb-hh-fill').style.width   = hhPct+'%';
+    document.getElementById('cb-hh-pct').textContent    = hhPct+'%';
+    document.getElementById('cb-drop-fill').style.width = dropPct+'%';
+    document.getElementById('cb-drop-pct').textContent  = dropPct+'%';
+  } else {
+    document.getElementById('cb-hh-fill').style.width   = '0%';
+    document.getElementById('cb-hh-pct').textContent    = '—';
+    document.getElementById('cb-drop-fill').style.width = '0%';
+    document.getElementById('cb-drop-pct').textContent  = '—';
   }
 }
-init();
+
+// ─── SLIDERS ──────────────────────────────────────────────────────────────────
+// Modifies only the active company's weights; the other company is unaffected.
+function onSlider(key, val, isFloat) {
+  const W = WByCompany[activeCompany];
+
+  if (key === 'ksP') {
+    W.ksP = parseInt(val);
+    if (W.ksP + W.neP > 100) W.neP = 100 - W.ksP;
+  } else if (key === 'neP') {
+    W.neP = parseInt(val);
+    if (W.ksP + W.neP > 100) W.ksP = 100 - W.neP;
+  } else {
+    W[key] = isFloat ? parseFloat(val) : parseInt(val);
+  }
+  renderAll();
+}
+
+function syncSliders() {
+  const W  = WByCompany[activeCompany];
+  const ct = Math.max(0, 100 - W.ksP - W.neP);
+
+  const fields = {
+    choiceP: [W.choiceP, '%'],
+    ksP:     [W.ksP,     '%'],
+    neP:     [W.neP,     '%'],
+    ctP:     [ct,        '%'],
+    wEnergy: [W.wEnergy, null],
+    wDrop:   [W.wDrop,   null],
+  };
+
+  Object.entries(fields).forEach(([k, [v, sfx]]) => {
+    const sl = document.getElementById('sl-'+k);
+    const vl = document.getElementById('vl-'+k);
+    if (sl) sl.value = v;
+    if (vl) vl.textContent = sfx ? v+sfx : (+v).toFixed(2);
+  });
+
+  document.getElementById('weight-warn').classList.toggle('show', W.ksP + W.neP >= 100);
+}
+
+function resetToDefault() {
+  WByCompany[activeCompany] = { ...V4_DEFAULTS[activeCompany] };
+  renderAll();
+}
+
+// ─── COMPANY / VIEW ───────────────────────────────────────────────────────────
+function setCompany(co, el) {
+  activeCompany = co;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('ctrl-co').textContent = co;
+  renderAll();
+}
+
+function setView(v, el) {
+  viewFrom = v;
+  document.querySelectorAll('.tog-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  renderAll();
+}
+
+function updateDisclaimer() {
+  const other = activeCompany === 'MBRF' ? 'JBS' : 'MBRF';
+  const fn = document.getElementById('disc-footnote');
+  if (fn) fn.textContent = `* Pesos ajustam ${activeCompany} apenas; ${other} exibido com pesos default.`;
+}
 </script>
 </body>
 </html>
