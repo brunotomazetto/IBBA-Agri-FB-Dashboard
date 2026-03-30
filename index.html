@@ -213,10 +213,10 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:18px 0;}
   font-family:var(--font);color:var(--gray-dark);outline:none;text-align:center;background:white;}
 .order-input:focus{border-color:var(--orange);}
 /* LOADING overlay */
-.loading-overlay{position:fixed;inset:0;background:#111;display:flex;align-items:center;justify-content:center;z-index:999;}
+.loading-overlay{position:fixed;inset:0;background:#111;display:flex;align-items:center;justify-content:center;z-index:999;flex-direction:column;}
 .loading-spinner{width:36px;height:36px;border:3px solid #333;border-top-color:var(--orange);border-radius:50%;animation:spin .8s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
-.loading-text{color:#888;font-size:13px;margin-top:14px;}
+.loading-text{color:#888;font-size:13px;letter-spacing:.3px;}
 /* MODAL */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:300;align-items:center;justify-content:center;}
 .modal-overlay.open{display:flex;}
@@ -236,7 +236,7 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:18px 0;}
 
 <!-- LOADING -->
 <div class="loading-overlay" id="loading-overlay">
-  <div style="text-align:center;">
+  <div style="text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px;">
     <div class="loading-spinner"></div>
     <div class="loading-text" id="loading-text">Connecting...</div>
   </div>
@@ -726,83 +726,76 @@ function buildPaneUsersTeam(){
 
 /* PANE 2: Content & Tabs */
 function buildPaneContent(){
-  const dashEdits = SECTORS.map(sec=>{
-    const secSubs = SUBSECTORS[sec.id];
-    const subBlocks = secSubs.map(sub=>{
-      const dashes = [...STATE.dashboards.filter(d=>d.sector===sec.id&&d.subsector===sub.id)]
-        .sort((a,b)=>(a.display_order||0)-(b.display_order||0));
-      if(!dashes.length) return `<div style="font-size:12px;color:#bbb;padding:8px 0;">No dashboards.</div>`;
-      const secOpts = SECTORS.map(s=>`<option value="${s.id}">${esc(s.label)}</option>`).join('');
-      const subOpts = Object.values(SUBSECTORS).flat().map(s=>`<option value="${s.id}">${esc(s.label)}</option>`).join('');
-      const rows = dashes.map(d=>{
-        return `<div class="dash-edit-card">
-          <div class="dash-edit-header">
-            <span>ID ${d.id} &mdash; ${esc(d.title)}</span>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <button class="btn-danger" style="padding:4px 10px;font-size:11px;" onclick="dbDeleteDash(${d.id})" title="Delete dashboard">&#128465; Delete</button>
-              <span style="font-size:11px;color:#aaa;">Visible:</span>
-              <label class="toggle"><input type="checkbox" ${d.visible_to_all?'checked':''} onchange="dbEditDash(${d.id},'visible_to_all',this.checked)">
-                <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
-              <span style="font-size:11px;color:#aaa;">Soon:</span>
-              <label class="toggle"><input type="checkbox" ${d.coming_soon?'checked':''} onchange="dbEditDash(${d.id},'coming_soon',this.checked)">
-                <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
-            </div>
-          </div>
-          <div class="dash-edit-body">
-            <div class="dash-edit-row">
-              <div>
-                <label class="admin-label" style="margin-bottom:3px;">Sector</label>
-                <select class="admin-select" onchange="dbEditDash(${d.id},'sector',this.value)">${secOpts.replace(`value="${d.sector}"`,`value="${d.sector}" selected`)}</select>
-              </div>
-              <div>
-                <label class="admin-label" style="margin-bottom:3px;">Subsector</label>
-                <select class="admin-select" onchange="dbEditDash(${d.id},'subsector',this.value)">${subOpts.replace(`value="${d.subsector}"`,`value="${d.subsector}" selected`)}</select>
-              </div>
-              <div>
-                <label class="admin-label" style="margin-bottom:3px;">Order</label>
-                <input class="order-input" type="number" min="1" value="${d.display_order||1}" onchange="dbEditDash(${d.id},'display_order',parseInt(this.value)||1)"/>
-              </div>
-            </div>
-            <div class="dash-edit-row">
-              <div style="flex:1;">
-                <label class="admin-label" style="margin-bottom:3px;">Title</label>
-                <input class="admin-input" style="margin-bottom:0;" value="${esc(d.title)}" onchange="dbEditDash(${d.id},'title',this.value)"/>
-              </div>
-              <div style="width:140px;">
-                <label class="admin-label" style="margin-bottom:3px;">Source</label>
-                <input class="admin-input" style="margin-bottom:0;" value="${esc(d.source||'')}" onchange="dbEditDash(${d.id},'source',this.value)"/>
-              </div>
-            </div>
-            <label class="admin-label" style="margin-bottom:3px;">Description</label>
-            <textarea class="admin-input" rows="2" style="margin-bottom:0;resize:vertical;" onchange="dbEditDash(${d.id},'description',this.value)">${esc(d.description)}</textarea>
-          </div>
-        </div>`;
+  const secOpts = SECTORS.map(s=>'<option value="'+s.id+'">'+esc(s.label)+'</option>').join('');
+  const allSubOpts = Object.values(SUBSECTORS).flat().map(s=>'<option value="'+s.id+'">'+esc(s.label)+'</option>').join('');
+
+  const dashEdits = SECTORS.map(function(sec){
+    const secSubs = SUBSECTORS[sec.id]||[];
+    const subBlocks = secSubs.map(function(sub){
+      const dashes = STATE.dashboards
+        .filter(function(d){ return normalizeSector(d.sector)===sec.id && normalizeSubsector(d.subsector)===sub.id; })
+        .sort(function(a,b){ return (a.display_order||0)-(b.display_order||0); });
+
+      const rows = dashes.map(function(d){
+        const secOptsSelected  = SECTORS.map(s=>'<option value="'+s.id+'"'+(normalizeSector(d.sector)===s.id?' selected':'')+'>'+esc(s.label)+'</option>').join('');
+        const subOptsSelected  = Object.values(SUBSECTORS).flat().map(s=>'<option value="'+s.id+'"'+(normalizeSubsector(d.subsector)===s.id?' selected':'')+'>'+esc(s.label)+'</option>').join('');
+        return '<div class="dash-edit-card">'
+          +'<div class="dash-edit-header">'
+          +'<span>ID '+d.id+' &mdash; '+esc(d.title)+'</span>'
+          +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+          +'<button class="btn-danger" style="padding:4px 10px;font-size:11px;" onclick="dbDeleteDash('+d.id+')" title="Delete dashboard">&#128465; Delete</button>'
+          +'<span style="font-size:11px;color:#aaa;">Visible:</span>'
+          +'<label class="toggle"><input type="checkbox"'+(d.visible_to_all?' checked':'')+' onchange="dbEditDash('+d.id+',\'visible_to_all\',this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label>'
+          +'<span style="font-size:11px;color:#aaa;">Soon:</span>'
+          +'<label class="toggle"><input type="checkbox"'+(d.coming_soon?' checked':'')+' onchange="dbEditDash('+d.id+',\'coming_soon\',this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label>'
+          +'</div></div>'
+          +'<div class="dash-edit-body">'
+          +'<div class="dash-edit-row">'
+          +'<div><label class="admin-label" style="margin-bottom:3px;">Sector</label>'
+          +'<select class="admin-select" onchange="dbEditDash('+d.id+',\'sector\',this.value)">'+secOptsSelected+'</select></div>'
+          +'<div><label class="admin-label" style="margin-bottom:3px;">Subsector</label>'
+          +'<select class="admin-select" onchange="dbEditDash('+d.id+',\'subsector\',this.value)">'+subOptsSelected+'</select></div>'
+          +'<div><label class="admin-label" style="margin-bottom:3px;">Order</label>'
+          +'<input class="order-input" type="number" min="1" value="'+(d.display_order||1)+'" onchange="dbEditDash('+d.id+',\'display_order\',parseInt(this.value)||1)"/></div>'
+          +'</div>'
+          +'<div class="dash-edit-row">'
+          +'<div style="flex:1;"><label class="admin-label" style="margin-bottom:3px;">Title</label>'
+          +'<input class="admin-input" style="margin-bottom:0;" value="'+esc(d.title)+'" onchange="dbEditDash('+d.id+',\'title\',this.value)"/></div>'
+          +'<div style="width:140px;"><label class="admin-label" style="margin-bottom:3px;">Source</label>'
+          +'<input class="admin-input" style="margin-bottom:0;" value="'+esc(d.source||'')+'" onchange="dbEditDash('+d.id+',\'source\',this.value)"/></div>'
+          +'</div>'
+          +'<label class="admin-label" style="margin-bottom:3px;">Description</label>'
+          +'<textarea class="admin-input" rows="2" style="margin-bottom:0;resize:vertical;" onchange="dbEditDash('+d.id+',\'description\',this.value)">'+esc(d.description)+'</textarea>'
+          +'</div></div>';
       }).join('');
-      const addForm=`<div style="margin-top:12px;background:#FFF9F5;border:1.5px dashed #FFD8BF;border-radius:8px;padding:14px 16px;">
-        <div style="font-size:12px;font-weight:700;color:var(--orange);margin-bottom:10px;">+ Add Dashboard to ${esc(sub.label)}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-          <input class="admin-input" id="new-dash-title" style="flex:2 1 180px;margin:0;" placeholder="Title *"/>
-          <input class="admin-input" id="new-dash-source" style="flex:1 1 120px;margin:0;" placeholder="Source (e.g. CBOT)"/>
-        </div>
-        <textarea class="admin-input" id="new-dash-desc" rows="2" style="margin-bottom:8px;resize:vertical;" placeholder="Description"></textarea>
-        <button class="btn-primary" style="font-size:12px;padding:7px 14px;" onclick="dbAddDash('${sec.id}','${sub.id}')">Add Dashboard</button>
-      </div>`;
-      return \`<div style="margin-bottom:4px;">
-        <div style="font-size:11px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 8px;">\${esc(sub.label)}</div>
-        \${rows}
-        \${addForm}
-      </div>\`;
+
+      const addForm = '<div style="margin-top:12px;background:#FFF9F5;border:1.5px dashed #FFD8BF;border-radius:8px;padding:14px 16px;">'
+        +'<div style="font-size:12px;font-weight:700;color:var(--orange);margin-bottom:10px;">+ Add Dashboard to '+esc(sub.label)+'</div>'
+        +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">'
+        +'<input class="admin-input" id="new-dash-title-'+sec.id+'-'+sub.id+'" style="flex:2 1 180px;margin:0;" placeholder="Title *"/>'
+        +'<input class="admin-input" id="new-dash-source-'+sec.id+'-'+sub.id+'" style="flex:1 1 120px;margin:0;" placeholder="Source (e.g. CBOT)"/>'
+        +'</div>'
+        +'<textarea class="admin-input" id="new-dash-desc-'+sec.id+'-'+sub.id+'" rows="2" style="margin-bottom:8px;resize:vertical;" placeholder="Description"></textarea>'
+        +'<button class="btn-primary" style="font-size:12px;padding:7px 14px;" onclick="dbAddDash(\''+sec.id+'\',\''+sub.id+'\')">Add Dashboard</button>'
+        +'</div>';
+
+      return '<div style="margin-bottom:4px;">'
+        +'<div style="font-size:11px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 8px;">'+esc(sub.label)+'</div>'
+        + rows
+        + addForm
+        +'</div>';
     }).join('');
-    return `<div class="admin-section" style="margin-bottom:20px;">
-      <div class="admin-section-header">${esc(sec.label)}</div>
-      <div class="admin-section-body">${subBlocks}</div>
-    </div>`;
+
+    return '<div class="admin-section" style="margin-bottom:20px;">'
+      +'<div class="admin-section-header">'+esc(sec.label)+'</div>'
+      +'<div class="admin-section-body">'+(subBlocks||'<p style="font-size:12px;color:#bbb;">No dashboards.</p>')+'</div>'
+      +'</div>';
   }).join('');
-  return `
-    <div class="admin-panel">
-      <div class="info-box" style="max-width:820px;">All changes save instantly to the database and are visible to all users in real time.</div>
-      ${dashEdits}
-    </div>`;
+
+  return '<div class="admin-panel">'
+    +'<div class="info-box" style="max-width:820px;">All changes save instantly to the database and are visible to all users in real time.</div>'
+    + dashEdits
+    +'</div>';
 }
 
 /* PANE 3: My Account */
@@ -920,9 +913,9 @@ async function dbDeleteDash(id){
   showToast('Dashboard deleted.'); renderTopNav(); renderSubNav(); renderContent();
 }
 async function dbAddDash(secId, subId){
-  const title=document.getElementById('new-dash-title').value.trim();
-  const desc=document.getElementById('new-dash-desc').value.trim();
-  const source=document.getElementById('new-dash-source').value.trim();
+  const title=document.getElementById('new-dash-title-'+secId+'-'+subId).value.trim();
+  const desc=document.getElementById('new-dash-desc-'+secId+'-'+subId).value.trim();
+  const source=document.getElementById('new-dash-source-'+secId+'-'+subId).value.trim();
   if(!title){ showToast('Title is required.'); return; }
   const maxOrder=Math.max(0,...STATE.dashboards.filter(d=>d.sector===secId&&d.subsector===subId).map(d=>d.display_order||0));
   const {data,error}=await sb.from('dashboards').insert({
