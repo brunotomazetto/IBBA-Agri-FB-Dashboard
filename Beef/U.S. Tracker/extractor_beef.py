@@ -60,7 +60,8 @@ except ImportError:
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 DB_PATH      = Path(__file__).parent / "beef.db"
-EIA_API_KEY  = "YOUR_EIA_API_KEY"   # https://www.eia.gov/opendata/register/
+import os
+EIA_API_KEY  = os.environ.get('EIA_API_KEY', 'YOUR_EIA_API_KEY')
 LOOKBACK_WEEKS = 6
 # ─────────────────────────────────────────────────────────────────────────────
 
