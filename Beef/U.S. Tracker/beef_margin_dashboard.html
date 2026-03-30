@@ -68,7 +68,7 @@ canvas{max-height:215px;}
 .cb-row.sub .cb-pct{font-size:10px;color:var(--gy);font-weight:400;}
 
 /* Footnote */
-.footnote{font-size:9px;color:#BBB;margin-top:6px;}
+.footnote{font-size:10px;color:#888;margin-top:6px;font-style:italic;}
 
 /* Table */
 .tbl-wrap{overflow-x:auto;margin-top:4px;}
@@ -296,7 +296,7 @@ function renderTimeline(){
   // Update disclaimer footnote
   const other = company==='MBRF'?'JBS':'MBRF';
   const fn=document.getElementById('disc-note');
-  if(fn) fn.textContent=`* Pesos ajustam ${company} apenas; ${other} exibido com pesos default.`;
+  if(fn) fn.textContent=`* Sliders adjust ${company} only — ${other} displayed at default weights.`;
 }
 
 // ── Cost Breakdown ───────────────────────────────────────────────────────────
@@ -461,7 +461,7 @@ function buildLayout(){
           <span class="card-stat">Solid = Spread · Dashed = Gross Mgn</span>
         </div>
         <canvas id="chartTimeline"></canvas>
-        <div class="footnote" id="disc-note">* Pesos ajustam MBRF apenas; JBS exibido com pesos default.</div>
+        <div class="footnote" id="disc-note">* Sliders adjust MBRF only — JBS displayed at default weights.</div>
       </div>
 
     </div>
