@@ -4,7 +4,8 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>U.S. Beef Packer Margin Tracker</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- sql.js: SQLite compiled to WebAssembly — reads beef.db directly in the browser -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -16,17 +17,14 @@
   --font:'Segoe UI',Helvetica,Arial,sans-serif;
 }
 html,body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
-/* ── HEADER ── */
 .page-header{background:var(--bg2);border-bottom:2px solid var(--or);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
 .page-header h1{font-size:15px;font-weight:700;color:var(--white);}
 .page-header .sub{font-size:11px;color:var(--muted);margin-top:2px;}
 .last-update{font-size:11px;color:var(--muted);}
-/* ── CONTROLS ── */
 .controls{padding:14px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--border);background:var(--bg2);}
 .ctrl-label{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
 .ctrl-select{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:6px 10px;font-size:12px;color:var(--text);font-family:var(--font);outline:none;cursor:pointer;}
 .ctrl-select:focus{border-color:var(--or);}
-/* ── KPI CARDS ── */
 .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;padding:18px 24px;}
 .kpi{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;position:relative;overflow:hidden;}
 .kpi::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--or);}
@@ -40,17 +38,14 @@ html,body{font-family:var(--font);background:var(--bg);color:var(--text);min-hei
 .kpi-delta{font-size:11px;font-weight:600;margin-top:4px;}
 .kpi-delta.pos{color:var(--green);}
 .kpi-delta.neg{color:var(--red);}
-/* ── SECTIONS ── */
 .section{padding:0 24px 24px;}
 .section-title{font-size:12px;font-weight:700;color:var(--or);text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px;padding-top:18px;border-top:1px solid var(--border);}
-/* ── CHARTS GRID ── */
 .charts-2col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
 .charts-3col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
 @media(max-width:900px){.charts-2col,.charts-3col{grid-template-columns:1fr;}}
 .chart-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;}
 .chart-card-title{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:12px;}
 .chart-card canvas{max-height:240px;}
-/* ── TABLE ── */
 .tbl-wrap{overflow-x:auto;}
 table{width:100%;border-collapse:collapse;font-size:11.5px;}
 thead th{background:var(--bg3);color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:8px 10px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--border);}
@@ -60,11 +55,9 @@ tbody tr:hover{background:rgba(255,85,0,.05);}
 tbody td{padding:7px 10px;text-align:right;color:var(--text);white-space:nowrap;}
 tbody td:first-child{text-align:left;color:var(--white);font-weight:600;}
 .pos{color:var(--green);} .neg{color:var(--red);}
-/* ── LEGEND ── */
 .legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;}
 .legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);}
 .legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
-/* ── LOADING/ERROR ── */
 .loading{text-align:center;padding:48px 24px;color:var(--muted);font-size:13px;}
 .spinner{width:28px;height:28px;border:3px solid #333;border-top-color:var(--or);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px;}
 @keyframes spin{to{transform:rotate(360deg);}}
@@ -97,18 +90,11 @@ tbody td:first-child{text-align:left;color:var(--white);font-weight:600;}
 </div>
 
 <div id="root">
-  <div class="loading"><div class="spinner"></div>Connecting to Supabase…</div>
+  <div class="loading"><div class="spinner"></div>Loading beef.db…</div>
 </div>
 
 <script>
-// ══ SUPABASE ══════════════════════════════════════════════════════════════════
-const { createClient } = supabase;
-const sb = createClient(
-  'https://vhxvlmyataclkpamvzpe.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZoeHZsbXlhdGFjbGtwYW12enBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0MDU2NDEsImV4cCI6MjA4OTk4MTY0MX0.g3v_I0NvKPTHYOU7hEl7rDtwtC2LBktvn9yj1RKE3tg'
-);
-
-// ══ SPREAD MODEL WEIGHTS (match V4 tracker Spread Analysis tab) ═══════════════
+// ══ SPREAD MODEL WEIGHTS (V4 tracker — Spread Analysis tab) ══════════════════
 const WEIGHTS = {
   v4: {
     MBRF:  { wChoice:1.00, wCt:0.00, wKs:1.00, wNe:0.00, wDrop:0.00, wEnergy:0.00 },
@@ -121,42 +107,34 @@ const WEIGHTS = {
     Tyson: { wChoice:0.70, wCt:0.33, wKs:0.33, wNe:0.34, wDrop:0.00, wEnergy:0.00 },
   },
 };
-const CWT_PER_HEAD = 8.5;
 
 function calcSpread(row, company, wKey='v4') {
-  const w = WEIGHTS[wKey][company];
-  const ch = row.choice, sl = row.select_;
+  const w  = WEIGHTS[wKey][company];
   const ct = row.ct150_steer;
-  const ks = (row.ks_avg != null) ? row.ks_avg : ct;
-  const ne = (row.ne_avg != null) ? row.ne_avg : ct;
-  const dr = (row.drop_credit != null) ? row.drop_credit : 0;
-  const hh = (row.henry_hub  != null) ? row.henry_hub  : 0;
-  if (!ch || !sl || !ct) return null;
-  const rev    = w.wChoice * ch + (1 - w.wChoice) * sl;
+  const ks = row.ks_avg  != null ? row.ks_avg  : ct;
+  const ne = row.ne_avg  != null ? row.ne_avg  : ct;
+  const dr = row.drop_credit != null ? row.drop_credit : 0;
+  const hh = row.henry_hub  != null ? row.henry_hub   : 0;
+  if (!row.choice || !row.select_ || !ct) return null;
+  const rev    = w.wChoice * row.choice + (1 - w.wChoice) * row.select_;
   const cattle = (w.wCt * ct + w.wKs * ks + w.wNe * ne) / Math.max(w.wCt + w.wKs + w.wNe, 1e-9);
   const num    = rev - cattle + w.wDrop * dr - w.wEnergy * hh;
   return rev > 0 ? num / rev : null;
 }
 
 // ══ STATE ════════════════════════════════════════════════════════════════════
-let allRows = [];     // all quarterly rows, sorted by quarter_start asc
+let allRows = [];
 const COMPANIES = ['MBRF','JBS','Tyson'];
-const C_COLORS  = { MBRF: '#FF5500', JBS: '#3498DB', Tyson: '#27AE60' };
+const C_COLORS  = { MBRF:'#FF5500', JBS:'#3498DB', Tyson:'#27AE60' };
 const CHART_OBJ = {};
 
 // ══ UTILS ════════════════════════════════════════════════════════════════════
-function fmtPct(v, dec=1) {
-  if (v == null) return '—';
-  return (v * 100).toFixed(dec) + '%';
-}
-function fmtNum(v, dec=1) {
-  if (v == null) return '—';
-  return v.toFixed(dec);
-}
+const fmtPct = (v, dec=1) => v == null ? '—' : (v*100).toFixed(dec)+'%';
+const fmtNum = (v, dec=1) => v == null ? '—' : v.toFixed(dec);
 function fmtDelta(v, isPct=true) {
   if (v == null) return {txt:'—',cls:''};
-  const txt = (v >= 0 ? '+' : '') + (isPct ? (v*100).toFixed(1)+'pp' : v.toFixed(2));
-  return { txt, cls: v >= 0 ? 'pos' : 'neg' };
+  const txt = (v>=0?'+':'') + (isPct ? (v*100).toFixed(1)+'pp' : v.toFixed(2));
+  return { txt, cls: v>=0 ? 'pos' : 'neg' };
 }
 function pearson(xs, ys) {
   const pairs = xs.map((x,i)=>[x,ys[i]]).filter(([a,b])=>a!=null&&b!=null);
@@ -166,34 +144,30 @@ function pearson(xs, ys) {
   const num  = pairs.reduce((s,[a,b])=>s+(a-mx)*(b-my),0);
   const denx = Math.sqrt(pairs.reduce((s,[a])=>s+(a-mx)**2,0));
   const deny = Math.sqrt(pairs.reduce((s,[,b])=>s+(b-my)**2,0));
-  return (denx*deny < 1e-10) ? 0 : num/(denx*deny);
-}
-
-// ══ FILTER HELPERS ═══════════════════════════════════════════════════════════
-function filteredRows() {
-  const startQ = document.getElementById('sel-start').value;
-  const startDate = qToDate(startQ);
-  return allRows.filter(r => new Date(r.quarter_start) >= startDate);
+  return denx*deny < 1e-10 ? 0 : num/(denx*deny);
 }
 function qToDate(q) {
   const m = q.match(/([1-4])Q(\d{2})/);
   if (!m) return new Date(0);
   return new Date(2000+parseInt(m[2]), (parseInt(m[1])-1)*3, 1);
 }
+function filteredRows() {
+  const startDate = qToDate(document.getElementById('sel-start').value);
+  return allRows.filter(r => new Date(r.quarter_start) >= startDate);
+}
 
 // ══ CHART HELPERS ════════════════════════════════════════════════════════════
 const CHART_DEFAULTS = {
   plugins:{ legend:{ display:false }, tooltip:{ backgroundColor:'#1C1C1C', titleColor:'#fff', bodyColor:'#aaa', borderColor:'#333', borderWidth:1 }},
   scales:{
-    x:{ grid:{ color:'#2A2A2A' }, ticks:{ color:'#888', font:{ size:10 } }},
-    y:{ grid:{ color:'#2A2A2A' }, ticks:{ color:'#888', font:{ size:10 } }},
+    x:{ grid:{ color:'#2A2A2A' }, ticks:{ color:'#888', font:{ size:10 }}},
+    y:{ grid:{ color:'#2A2A2A' }, ticks:{ color:'#888', font:{ size:10 }}},
   },
-  animation:{ duration: 400 },
+  animation:{ duration:400 },
 };
 function mkChart(id, cfg) {
   if (CHART_OBJ[id]) CHART_OBJ[id].destroy();
-  const ctx = document.getElementById(id).getContext('2d');
-  CHART_OBJ[id] = new Chart(ctx, cfg);
+  CHART_OBJ[id] = new Chart(document.getElementById(id).getContext('2d'), cfg);
 }
 
 // ══ RENDER ═══════════════════════════════════════════════════════════════════
@@ -201,15 +175,12 @@ function renderAll() {
   const rows = filteredRows();
   const wKey = document.getElementById('sel-weights').value;
   if (!rows.length) return;
-
-  // Augment rows with computed spreads
   const data = rows.map(r => ({
     ...r,
     spread_mbrf:  calcSpread(r, 'MBRF',  wKey),
     spread_jbs:   calcSpread(r, 'JBS',   wKey),
     spread_tyson: calcSpread(r, 'Tyson', wKey),
   }));
-
   renderKPIs(data, wKey);
   renderSpreadChart(data);
   renderMarginChart(data);
@@ -217,13 +188,11 @@ function renderAll() {
   renderTable(data, wKey);
 }
 
-// ── KPI Cards ─────────────────────────────────────────────────────────────────
 function renderKPIs(data, wKey) {
-  const last  = data[data.length - 1];
-  const prev  = data.length > 1 ? data[data.length - 2] : null;
-
+  const last = data[data.length-1];
+  const prev = data.length > 1 ? data[data.length-2] : null;
   const mkKpi = (label, val, sub, delta, cls='') => {
-    const d = delta != null ? fmtDelta(delta, true) : null;
+    const d = delta != null ? fmtDelta(delta) : null;
     return `<div class="kpi ${cls}">
       <div class="kpi-label">${label}</div>
       <div class="kpi-value">${val}</div>
@@ -231,177 +200,148 @@ function renderKPIs(data, wKey) {
       ${d ? `<div class="kpi-delta ${d.cls}">${d.txt} QoQ</div>` : ''}
     </div>`;
   };
-
-  const spread = (key) => last['spread_'+key.toLowerCase()];
-  const marg   = (key) => {
-    if (key==='MBRF') return last.mbrf_gm;
-    if (key==='JBS')  return last.jbs_gm;
-    return last.tyson_adj_op_mgn;
-  };
-  const dSpread = (key) => {
-    const cur = spread(key), p = prev ? prev['spread_'+key.toLowerCase()] : null;
-    return (cur != null && p != null) ? cur - p : null;
-  };
-
-  document.getElementById('root').querySelectorAll('.kpi-row')?.[0]?.remove();
-
+  const spread = k => last['spread_'+k.toLowerCase()];
+  const marg   = k => k==='MBRF' ? last.mbrf_gm : k==='JBS' ? last.jbs_gm : last.tyson_adj_op_mgn;
+  const dSprd  = k => { const c=spread(k), p=prev?prev['spread_'+k.toLowerCase()]:null; return c!=null&&p!=null?c-p:null; };
+  document.getElementById('root').querySelector('.kpi-row')?.remove();
   const html = `<div class="kpi-row">
     ${mkKpi('Choice Cutout', fmtNum(last.choice)+'$/cwt', last.quarter, null, 'market')}
-    ${mkKpi('CT150 5-Area', fmtNum(last.ct150_steer)+'$/cwt', last.quarter, null, 'market')}
-    ${mkKpi('KS Avg Price', last.ks_avg ? fmtNum(last.ks_avg)+'$/cwt' : '—', last.quarter, null, 'market')}
-    ${mkKpi('MBRF Spread', fmtPct(spread('MBRF')), 'Proxy GM%', dSpread('MBRF'), 'mbrf')}
-    ${mkKpi('MBRF Rep. GM%', fmtPct(marg('MBRF')), last.quarter, last.mbrf_gm&&prev?.mbrf_gm ? last.mbrf_gm-prev.mbrf_gm : null, 'mbrf')}
-    ${mkKpi('JBS Spread', fmtPct(spread('JBS')), 'Proxy GM%', dSpread('JBS'), 'jbs')}
-    ${mkKpi('JBS Rep. GM%', fmtPct(marg('JBS')), last.quarter, last.jbs_gm&&prev?.jbs_gm ? last.jbs_gm-prev.jbs_gm : null, 'jbs')}
-    ${mkKpi('Tyson Spread', fmtPct(spread('Tyson')), 'Proxy Op%', dSpread('Tyson'), 'tyson')}
-    ${mkKpi('Tyson Rep. Op%', fmtPct(marg('Tyson')), last.quarter, last.tyson_adj_op_mgn&&prev?.tyson_adj_op_mgn ? last.tyson_adj_op_mgn-prev.tyson_adj_op_mgn : null, 'tyson')}
+    ${mkKpi('CT150 5-Area',  fmtNum(last.ct150_steer)+'$/cwt', last.quarter, null, 'market')}
+    ${mkKpi('KS Avg Price',  last.ks_avg ? fmtNum(last.ks_avg)+'$/cwt' : '—', last.quarter, null, 'market')}
+    ${mkKpi('MBRF Spread',   fmtPct(spread('MBRF')),  'Proxy GM%', dSprd('MBRF'),  'mbrf')}
+    ${mkKpi('MBRF Rep. GM%', fmtPct(marg('MBRF')),    last.quarter, last.mbrf_gm&&prev?.mbrf_gm ? last.mbrf_gm-prev.mbrf_gm : null, 'mbrf')}
+    ${mkKpi('JBS Spread',    fmtPct(spread('JBS')),   'Proxy GM%', dSprd('JBS'),   'jbs')}
+    ${mkKpi('JBS Rep. GM%',  fmtPct(marg('JBS')),     last.quarter, last.jbs_gm&&prev?.jbs_gm   ? last.jbs_gm-prev.jbs_gm   : null, 'jbs')}
+    ${mkKpi('Tyson Spread',  fmtPct(spread('Tyson')), 'Proxy Op%', dSprd('Tyson'), 'tyson')}
+    ${mkKpi('Tyson Rep. Op%',fmtPct(marg('Tyson')),   last.quarter, last.tyson_adj_op_mgn&&prev?.tyson_adj_op_mgn ? last.tyson_adj_op_mgn-prev.tyson_adj_op_mgn : null, 'tyson')}
   </div>`;
-
   document.getElementById('root').insertAdjacentHTML('afterbegin', html);
 }
 
-// ── Spread % over time ────────────────────────────────────────────────────────
 function renderSpreadChart(data) {
-  const labels = data.map(r => r.quarter);
   mkChart('chartSpread', {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label:'MBRF', data: data.map(r=>r.spread_mbrf!=null?+(r.spread_mbrf*100).toFixed(2):null),
-          borderColor:'#FF5500', backgroundColor:'rgba(255,85,0,.1)', tension:.3, borderWidth:2, pointRadius:2, fill:false, spanGaps:true },
-        { label:'JBS',  data: data.map(r=>r.spread_jbs!=null?+(r.spread_jbs*100).toFixed(2):null),
-          borderColor:'#3498DB', backgroundColor:'rgba(52,152,219,.1)', tension:.3, borderWidth:2, pointRadius:2, fill:false, spanGaps:true },
-        { label:'Tyson',data: data.map(r=>r.spread_tyson!=null?+(r.spread_tyson*100).toFixed(2):null),
-          borderColor:'#27AE60', backgroundColor:'rgba(39,174,96,.1)', tension:.3, borderWidth:2, pointRadius:2, fill:false, spanGaps:true },
+    type:'line',
+    data:{
+      labels: data.map(r=>r.quarter),
+      datasets:[
+        { label:'MBRF',  data:data.map(r=>r.spread_mbrf !=null?+(r.spread_mbrf *100).toFixed(2):null), borderColor:'#FF5500', tension:.3, borderWidth:2, pointRadius:2, fill:false, spanGaps:true },
+        { label:'JBS',   data:data.map(r=>r.spread_jbs  !=null?+(r.spread_jbs  *100).toFixed(2):null), borderColor:'#3498DB', tension:.3, borderWidth:2, pointRadius:2, fill:false, spanGaps:true },
+        { label:'Tyson', data:data.map(r=>r.spread_tyson!=null?+(r.spread_tyson*100).toFixed(2):null), borderColor:'#27AE60', tension:.3, borderWidth:2, pointRadius:2, fill:false, spanGaps:true },
       ]
     },
-    options: { ...CHART_DEFAULTS, scales: { ...CHART_DEFAULTS.scales, y:{ ...CHART_DEFAULTS.scales.y, ticks:{ ...CHART_DEFAULTS.scales.y.ticks, callback:v=>v+'%' }}}},
+    options:{ ...CHART_DEFAULTS, scales:{ ...CHART_DEFAULTS.scales, y:{ ...CHART_DEFAULTS.scales.y, ticks:{ ...CHART_DEFAULTS.scales.y.ticks, callback:v=>v+'%' }}}},
   });
 }
 
-// ── Reported Margin % over time ───────────────────────────────────────────────
 function renderMarginChart(data) {
-  const labels = data.map(r => r.quarter);
   mkChart('chartMargin', {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label:'MBRF GM%', data: data.map(r=>r.mbrf_gm!=null?+(r.mbrf_gm*100).toFixed(2):null),
-          borderColor:'#FF5500', borderDash:[5,3], tension:.3, borderWidth:1.5, pointRadius:2, fill:false, spanGaps:true },
-        { label:'JBS GM%',  data: data.map(r=>r.jbs_gm!=null?+(r.jbs_gm*100).toFixed(2):null),
-          borderColor:'#3498DB', borderDash:[5,3], tension:.3, borderWidth:1.5, pointRadius:2, fill:false, spanGaps:true },
-        { label:'Tyson Op%',data: data.map(r=>r.tyson_adj_op_mgn!=null?+(r.tyson_adj_op_mgn*100).toFixed(2):null),
-          borderColor:'#27AE60', borderDash:[5,3], tension:.3, borderWidth:1.5, pointRadius:2, fill:false, spanGaps:true },
+    type:'line',
+    data:{
+      labels: data.map(r=>r.quarter),
+      datasets:[
+        { label:'MBRF GM%',  data:data.map(r=>r.mbrf_gm        !=null?+(r.mbrf_gm        *100).toFixed(2):null), borderColor:'#FF5500', borderDash:[5,3], tension:.3, borderWidth:1.5, pointRadius:2, fill:false, spanGaps:true },
+        { label:'JBS GM%',   data:data.map(r=>r.jbs_gm         !=null?+(r.jbs_gm         *100).toFixed(2):null), borderColor:'#3498DB', borderDash:[5,3], tension:.3, borderWidth:1.5, pointRadius:2, fill:false, spanGaps:true },
+        { label:'Tyson Op%', data:data.map(r=>r.tyson_adj_op_mgn!=null?+(r.tyson_adj_op_mgn*100).toFixed(2):null), borderColor:'#27AE60', borderDash:[5,3], tension:.3, borderWidth:1.5, pointRadius:2, fill:false, spanGaps:true },
       ]
     },
-    options: { ...CHART_DEFAULTS, scales: { ...CHART_DEFAULTS.scales, y:{ ...CHART_DEFAULTS.scales.y, ticks:{ ...CHART_DEFAULTS.scales.y.ticks, callback:v=>v+'%' }}}},
+    options:{ ...CHART_DEFAULTS, scales:{ ...CHART_DEFAULTS.scales, y:{ ...CHART_DEFAULTS.scales.y, ticks:{ ...CHART_DEFAULTS.scales.y.ticks, callback:v=>v+'%' }}}},
   });
 }
 
-// ── ΔSpread vs ΔMargin scatter ────────────────────────────────────────────────
 function renderCorrelCharts(data, wKey) {
-  const WIN = { MBRF: ['2Q23','4Q25'], JBS: ['1Q24','3Q25'], Tyson: ['2Q23','4Q25'] };
-
+  const WIN = { MBRF:['2Q23','4Q25'], JBS:['1Q24','3Q25'], Tyson:['2Q23','4Q25'] };
   COMPANIES.forEach(co => {
     const [qs, qe] = WIN[co];
     const slice = data.filter(r => {
       const d = new Date(r.quarter_start);
       return d >= qToDate(qs) && d <= qToDate(qe);
     });
-
-    const getSpread = r => r['spread_'+co.toLowerCase()];
-    const getMargin = r => co==='MBRF' ? r.mbrf_gm : co==='JBS' ? r.jbs_gm : r.tyson_adj_op_mgn;
-
+    const getSp = r => r['spread_'+co.toLowerCase()];
+    const getMg = r => co==='MBRF' ? r.mbrf_gm : co==='JBS' ? r.jbs_gm : r.tyson_adj_op_mgn;
     const pts = [];
-    for (let i = 1; i < slice.length; i++) {
-      const cur = slice[i], prv = slice[i-1];
-      const ds = getSpread(cur) != null && getSpread(prv) != null ? getSpread(cur) - getSpread(prv) : null;
-      const dm = getMargin(cur) != null && getMargin(prv) != null ? getMargin(cur) - getMargin(prv) : null;
-      if (ds != null && dm != null) pts.push({ x: +(ds*100).toFixed(3), y: +(dm*100).toFixed(3), q: cur.quarter });
+    for (let i=1; i<slice.length; i++) {
+      const c=slice[i], p=slice[i-1];
+      const ds = getSp(c)!=null&&getSp(p)!=null ? getSp(c)-getSp(p) : null;
+      const dm = getMg(c)!=null&&getMg(p)!=null ? getMg(c)-getMg(p) : null;
+      if (ds!=null&&dm!=null) pts.push({ x:+(ds*100).toFixed(3), y:+(dm*100).toFixed(3), q:c.quarter });
     }
-
     const r = pearson(pts.map(p=>p.x), pts.map(p=>p.y));
-    const rTxt = r != null ? `r = ${r.toFixed(3)}  R² = ${(r*r).toFixed(3)}  N = ${pts.length}` : 'Insufficient data';
-    document.getElementById(`corr-stat-${co.toLowerCase()}`).textContent = rTxt;
-
+    document.getElementById(`corr-stat-${co.toLowerCase()}`).textContent =
+      r!=null ? `r = ${r.toFixed(3)}  R² = ${(r*r).toFixed(3)}  N = ${pts.length}` : 'Insufficient data';
     mkChart(`chartCorr${co}`, {
-      type: 'scatter',
-      data: {
-        datasets: [{
-          label: `Δ${co}`,
-          data: pts,
-          backgroundColor: C_COLORS[co] + 'BB',
-          pointRadius: 5, pointHoverRadius: 7,
-        }]
-      },
-      options: {
+      type:'scatter',
+      data:{ datasets:[{ label:`Δ${co}`, data:pts, backgroundColor:C_COLORS[co]+'BB', pointRadius:5, pointHoverRadius:7 }]},
+      options:{
         ...CHART_DEFAULTS,
-        plugins: {
-          ...CHART_DEFAULTS.plugins,
-          tooltip: {
-            ...CHART_DEFAULTS.plugins.tooltip,
-            callbacks: { label: ctx => `${ctx.raw.q}: ΔSpread ${ctx.raw.x > 0 ? '+' : ''}${ctx.raw.x}pp  ΔMargin ${ctx.raw.y > 0 ? '+' : ''}${ctx.raw.y}pp` }
-          }
-        },
-        scales: {
-          x: { ...CHART_DEFAULTS.scales.x, title:{ display:true, text:'ΔSpread (pp)', color:'#666' }, ticks:{ ...CHART_DEFAULTS.scales.x.ticks, callback: v => v+'pp' }},
-          y: { ...CHART_DEFAULTS.scales.y, title:{ display:true, text:'ΔMargin (pp)', color:'#666' }, ticks:{ ...CHART_DEFAULTS.scales.y.ticks, callback: v => v+'pp' }},
+        plugins:{ ...CHART_DEFAULTS.plugins, tooltip:{ ...CHART_DEFAULTS.plugins.tooltip,
+          callbacks:{ label:ctx=>`${ctx.raw.q}: ΔSpread ${ctx.raw.x>0?'+':''}${ctx.raw.x}pp  ΔMargin ${ctx.raw.y>0?'+':''}${ctx.raw.y}pp` }}},
+        scales:{
+          x:{ ...CHART_DEFAULTS.scales.x, title:{ display:true, text:'ΔSpread (pp)', color:'#666' }, ticks:{ ...CHART_DEFAULTS.scales.x.ticks, callback:v=>v+'pp' }},
+          y:{ ...CHART_DEFAULTS.scales.y, title:{ display:true, text:'ΔMargin (pp)', color:'#666' }, ticks:{ ...CHART_DEFAULTS.scales.y.ticks, callback:v=>v+'pp' }},
         },
       }
     });
   });
 }
 
-// ── Quarterly data table ──────────────────────────────────────────────────────
 function renderTable(data, wKey) {
-  const recent = [...data].reverse().slice(0, 16);
-  const rows = recent.map(r => {
-    const sm = fmtPct(r.spread_mbrf), sj = fmtPct(r.spread_jbs), st = fmtPct(r.spread_tyson);
-    const mm = fmtPct(r.mbrf_gm), mj = fmtPct(r.jbs_gm), mt = fmtPct(r.tyson_adj_op_mgn);
-    const ch = fmtNum(r.choice), ct = fmtNum(r.ct150_steer), ks = r.ks_avg ? fmtNum(r.ks_avg) : '—';
+  const recent = [...data].reverse().slice(0,16);
+  document.getElementById('tbl-body').innerHTML = recent.map(r => {
+    const sm=fmtPct(r.spread_mbrf), sj=fmtPct(r.spread_jbs), st=fmtPct(r.spread_tyson);
+    const mm=fmtPct(r.mbrf_gm),     mj=fmtPct(r.jbs_gm),     mt=fmtPct(r.tyson_adj_op_mgn);
     return `<tr>
       <td>${r.quarter}</td>
-      <td>${ch}</td><td>${ct}</td><td>${ks}</td>
-      <td class="${r.mbrf_gm>0?'pos':'neg'}">${sm}</td>
-      <td class="${r.mbrf_gm>0?'pos':'neg'}">${mm}</td>
-      <td class="${r.jbs_gm>0?'pos':'neg'}">${sj}</td>
-      <td class="${r.jbs_gm>0?'pos':'neg'}">${mj}</td>
-      <td class="${r.tyson_adj_op_mgn>0?'pos':'neg'}">${st}</td>
-      <td class="${r.tyson_adj_op_mgn>0?'pos':'neg'}">${mt}</td>
+      <td>${fmtNum(r.choice)}</td><td>${fmtNum(r.ct150_steer)}</td><td>${r.ks_avg?fmtNum(r.ks_avg):'—'}</td>
+      <td class="${r.mbrf_gm>0?'pos':'neg'}">${sm}</td><td class="${r.mbrf_gm>0?'pos':'neg'}">${mm}</td>
+      <td class="${r.jbs_gm>0?'pos':'neg'}">${sj}</td><td class="${r.jbs_gm>0?'pos':'neg'}">${mj}</td>
+      <td class="${r.tyson_adj_op_mgn>0?'pos':'neg'}">${st}</td><td class="${r.tyson_adj_op_mgn>0?'pos':'neg'}">${mt}</td>
     </tr>`;
   }).join('');
-
-  document.getElementById('tbl-body').innerHTML = rows;
 }
 
-// ══ MAIN ═════════════════════════════════════════════════════════════════════
+// ══ MAIN — load sql.js + fetch beef.db ═══════════════════════════════════════
 async function init() {
   const root = document.getElementById('root');
   try {
-    const { data, error } = await sb
-      .from('beef_quarterly')
-      .select('*')
-      .order('quarter_start', { ascending: true });
+    // 1. Initialise sql.js (wasm served from cdnjs)
+    const SQL = await initSqlJs({
+      locateFile: filename =>
+        `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${filename}`
+    });
 
-    if (error) throw error;
-    if (!data || !data.length) throw new Error('No quarterly data found in beef_quarterly table.');
+    // 2. Fetch beef.db from the same folder as this HTML file
+    const resp = await fetch('./beef.db');
+    if (!resp.ok) throw new Error(
+      `Could not fetch beef.db (HTTP ${resp.status}). ` +
+      `Run: python extractor_beef.py --history tracker_v4.xlsx`
+    );
+    const buf = await resp.arrayBuffer();
+    const db  = new SQL.Database(new Uint8Array(buf));
 
-    allRows = data;
-    const lastQ = data[data.length-1];
+    // 3. Query beef_quarterly, convert to array of plain objects
+    const result = db.exec(
+      "SELECT * FROM beef_quarterly ORDER BY quarter_start ASC"
+    );
+    if (!result.length || !result[0].values.length)
+      throw new Error('beef_quarterly table exists but contains no rows.');
+
+    const { columns, values } = result[0];
+    allRows = values.map(row =>
+      Object.fromEntries(columns.map((c, i) => [c, row[i]]))
+    );
+
+    db.close();
+
+    const lastQ = allRows[allRows.length - 1];
     document.getElementById('last-update').textContent = `Latest: ${lastQ.quarter}`;
 
+    // 4. Inject layout HTML then render
     root.innerHTML = `
-      <!-- ── LEGEND ── -->
       <div style="padding:12px 24px 0;display:flex;gap:16px;flex-wrap:wrap;">
         ${COMPANIES.map(c=>`<div class="legend-item"><div class="legend-dot" style="background:${C_COLORS[c]}"></div>${c}</div>`).join('')}
-        <span style="font-size:11px;color:#555;margin-left:6px;">Solid = spread proxy  ·  Dashed = reported margin</span>
+        <span style="font-size:11px;color:#555;margin-left:6px;">Solid = spread proxy · Dashed = reported margin</span>
       </div>
 
-      <!-- ── KPI row will be prepended here ── -->
-
-      <!-- ── SPREAD + MARGIN CHARTS ── -->
       <div class="section">
         <div class="section-title">Spread Proxy vs. Reported Margin — Quarterly</div>
         <div class="charts-2col">
@@ -416,11 +356,10 @@ async function init() {
         </div>
       </div>
 
-      <!-- ── CORRELATION SCATTER ── -->
       <div class="section">
         <div class="section-title">ΔSpread vs. ΔMargin — Quarter-over-Quarter Correlation</div>
         <div class="charts-3col">
-          ${COMPANIES.map(co => `
+          ${COMPANIES.map(co=>`
           <div class="chart-card">
             <div class="chart-card-title">${co} &nbsp;<span id="corr-stat-${co.toLowerCase()}" style="font-weight:400;color:#555;font-size:10px;"></span></div>
             <canvas id="chartCorr${co}"></canvas>
@@ -428,41 +367,38 @@ async function init() {
         </div>
       </div>
 
-      <!-- ── TABLE ── -->
       <div class="section">
         <div class="section-title">Quarterly Data — Most Recent 16 Quarters</div>
         <div class="tbl-wrap">
           <table>
-            <thead>
-              <tr>
-                <th style="text-align:left">Quarter</th>
-                <th>Choice<br>($/cwt)</th>
-                <th>CT150<br>($/cwt)</th>
-                <th>KS Avg<br>($/cwt)</th>
-                <th style="color:#FF5500">MBRF<br>Spread</th>
-                <th style="color:#FF5500">MBRF<br>GM%</th>
-                <th style="color:#3498DB">JBS<br>Spread</th>
-                <th style="color:#3498DB">JBS<br>GM%</th>
-                <th style="color:#27AE60">Tyson<br>Spread</th>
-                <th style="color:#27AE60">Tyson<br>Op%</th>
-              </tr>
-            </thead>
+            <thead><tr>
+              <th style="text-align:left">Quarter</th>
+              <th>Choice<br>($/cwt)</th><th>CT150<br>($/cwt)</th><th>KS Avg<br>($/cwt)</th>
+              <th style="color:#FF5500">MBRF<br>Spread</th><th style="color:#FF5500">MBRF<br>GM%</th>
+              <th style="color:#3498DB">JBS<br>Spread</th><th style="color:#3498DB">JBS<br>GM%</th>
+              <th style="color:#27AE60">Tyson<br>Spread</th><th style="color:#27AE60">Tyson<br>Op%</th>
+            </tr></thead>
             <tbody id="tbl-body"></tbody>
           </table>
         </div>
       </div>
 
       <div style="padding:12px 24px 24px;font-size:10px;color:#444;line-height:1.7;">
-        Sources: USDA AMS (CT150, Cutout, KS/NE prices, Drop Credit) · EIA (Henry Hub) · MBRF/IFRS · JBS/US GAAP · Tyson/US GAAP<br>
-        Spread formula: (Revenue − Cattle cost + w_drop×Drop − w_energy×HH) / Revenue. Weights: MBRF = 100% Choice / 100% KS avg; JBS ≈ 70% Choice / 100% NE avg; Tyson = 75% Choice / 30% CT150 + 50% KS + 20% NE + HH w=0.30.
+        Sources: USDA AMS (CT150 rpt 2461, Cutout rpt 2527, KS rpt 2484, NE rpt 2667, Drop Credit rpt 2829) · EIA (Henry Hub NG.RNGWHHD.D) · MBRF/IFRS · JBS/US GAAP · Tyson/US GAAP<br>
+        Spread = (Revenue − Cattle + w_drop×Drop − w_energy×HH) / Revenue.
+        V4 weights: MBRF = 100% Choice / 100% KS avg; JBS ≈ 70% Choice / 100% NE avg; Tyson = 75% Choice / 30% CT150 + 50% KS + 20% NE / HH w=0.30.
       </div>`;
 
     renderAll();
 
   } catch(e) {
-    root.innerHTML = `<div class="error-box">⚠ Failed to load data: ${e.message}<br><br>
-      Make sure the <code>beef_quarterly</code> table exists in Supabase and contains data.<br>
-      Run <code>schema.sql</code> and then <code>load_history.py</code> to set up.</div>`;
+    root.innerHTML = `<div class="error-box">
+      ⚠ ${e.message}<br><br>
+      <strong>Setup steps:</strong><br>
+      1. Run <code>python extractor_beef.py --history US_Beef_Packer_Margin_Tracker_v4.xlsx</code><br>
+      2. Commit the generated <code>beef.db</code> to the same folder as this HTML file<br>
+      3. Push to GitHub — the dashboard will load automatically
+    </div>`;
   }
 }
 
