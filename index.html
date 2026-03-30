@@ -316,6 +316,7 @@ const STATE = {
   activeSettingsTab: 'admin-panel',
   activeDash: null,
   searchQuery: '',
+  usersExpanded: false,
   // Loaded from Supabase:
   portalUsers: [],
   dashboards: [],
@@ -640,7 +641,11 @@ function buildSettings(){
 function buildPaneUsersTeam(){
   const t=STATE.teamSettings;
   const analysts=Array.isArray(t.analysts)?t.analysts:[];
-  const usersHtml=STATE.portalUsers.map((u,i)=>`
+  const USERS_PREVIEW = 4;
+  const showAll = STATE.usersExpanded;
+  const displayUsers = showAll ? STATE.portalUsers : STATE.portalUsers.slice(0, USERS_PREVIEW);
+  const hiddenCount = STATE.portalUsers.length - USERS_PREVIEW;
+  const usersHtml=displayUsers.map((u,i)=>`
     <div class="admin-row">
       <div class="admin-row-info">
         <div class="admin-row-name">${esc(u.display_name)} ${u.is_admin?'<span class="badge-admin">ADMIN</span>':'<span class="badge-user">USER</span>'}</div>
@@ -670,8 +675,18 @@ function buildPaneUsersTeam(){
       <div class="admin-section">
         <div class="admin-section-header">&#128101; &nbsp;User Management</div>
         <div class="admin-section-body">
-          <div class="info-box">Toggle "Admin" to promote or demote a user. Changes save instantly to the database.</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <div class="info-box" style="margin:0;flex:1;">Toggle "Admin" to promote or demote a user. Changes save instantly to the database.</div>
+            <button class="btn-outline" onclick="exportUsersExcel()" title="Download user list as Excel">&#8659; Export to Excel</button>
+          </div>
           ${usersHtml}
+          ${!showAll && hiddenCount > 0 ? `<div style="margin-top:10px;">
+            <button class="btn-outline" style="width:100%;justify-content:center;font-size:12px;color:var(--gray-mid);" onclick="STATE.usersExpanded=true;renderContent();">
+              &#8595; See all ${STATE.portalUsers.length} users (${hiddenCount} more)
+            </button></div>` : showAll && STATE.portalUsers.length > USERS_PREVIEW ? `<div style="margin-top:10px;">
+            <button class="btn-outline" style="width:100%;justify-content:center;font-size:12px;color:var(--gray-mid);" onclick="STATE.usersExpanded=false;renderContent();">
+              &#8593; Show less
+            </button></div>` : ''}
           <hr class="sep"/>
           <div style="font-size:13px;font-weight:700;color:var(--black);margin-bottom:12px;">Add New User</div>
           <div class="info-box" style="margin-bottom:12px;">New users must be created in <strong>Supabase Auth</strong> first (Authentication → Users → Add user), then they will appear here automatically on next login.</div>
@@ -765,7 +780,15 @@ function buildPaneContent(){
           +'<input class="admin-input" style="margin-bottom:0;" value="'+esc(d.source||'')+'" onchange="dbEditDash('+d.id+',\'source\',this.value)"/></div>'
           +'</div>'
           +'<label class="admin-label" style="margin-bottom:3px;">Description</label>'
-          +'<textarea class="admin-input" rows="2" style="margin-bottom:0;resize:vertical;" onchange="dbEditDash('+d.id+',\'description\',this.value)">'+esc(d.description)+'</textarea>'
+          +'<textarea class="admin-input" rows="2" style="margin-bottom:8px;resize:vertical;" onchange="dbEditDash('+d.id+',\'description\',this.value)">'+esc(d.description)+'</textarea>'
+          +'<div class="dash-edit-row" style="margin-bottom:8px;">'
+          +'<div style="flex:1;"><label class="admin-label" style="margin-bottom:3px;">Note (orange warning text)</label>'
+          +'<input class="admin-input" style="margin-bottom:0;" value="'+esc(d.note||'')+'" placeholder="e.g. * May take longer to load..." onchange="dbEditDash('+d.id+',\'note\',this.value)"/></div>'
+          +'<div style="width:160px;"><label class="admin-label" style="margin-bottom:3px;">Footer Label</label>'
+          +'<input class="admin-input" style="margin-bottom:0;" value="'+esc(d.footer||'')+'" placeholder="e.g. AUTO-UPDATES ON LOAD" onchange="dbEditDash('+d.id+',\'footer\',this.value)"/></div>'
+          +'</div>'
+          +'<label class="admin-label" style="margin-bottom:3px;">Tags (comma-separated)</label>'
+          +'<input class="admin-input" style="margin-bottom:0;" value="'+(d.tags||[]).join(', ')+'" placeholder="e.g. CBOT, ESALQ, Weekly" onchange="dbEditDashTags('+d.id+',this.value)"/>'
           +'</div></div>';
       }).join('');
 
@@ -930,6 +953,14 @@ async function dbAddDash(secId, subId){
   document.getElementById('new-dash-source').value='';
   showToast('Dashboard added ✓'); renderTopNav(); renderSubNav(); renderContent();
 }
+async function dbEditDashTags(id, csv){
+  const tags = csv.split(',').map(t=>t.trim()).filter(Boolean);
+  const {error}=await sb.from('dashboards').update({tags}).eq('id',id);
+  if(error){ showToast('Error: '+error.message); return; }
+  const d=STATE.dashboards.find(x=>x.id===id);
+  if(d) d.tags=tags;
+  showToast('Tags saved ✓');
+}
 async function dbEditDash(id, field, val){
   const payload={};
   payload[field]=val;
@@ -979,6 +1010,25 @@ async function dbSaveAccount(){
    rows: array of objects  columns: array of {key, label}
    e.g. downloadIBBA(data, [{key:'date',label:'Date'},{key:'price',label:'Price (R$/bag)'}], 'Prices', 'Grains Price Monitor')
 */
+function exportUsersExcel(){
+  if(!window.XLSX){ showToast('Excel library not loaded yet.'); return; }
+  const XLSX = window.XLSX;
+  const rows = STATE.portalUsers.map(u=>({
+    'Display Name':  u.display_name||'',
+    'Email':         u.email||'',
+    'Role':          u.is_admin?'Admin':'User',
+    'Status':        u.active?'Active':'Inactive',
+    'Created At':    u.created_at ? new Date(u.created_at).toLocaleDateString('en-US') : '',
+  }));
+  const cols = [
+    {key:'Display Name', label:'Display Name'},
+    {key:'Email',        label:'Email'},
+    {key:'Role',         label:'Role'},
+    {key:'Status',       label:'Status'},
+    {key:'Created At',   label:'Created At'},
+  ];
+  downloadIBBA(rows, cols, 'Users', 'Portal Users');
+}
 function downloadIBBA(rows, columns, sheetName, baseName){
   if(!window.XLSX){ showToast('Excel library not loaded yet.'); return; }
   const XLSX = window.XLSX;
