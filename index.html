@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Itaú BBA — Agribusiness, Food & Beverage Research</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -131,7 +132,7 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
   border-radius:5px;font-size:13px;color:var(--gray-dark);cursor:pointer;font-family:var(--font);transition:border-color .15s,color .15s;}
 .btn-back:hover{border-color:var(--orange);color:var(--orange);}
 .dash-view-title{font-size:15px;font-weight:700;color:var(--black);}
-.dash-view-body{flex:1;display:flex;align-items:center;justify-content:center;background:var(--gray-light);overflow:hidden;min-height:400px;}
+.dash-view-body{background:var(--gray-light);min-height:calc(100vh - 200px);}
 .under-construction{text-align:center;padding:48px 24px;}
 .under-construction-icon{font-size:56px;margin-bottom:18px;}
 .under-construction h2{font-size:20px;font-weight:700;color:var(--black);margin-bottom:10px;}
@@ -328,15 +329,22 @@ const STATE = {
 };
 
 const SECTORS = [
-  { id:'agri', label:'Agribusiness' },
-  { id:'food', label:'Food' },
-  { id:'bev',  label:'Beverage' },
+  { id:'agri', label:'Agribusiness'    },
+  { id:'fnb',  label:'Food & Beverage' },
 ];
 const SUBSECTORS = {
   agri: [{ id:'grains', label:'Grains' }, { id:'sugar', label:'Sugar & Ethanol' }],
-  food: [{ id:'beef', label:'Beef' }, { id:'chicken', label:'Chicken' }, { id:'pork', label:'Pork' }, { id:'staples', label:'Staples' }],
-  bev:  [{ id:'beverages', label:'Beverages' }],
+  fnb:  [
+    { id:'beef',      label:'Beef'      },
+    { id:'chicken',   label:'Chicken'   },
+    { id:'pork',      label:'Pork'      },
+    { id:'food',      label:'Food'      },
+    { id:'beverages', label:'Beverages' },
+  ],
 };
+// Normalize legacy Supabase sector/subsector IDs (food->fnb, bev->fnb, staples->food)
+function normalizeSector(s){ return (s==='food'||s==='bev')?'fnb':s; }
+function normalizeSubsector(s){ return s==='staples'?'food':s; }
 
 /* ══ UTILS ══ */
 const esc = s => s==null?'':String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -443,7 +451,7 @@ function toggleAvatarMenu(e){ e.stopPropagation(); document.getElementById('avat
 /* ══ NAVIGATION ══ */
 const visibleSubs = sec => (SUBSECTORS[sec]||[]).filter(s=>{
   if(STATE.currentUser?.is_admin) return true;
-  return STATE.dashboards.some(d=>d.sector===sec&&d.subsector===s.id&&d.visible_to_all);
+  return STATE.dashboards.some(d=>normalizeSector(d.sector)===sec&&normalizeSubsector(d.subsector)===s.id&&d.visible_to_all);
 });
 function navigateSector(sid){ STATE.activeSector=sid; STATE.activeDash=null; STATE.searchQuery=''; const subs=visibleSubs(sid); STATE.activeSubsector=subs.length?subs[0].id:null; renderAll(); }
 function navigateSubsector(sid){ STATE.activeSubsector=sid; STATE.activeDash=null; STATE.searchQuery=''; renderSubNav(); renderContent(); }
@@ -460,7 +468,7 @@ function renderTopNav(){
   const isAdmin=STATE.currentUser?.is_admin;
   let html='';
   SECTORS.forEach(s=>{
-    if(!isAdmin && !STATE.dashboards.some(d=>d.sector===s.id&&d.visible_to_all)) return;
+    if(!isAdmin && !STATE.dashboards.some(d=>normalizeSector(d.sector)===s.id&&d.visible_to_all)) return;
     const a=STATE.activeSector===s.id?'active':'';
     html+=`<div class="top-nav-tab ${a}" onclick="navigateSector('${s.id}')">${esc(s.label)}</div>`;
   });
@@ -488,8 +496,9 @@ function renderSubNav(){
 
 function getDashes(sector, subsector){
   const isAdmin=STATE.currentUser?.is_admin;
+  // Normalize legacy sector/subsector IDs from Supabase
   let list = STATE.dashboards
-    .filter(d=>d.sector===sector && d.subsector===subsector && (isAdmin||d.visible_to_all))
+    .filter(d=>normalizeSector(d.sector)===sector && normalizeSubsector(d.subsector)===subsector && (isAdmin||d.visible_to_all))
     .sort((a,b)=>(a.display_order||0)-(b.display_order||0));
   if(STATE.searchQuery){
     const q=STATE.searchQuery.toLowerCase();
@@ -515,7 +524,7 @@ function renderContent(){
     const bodyHtml=moduleSrc
       ? `<iframe
            src="${moduleSrc}?v=${Date.now()}"
-           style="width:100%;height:100%;border:none;display:block;"
+           style="width:100%;height:calc(100vh - 200px);border:none;display:block;"
            allowfullscreen
            title="${esc(d.title)}"
          ></iframe>`
@@ -527,14 +536,12 @@ function renderContent(){
            <div class="uc-badge">&#9203;&nbsp; Coming in a future release</div>
          </div>`;
     area.innerHTML=`
-      <div style="display:flex;flex-direction:column;height:100%;min-height:0;">
-        <div class="dash-view-header">
-          <button class="btn-back" onclick="closeDashView()">&#8592; Back</button>
-          <div class="dash-view-title">${esc(d.title)}</div>
-        </div>
-        <div class="dash-view-body" style="flex:1;min-height:0;overflow:hidden;">
-          ${bodyHtml}
-        </div>
+      <div class="dash-view-header">
+        <button class="btn-back" onclick="closeDashView()">&#8592; Back</button>
+        <div class="dash-view-title">${esc(d.title)}</div>
+      </div>
+      <div class="dash-view-body">
+        ${bodyHtml}
       </div>`;
     return;
   }
@@ -580,7 +587,8 @@ function renderContent(){
 function renderSidebar(){
   const t=STATE.teamSettings;
   const analysts=Array.isArray(t.analysts)?t.analysts:[];
-  const mailAll=analysts.map(a=>a.email).filter(Boolean).join(',');
+  // Semicolon-separated for Outlook compatibility (comma causes issues)
+  const mailAll=analysts.map(a=>a.email).filter(Boolean).join(';');
   const promoHtml=(t.promo_image_url)
     ?`<a class="sidebar-promo" href="${esc(t.promo_link_url||'#')}" target="_blank" rel="noopener"><img src="${esc(t.promo_image_url)}" alt="Banner"/></a>`:'';
   const teamBanner=`
@@ -593,8 +601,9 @@ function renderSidebar(){
         <div class="sidebar-team-banner-arrow">&#8250;</div>
       </div>
     </a>`;
+  // Each individual analyst card also emails ALL analysts (TO: all, not just clicked one)
   const analystCards=analysts.map(a=>`
-    <a class="analyst-card" href="mailto:${esc(a.email)}" onclick="event.stopPropagation()">
+    <a class="analyst-card" href="mailto:${esc(mailAll)}?subject=Itaú BBA — Agribusiness, Food & Beverage Research" onclick="event.stopPropagation()">
       <div class="analyst-avatar">${initials(a.name)}</div>
       <div>
         <div class="analyst-name">${esc(a.name)}</div>
@@ -730,6 +739,7 @@ function buildPaneContent(){
           <div class="dash-edit-header">
             <span>ID ${d.id} &mdash; ${esc(d.title)}</span>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <button class="btn-danger" style="padding:4px 10px;font-size:11px;" onclick="dbDeleteDash(${d.id})" title="Delete dashboard">&#128465; Delete</button>
               <span style="font-size:11px;color:#aaa;">Visible:</span>
               <label class="toggle"><input type="checkbox" ${d.visible_to_all?'checked':''} onchange="dbEditDash(${d.id},'visible_to_all',this.checked)">
                 <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
@@ -768,10 +778,20 @@ function buildPaneContent(){
           </div>
         </div>`;
       }).join('');
-      return `<div style="margin-bottom:4px;">
-        <div style="font-size:11px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 8px;">${esc(sub.label)}</div>
-        ${rows}
+      const addForm=`<div style="margin-top:12px;background:#FFF9F5;border:1.5px dashed #FFD8BF;border-radius:8px;padding:14px 16px;">
+        <div style="font-size:12px;font-weight:700;color:var(--orange);margin-bottom:10px;">+ Add Dashboard to ${esc(sub.label)}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <input class="admin-input" id="new-dash-title" style="flex:2 1 180px;margin:0;" placeholder="Title *"/>
+          <input class="admin-input" id="new-dash-source" style="flex:1 1 120px;margin:0;" placeholder="Source (e.g. CBOT)"/>
+        </div>
+        <textarea class="admin-input" id="new-dash-desc" rows="2" style="margin-bottom:8px;resize:vertical;" placeholder="Description"></textarea>
+        <button class="btn-primary" style="font-size:12px;padding:7px 14px;" onclick="dbAddDash('${sec.id}','${sub.id}')">Add Dashboard</button>
       </div>`;
+      return \`<div style="margin-bottom:4px;">
+        <div style="font-size:11px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 8px;">\${esc(sub.label)}</div>
+        \${rows}
+        \${addForm}
+      </div>\`;
     }).join('');
     return `<div class="admin-section" style="margin-bottom:20px;">
       <div class="admin-section-header">${esc(sec.label)}</div>
@@ -892,6 +912,31 @@ async function dbClearPromo(){
 }
 
 /* Dashboards */
+async function dbDeleteDash(id){
+  if(!confirm('Delete this dashboard? This cannot be undone.')) return;
+  const {error}=await sb.from('dashboards').delete().eq('id',id);
+  if(error){ showToast('Error: '+error.message); return; }
+  STATE.dashboards=STATE.dashboards.filter(x=>x.id!==id);
+  showToast('Dashboard deleted.'); renderTopNav(); renderSubNav(); renderContent();
+}
+async function dbAddDash(secId, subId){
+  const title=document.getElementById('new-dash-title').value.trim();
+  const desc=document.getElementById('new-dash-desc').value.trim();
+  const source=document.getElementById('new-dash-source').value.trim();
+  if(!title){ showToast('Title is required.'); return; }
+  const maxOrder=Math.max(0,...STATE.dashboards.filter(d=>d.sector===secId&&d.subsector===subId).map(d=>d.display_order||0));
+  const {data,error}=await sb.from('dashboards').insert({
+    sector:secId, subsector:subId, title, description:desc, source,
+    display_order:maxOrder+1, visible_to_all:true, coming_soon:true,
+    note:'', footer:'', url:'#', tags:[]
+  }).select().single();
+  if(error){ showToast('Error: '+error.message); return; }
+  STATE.dashboards.push(data);
+  document.getElementById('new-dash-title').value='';
+  document.getElementById('new-dash-desc').value='';
+  document.getElementById('new-dash-source').value='';
+  showToast('Dashboard added ✓'); renderTopNav(); renderSubNav(); renderContent();
+}
 async function dbEditDash(id, field, val){
   const payload={};
   payload[field]=val;
@@ -933,6 +978,78 @@ async function dbSaveAccount(){
   }
   u.display_name=name; u.email=email;
   setLoading(false); renderTopNav(); renderContent(); showToast('Account updated ✓');
+}
+
+/* ══ IBBA EXCEL DOWNLOAD HELPER ══
+   Usage from any dashboard module:
+   downloadIBBA(rows, columns, sheetName, baseName)
+   rows: array of objects  columns: array of {key, label}
+   e.g. downloadIBBA(data, [{key:'date',label:'Date'},{key:'price',label:'Price (R$/bag)'}], 'Prices', 'Grains Price Monitor')
+*/
+function downloadIBBA(rows, columns, sheetName, baseName){
+  if(!window.XLSX){ showToast('Excel library not loaded yet.'); return; }
+  const XLSX = window.XLSX;
+  const wb = XLSX.utils.book_new();
+
+  // ── Header row styling (orange #FF5500 background, white bold text) ──
+  const headerRow = columns.map(c=>c.label);
+  const dataRows  = rows.map(r=>columns.map(c=>r[c.key]??''));
+  const wsData    = [headerRow, ...dataRows];
+  const ws        = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Column widths (auto from longest value)
+  ws['!cols'] = columns.map((c,ci)=>{
+    const maxLen = Math.max(
+      c.label.length,
+      ...rows.map(r=>String(r[c.key]??'').length)
+    );
+    return { wch: Math.min(Math.max(maxLen+2, 10), 40) };
+  });
+
+  // Apply IBBA header style to row 0
+  columns.forEach((_,ci)=>{
+    const cellRef = XLSX.utils.encode_cell({r:0, c:ci});
+    if(!ws[cellRef]) return;
+    ws[cellRef].s = {
+      font:    { name:'Arial', sz:8, bold:true, color:{rgb:'FFFFFF'} },
+      fill:    { fgColor:{rgb:'FF5500'}, patternType:'solid' },
+      alignment: { horizontal:'left', vertical:'center' },
+      border: {
+        bottom:{ style:'thin', color:{rgb:'E5E5E5'} },
+        right: { style:'thin', color:{rgb:'E5E5E5'} }
+      }
+    };
+  });
+
+  // Apply IBBA data row style (Arial 8, black, thin gray borders)
+  rows.forEach((_,ri)=>{
+    columns.forEach((_,ci)=>{
+      const cellRef = XLSX.utils.encode_cell({r:ri+1, c:ci});
+      if(!ws[cellRef]) return;
+      ws[cellRef].s = {
+        font:      { name:'Arial', sz:8, color:{rgb:'333333'} },
+        alignment: { horizontal:'left', vertical:'center' },
+        border: {
+          bottom:{ style:'thin', color:{rgb:'E5E5E5'} },
+          right: { style:'thin', color:{rgb:'E5E5E5'} }
+        }
+      };
+    });
+  });
+
+  XLSX.utils.book_append_sheet(wb, ws, sheetName||'Data');
+
+  // Source note sheet
+  const wsNote = XLSX.utils.aoa_to_sheet([
+    ['Source Note'],
+    [`Data extracted by Itaú BBA Agribusiness, Food & Beverage Research.`],
+    [`Downloaded: ${new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}`],
+  ]);
+  XLSX.utils.book_append_sheet(wb, wsNote, 'Source');
+
+  const fileName = `IBBA | ${baseName||'Data'}.xlsx`;
+  XLSX.writeFile(wb, fileName, { bookType:'xlsx', type:'binary', cellStyles:true });
+  showToast(`Downloaded: ${fileName}`);
 }
 
 /* ══ START ══ */
