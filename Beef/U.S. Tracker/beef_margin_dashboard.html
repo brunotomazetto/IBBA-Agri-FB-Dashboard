@@ -311,11 +311,13 @@ let chartDelta    = null;
 let chartTimeline = null;
 
 // ─── DB LOAD ─────────────────────────────────────────────────────────────────
+// NOTE: SQL must be captured in outer scope — it is only available in the
+// first .then(); flat-chaining would lose it in subsequent callbacks.
 initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` })
-  .then(SQL => fetch('./beef.db'))
-  .then(r   => r.arrayBuffer())
-  .then(buf => {
-    const db  = new SQL.Database(new Uint8Array(buf));
+  .then(SQL => fetch('./beef.db')
+    .then(r   => r.arrayBuffer())
+    .then(buf => {
+      const db  = new SQL.Database(new Uint8Array(buf));
     const res = db.exec(`
       SELECT quarter, quarter_start,
              choice_cutout, select_cutout,
@@ -332,7 +334,7 @@ initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10
       return o;
     });
     renderAll();
-  })
+  }))
   .catch(err => {
     document.querySelector('.main').innerHTML =
       `<div style="color:#CC2200;padding:24px;font-size:13px">
