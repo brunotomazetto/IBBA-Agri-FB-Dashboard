@@ -4,400 +4,566 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>U.S. Beef Packer Margin Tracker</title>
-<!-- sql.js: SQLite compiled to WebAssembly — reads beef.db directly in the browser -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
-  --or:#FF5500;--bg:#1A1A1A;--bg2:#222;--bg3:#2A2A2A;
-  --border:#333;--text:#DDD;--muted:#888;--white:#FFF;
-  --green:#27AE60;--red:#C0392B;--blue:#3498DB;
-  --mbrf:#FF5500;--jbs:#3498DB;--tyson:#27AE60;
-  --font:'Segoe UI',Helvetica,Arial,sans-serif;
+  --or:#FF5500; --bk:#333333; --gy:#888888;
+  --bg:#F4F4F4; --bd:#E5E5E5; --wh:#FFFFFF;
+  --gr:#27AE60; --rd:#C0392B;
+  --font:'Segoe UI',Arial,sans-serif;
 }
-html,body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
-.page-header{background:var(--bg2);border-bottom:2px solid var(--or);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
-.page-header h1{font-size:15px;font-weight:700;color:var(--white);}
-.page-header .sub{font-size:11px;color:var(--muted);margin-top:2px;}
-.last-update{font-size:11px;color:var(--muted);}
-.controls{padding:14px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--border);background:var(--bg2);}
-.ctrl-label{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
-.ctrl-select{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:6px 10px;font-size:12px;color:var(--text);font-family:var(--font);outline:none;cursor:pointer;}
-.ctrl-select:focus{border-color:var(--or);}
-.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;padding:18px 24px;}
-.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;position:relative;overflow:hidden;}
-.kpi::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--or);}
-.kpi.mbrf::before{background:var(--mbrf);}
-.kpi.jbs::before{background:var(--jbs);}
-.kpi.tyson::before{background:var(--tyson);}
-.kpi.market::before{background:var(--muted);}
-.kpi-label{font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
-.kpi-value{font-size:22px;font-weight:700;color:var(--white);}
-.kpi-sub{font-size:11px;color:var(--muted);margin-top:3px;}
-.kpi-delta{font-size:11px;font-weight:600;margin-top:4px;}
-.kpi-delta.pos{color:var(--green);}
-.kpi-delta.neg{color:var(--red);}
-.section{padding:0 24px 24px;}
-.section-title{font-size:12px;font-weight:700;color:var(--or);text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px;padding-top:18px;border-top:1px solid var(--border);}
-.charts-2col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-.charts-3col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
-@media(max-width:900px){.charts-2col,.charts-3col{grid-template-columns:1fr;}}
-.chart-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;}
-.chart-card-title{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:12px;}
-.chart-card canvas{max-height:240px;}
-.tbl-wrap{overflow-x:auto;}
-table{width:100%;border-collapse:collapse;font-size:11.5px;}
-thead th{background:var(--bg3);color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:8px 10px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--border);}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--font);background:var(--bg);color:var(--bk);font-size:12px;}
+
+/* ── Header ── */
+.hdr{background:var(--wh);border-bottom:3px solid var(--or);padding:13px 24px;display:flex;align-items:center;justify-content:space-between;}
+.hdr-title{font-size:14px;font-weight:700;color:var(--or);}
+.hdr-sub{font-size:10px;color:var(--gy);margin-top:2px;}
+.hdr-right{font-size:10px;color:var(--gy);}
+
+/* ── Tabs ── */
+.tabs{background:var(--wh);border-bottom:1px solid var(--bd);padding:0 24px;display:flex;}
+.tab{padding:9px 20px;font-size:12px;font-weight:600;color:var(--gy);cursor:pointer;border-bottom:3px solid transparent;transition:all .15s;}
+.tab:hover{color:var(--bk);}
+.tab.active{color:var(--or);border-bottom-color:var(--or);}
+
+/* ── Layout ── */
+.content{padding:16px 24px;display:flex;flex-direction:column;gap:14px;}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.row-bot{display:grid;grid-template-columns:290px 1fr;gap:14px;}
+
+/* ── Cards ── */
+.card{background:var(--wh);border:1px solid var(--bd);border-radius:6px;padding:16px;}
+.card-hdr{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid var(--or);}
+.card-title{font-size:12px;font-weight:700;color:var(--bk);}
+.card-stat{font-size:10px;color:var(--gy);}
+canvas{max-height:210px;}
+
+/* ── Control Panel ── */
+.cp-section{margin-bottom:14px;}
+.cp-section-label{font-size:10px;font-weight:700;color:var(--or);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;}
+.cp-row{display:flex;align-items:center;margin-bottom:7px;gap:6px;}
+.cp-lbl{font-size:11px;color:var(--bk);width:78px;flex-shrink:0;}
+.cp-lbl.auto{color:var(--gy);font-style:italic;}
+.cp-slider{flex:1;accent-color:var(--or);cursor:pointer;}
+.cp-val{font-size:11px;font-weight:700;color:var(--or);width:38px;text-align:right;flex-shrink:0;}
+.cp-val.auto{color:var(--gy);font-weight:400;}
+.cp-divider{border:none;border-top:1px solid var(--bd);margin:12px 0;}
+.btn-reset{width:100%;padding:7px;background:transparent;border:1.5px solid var(--or);color:var(--or);font-size:11px;font-weight:700;cursor:pointer;border-radius:4px;transition:all .15s;font-family:var(--font);}
+.btn-reset:hover{background:var(--or);color:var(--wh);}
+
+/* ── Toggle ── */
+.toggle-group{display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden;}
+.tog-btn{padding:4px 14px;font-size:11px;font-weight:600;cursor:pointer;background:var(--wh);color:var(--gy);border:none;font-family:var(--font);transition:all .15s;}
+.tog-btn.active{background:var(--or);color:var(--wh);}
+
+/* ── Table ── */
+.tbl-wrap{overflow-x:auto;margin-top:4px;}
+table{width:100%;border-collapse:collapse;font-size:10.5px;}
+thead th{padding:7px 9px;text-align:right;color:var(--gy);font-weight:700;text-transform:uppercase;font-size:9.5px;letter-spacing:.3px;border-bottom:2px solid var(--or);white-space:nowrap;}
 thead th:first-child{text-align:left;}
-tbody tr{border-bottom:1px solid #2A2A2A;}
-tbody tr:hover{background:rgba(255,85,0,.05);}
-tbody td{padding:7px 10px;text-align:right;color:var(--text);white-space:nowrap;}
-tbody td:first-child{text-align:left;color:var(--white);font-weight:600;}
-.pos{color:var(--green);} .neg{color:var(--red);}
-.legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;}
-.legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);}
-.legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
-.loading{text-align:center;padding:48px 24px;color:var(--muted);font-size:13px;}
-.spinner{width:28px;height:28px;border:3px solid #333;border-top-color:var(--or);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px;}
+tbody tr{border-bottom:1px solid var(--bd);}
+tbody tr:hover{background:#FFF5EC;}
+tbody td{padding:5px 9px;text-align:right;white-space:nowrap;}
+tbody td:first-child{text-align:left;font-weight:600;}
+.ov{color:var(--or);font-weight:700;}
+.pos{color:var(--gr);}
+.neg{color:var(--rd);}
+
+/* ── Legend chips ── */
+.legend-row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;}
+.leg{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--gy);}
+.leg-dot{width:9px;height:9px;border-radius:50%;}
+.leg-dash{width:18px;height:2px;border-top:2px dashed;}
+
+/* ── Loading/Error ── */
+.loading{text-align:center;padding:60px 24px;color:var(--gy);}
+.spinner{width:26px;height:26px;border:3px solid var(--bd);border-top-color:var(--or);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 10px;}
 @keyframes spin{to{transform:rotate(360deg);}}
-.error-box{background:#2A1515;border:1px solid #5a2222;border-radius:6px;padding:14px 18px;color:#e07070;font-size:12.5px;margin:24px;}
+.error-box{background:#FFF8F8;border:1px solid #FFCCCC;border-radius:6px;padding:16px;color:var(--rd);margin:24px;font-size:12px;line-height:1.7;}
+.src{font-size:9px;color:#BBB;margin-top:10px;}
 </style>
 </head>
 <body>
 
-<div class="page-header">
+<div class="hdr">
   <div>
-    <h1>U.S. Beef Packer Margin Tracker</h1>
-    <div class="sub">Quarterly spread model vs. reported margins — MBRF / National Beef · JBS North America · Tyson Beef</div>
+    <div class="hdr-title">U.S. Beef Packer Margin Tracker</div>
+    <div class="hdr-sub">Quarterly spread model vs. reported margins — MBRF / National Beef · JBS North America · Tyson Beef</div>
   </div>
-  <div class="last-update" id="last-update">Loading…</div>
+  <div class="hdr-right" id="last-upd">—</div>
 </div>
 
-<div class="controls">
-  <span class="ctrl-label">View</span>
-  <select class="ctrl-select" id="sel-start" onchange="renderAll()">
-    <option value="1Q18">Full history (1Q18)</option>
-    <option value="1Q21">From 1Q21</option>
-    <option value="4Q22" selected>From 4Q22</option>
-    <option value="1Q24">From 1Q24</option>
-  </select>
-  <span class="ctrl-label" style="margin-left:8px;">Weights</span>
-  <select class="ctrl-select" id="sel-weights" onchange="renderAll()">
-    <option value="v4" selected>V4 optimal</option>
-    <option value="equal">Equal-weight (benchmark)</option>
-  </select>
+<div class="tabs">
+  <div class="tab active" onclick="setCompany('MBRF',this)">MBRF</div>
+  <div class="tab" onclick="setCompany('JBS',this)">JBS</div>
+  <div class="tab" onclick="setCompany('Tyson',this)">Tyson</div>
+  <div class="tab" onclick="setCompany('Industry',this)">Industry</div>
 </div>
 
-<div id="root">
-  <div class="loading"><div class="spinner"></div>Loading beef.db…</div>
-</div>
+<div id="root"><div class="loading"><div class="spinner"></div>Loading beef.db…</div></div>
 
 <script>
-// ══ SPREAD MODEL WEIGHTS (V4 tracker — Spread Analysis tab) ══════════════════
-const WEIGHTS = {
-  v4: {
-    MBRF:  { wChoice:1.00, wCt:0.00, wKs:1.00, wNe:0.00, wDrop:0.00, wEnergy:0.00 },
-    JBS:   { wChoice:0.704,wCt:0.00, wKs:0.00, wNe:1.00, wDrop:0.00, wEnergy:0.00 },
-    Tyson: { wChoice:0.75, wCt:0.30, wKs:0.50, wNe:0.20, wDrop:0.00, wEnergy:0.30 },
-  },
-  equal: {
-    MBRF:  { wChoice:0.70, wCt:0.33, wKs:0.33, wNe:0.34, wDrop:0.00, wEnergy:0.00 },
-    JBS:   { wChoice:0.70, wCt:0.33, wKs:0.33, wNe:0.34, wDrop:0.00, wEnergy:0.00 },
-    Tyson: { wChoice:0.70, wCt:0.33, wKs:0.33, wNe:0.34, wDrop:0.00, wEnergy:0.00 },
-  },
+// ══ CONSTANTS ════════════════════════════════════════════════════════════════
+const CO_COLORS = { MBRF:'#FF5500', JBS:'#333333', Tyson:'#888888' };
+
+// V4 optimal weights per company
+// Cattle sliders: ksP / neP (0-100 %). ctP = max(0,100-ksP-neP) auto.
+const V4 = {
+  MBRF:     { choiceP:100, ksP:100, neP:0,   wDrop:0,    wEnergy:0    },
+  JBS:      { choiceP:70,  ksP:0,   neP:100, wDrop:0,    wEnergy:0    },
+  Tyson:    { choiceP:75,  ksP:50,  neP:20,  wDrop:0,    wEnergy:0.30 },
+  Industry: { choiceP:75,  ksP:45,  neP:35,  wDrop:0,    wEnergy:0.10 },
 };
 
-function calcSpread(row, company, wKey='v4') {
-  const w  = WEIGHTS[wKey][company];
-  const ct = row.ct150_steer;
-  const ks = row.ks_avg  != null ? row.ks_avg  : ct;
-  const ne = row.ne_avg  != null ? row.ne_avg  : ct;
-  const dr = row.drop_credit != null ? row.drop_credit : 0;
-  const hh = row.henry_hub  != null ? row.henry_hub   : 0;
-  if (!row.choice || !row.select_ || !ct) return null;
-  const rev    = w.wChoice * row.choice + (1 - w.wChoice) * row.select_;
-  const cattle = (w.wCt * ct + w.wKs * ks + w.wNe * ne) / Math.max(w.wCt + w.wKs + w.wNe, 1e-9);
-  const num    = rev - cattle + w.wDrop * dr - w.wEnergy * hh;
-  return rev > 0 ? num / rev : null;
-}
+// Correlation windows (restrict to hedge-clean quarters)
+const CORR_WIN = { MBRF:['2Q23','4Q25'], JBS:['1Q24','3Q25'], Tyson:['2Q23','4Q25'] };
 
 // ══ STATE ════════════════════════════════════════════════════════════════════
-let allRows = [];
-const COMPANIES = ['MBRF','JBS','Tyson'];
-const C_COLORS  = { MBRF:'#FF5500', JBS:'#3498DB', Tyson:'#27AE60' };
-const CHART_OBJ = {};
+let allQtr = [], allWk = [], allMon = [];
+let company  = 'MBRF';
+let tblMode  = 'quarterly';   // 'quarterly' | 'monthly'
+let W        = { ...V4.MBRF };   // active weights (copy)
+const CHARTS = {};
 
-// ══ UTILS ════════════════════════════════════════════════════════════════════
-const fmtPct = (v, dec=1) => v == null ? '—' : (v*100).toFixed(dec)+'%';
-const fmtNum = (v, dec=1) => v == null ? '—' : v.toFixed(dec);
-function fmtDelta(v, isPct=true) {
-  if (v == null) return {txt:'—',cls:''};
-  const txt = (v>=0?'+':'') + (isPct ? (v*100).toFixed(1)+'pp' : v.toFixed(2));
-  return { txt, cls: v>=0 ? 'pos' : 'neg' };
-}
-function pearson(xs, ys) {
-  const pairs = xs.map((x,i)=>[x,ys[i]]).filter(([a,b])=>a!=null&&b!=null);
-  if (pairs.length < 3) return null;
-  const mx = pairs.reduce((s,[a])=>s+a,0)/pairs.length;
-  const my = pairs.reduce((s,[,b])=>s+b,0)/pairs.length;
-  const num  = pairs.reduce((s,[a,b])=>s+(a-mx)*(b-my),0);
-  const denx = Math.sqrt(pairs.reduce((s,[a])=>s+(a-mx)**2,0));
-  const deny = Math.sqrt(pairs.reduce((s,[,b])=>s+(b-my)**2,0));
-  return denx*deny < 1e-10 ? 0 : num/(denx*deny);
-}
-function qToDate(q) {
-  const m = q.match(/([1-4])Q(\d{2})/);
-  if (!m) return new Date(0);
-  return new Date(2000+parseInt(m[2]), (parseInt(m[1])-1)*3, 1);
-}
-function filteredRows() {
-  const startDate = qToDate(document.getElementById('sel-start').value);
-  return allRows.filter(r => new Date(r.quarter_start) >= startDate);
+// ══ WEIGHT HELPERS ═══════════════════════════════════════════════════════════
+function ctP()  { return Math.max(0, 100 - W.ksP - W.neP); }
+function calcSpread(row) {
+  const ct = row.ct150_steer ?? row.ct150_all;
+  if (!row.choice || !row.select_ || !ct) return null;
+  const ks  = row.ks_avg  ?? ct;
+  const ne  = row.ne_avg  ?? ct;
+  const dr  = row.drop_credit ?? 0;
+  const hh  = row.henry_hub  ?? 0;
+  const rev  = (W.choiceP/100)*row.choice + (1-W.choiceP/100)*row.select_;
+  const _ct  = ctP()/100, _ks = W.ksP/100, _ne = W.neP/100;
+  const sum  = _ct + _ks + _ne || 1;
+  const cattle = (_ks*ks + _ne*ne + _ct*ct) / sum;
+  const num  = rev - cattle + W.wDrop*dr - W.wEnergy*hh;
+  return rev > 0 ? num/rev : null;
 }
 
-// ══ CHART HELPERS ════════════════════════════════════════════════════════════
-const CHART_DEFAULTS = {
-  plugins:{ legend:{ display:false }, tooltip:{ backgroundColor:'#1C1C1C', titleColor:'#fff', bodyColor:'#aaa', borderColor:'#333', borderWidth:1 }},
-  scales:{
-    x:{ grid:{ color:'#2A2A2A' }, ticks:{ color:'#888', font:{ size:10 }}},
-    y:{ grid:{ color:'#2A2A2A' }, ticks:{ color:'#888', font:{ size:10 }}},
-  },
-  animation:{ duration:400 },
-};
-function mkChart(id, cfg) {
-  if (CHART_OBJ[id]) CHART_OBJ[id].destroy();
-  CHART_OBJ[id] = new Chart(document.getElementById(id).getContext('2d'), cfg);
+// ══ FORMAT ═══════════════════════════════════════════════════════════════════
+const p1  = v => v==null ? '—' : (v*100).toFixed(1)+'%';
+const p2  = v => v==null ? '—' : (v*100).toFixed(2)+'%';
+const n1  = v => v==null ? '—' : v.toFixed(1);
+const n2  = v => v==null ? '—' : v.toFixed(2);
+const sgn = v => v==null ? '—' : (v>=0?'+':'')+( (v*100).toFixed(1) )+'pp';
+function clsSign(v){ return v==null?'': v>0?'pos':'neg'; }
+
+function pearson(xs,ys){
+  const pairs=xs.map((x,i)=>[x,ys[i]]).filter(([a,b])=>a!=null&&b!=null);
+  if(pairs.length<3) return null;
+  const mx=pairs.reduce((s,[a])=>s+a,0)/pairs.length;
+  const my=pairs.reduce((s,[,b])=>s+b,0)/pairs.length;
+  const num=pairs.reduce((s,[a,b])=>s+(a-mx)*(b-my),0);
+  const dx=Math.sqrt(pairs.reduce((s,[a])=>s+(a-mx)**2,0));
+  const dy=Math.sqrt(pairs.reduce((s,[,b])=>s+(b-my)**2,0));
+  return dx*dy<1e-10?0:num/(dx*dy);
 }
 
-// ══ RENDER ═══════════════════════════════════════════════════════════════════
-function renderAll() {
-  const rows = filteredRows();
-  const wKey = document.getElementById('sel-weights').value;
-  if (!rows.length) return;
-  const data = rows.map(r => ({
-    ...r,
-    spread_mbrf:  calcSpread(r, 'MBRF',  wKey),
-    spread_jbs:   calcSpread(r, 'JBS',   wKey),
-    spread_tyson: calcSpread(r, 'Tyson', wKey),
-  }));
-  renderKPIs(data, wKey);
-  renderSpreadChart(data);
-  renderMarginChart(data);
-  renderCorrelCharts(data, wKey);
-  renderTable(data, wKey);
+function qToDate(q){
+  const m=q.match(/([1-4])Q(\d{2})/);
+  if(!m) return new Date(0);
+  return new Date(2000+parseInt(m[2]),(parseInt(m[1])-1)*3,1);
 }
 
-function renderKPIs(data, wKey) {
-  const last = data[data.length-1];
-  const prev = data.length > 1 ? data[data.length-2] : null;
-  const mkKpi = (label, val, sub, delta, cls='') => {
-    const d = delta != null ? fmtDelta(delta) : null;
-    return `<div class="kpi ${cls}">
-      <div class="kpi-label">${label}</div>
-      <div class="kpi-value">${val}</div>
-      <div class="kpi-sub">${sub}</div>
-      ${d ? `<div class="kpi-delta ${d.cls}">${d.txt} QoQ</div>` : ''}
-    </div>`;
+// ══ CHART UTILS ══════════════════════════════════════════════════════════════
+const TICK_OPTS = { color:'#333', font:{ size:10 } };
+const GRID_OPTS = { color:'#EEEEEE' };
+const AXIS_OPTS = { color:'#333' };
+
+function baseScales(xCb, yCb){
+  return {
+    x:{ border:{color:'#333'}, grid:GRID_OPTS, ticks:{...TICK_OPTS, callback:xCb||undefined } },
+    y:{ border:{color:'#333'}, grid:GRID_OPTS, ticks:{...TICK_OPTS, callback:yCb||undefined } },
   };
-  const spread = k => last['spread_'+k.toLowerCase()];
-  const marg   = k => k==='MBRF' ? last.mbrf_gm : k==='JBS' ? last.jbs_gm : last.tyson_adj_op_mgn;
-  const dSprd  = k => { const c=spread(k), p=prev?prev['spread_'+k.toLowerCase()]:null; return c!=null&&p!=null?c-p:null; };
-  document.getElementById('root').querySelector('.kpi-row')?.remove();
-  const html = `<div class="kpi-row">
-    ${mkKpi('Choice Cutout', fmtNum(last.choice)+'$/cwt', last.quarter, null, 'market')}
-    ${mkKpi('CT150 5-Area',  fmtNum(last.ct150_steer)+'$/cwt', last.quarter, null, 'market')}
-    ${mkKpi('KS Avg Price',  last.ks_avg ? fmtNum(last.ks_avg)+'$/cwt' : '—', last.quarter, null, 'market')}
-    ${mkKpi('MBRF Spread',   fmtPct(spread('MBRF')),  'Proxy GM%', dSprd('MBRF'),  'mbrf')}
-    ${mkKpi('MBRF Rep. GM%', fmtPct(marg('MBRF')),    last.quarter, last.mbrf_gm&&prev?.mbrf_gm ? last.mbrf_gm-prev.mbrf_gm : null, 'mbrf')}
-    ${mkKpi('JBS Spread',    fmtPct(spread('JBS')),   'Proxy GM%', dSprd('JBS'),   'jbs')}
-    ${mkKpi('JBS Rep. GM%',  fmtPct(marg('JBS')),     last.quarter, last.jbs_gm&&prev?.jbs_gm   ? last.jbs_gm-prev.jbs_gm   : null, 'jbs')}
-    ${mkKpi('Tyson Spread',  fmtPct(spread('Tyson')), 'Proxy Op%', dSprd('Tyson'), 'tyson')}
-    ${mkKpi('Tyson Rep. Op%',fmtPct(marg('Tyson')),   last.quarter, last.tyson_adj_op_mgn&&prev?.tyson_adj_op_mgn ? last.tyson_adj_op_mgn-prev.tyson_adj_op_mgn : null, 'tyson')}
-  </div>`;
-  document.getElementById('root').insertAdjacentHTML('afterbegin', html);
+}
+const TOOLTIP_BASE = {
+  backgroundColor:'#fff', titleColor:'#333', bodyColor:'#555',
+  borderColor:'#E5E5E5', borderWidth:1,
+};
+
+function mkChart(id, cfg){
+  if(CHARTS[id]) CHARTS[id].destroy();
+  CHARTS[id] = new Chart(document.getElementById(id).getContext('2d'), cfg);
 }
 
-function renderSpreadChart(data) {
-  mkChart('chartSpread', {
-    type:'line',
-    data:{
-      labels: data.map(r=>r.quarter),
-      datasets:[
-        { label:'MBRF',  data:data.map(r=>r.spread_mbrf !=null?+(r.spread_mbrf *100).toFixed(2):null), borderColor:'#FF5500', tension:.3, borderWidth:2, pointRadius:2, fill:false, spanGaps:true },
-        { label:'JBS',   data:data.map(r=>r.spread_jbs  !=null?+(r.spread_jbs  *100).toFixed(2):null), borderColor:'#3498DB', tension:.3, borderWidth:2, pointRadius:2, fill:false, spanGaps:true },
-        { label:'Tyson', data:data.map(r=>r.spread_tyson!=null?+(r.spread_tyson*100).toFixed(2):null), borderColor:'#27AE60', tension:.3, borderWidth:2, pointRadius:2, fill:false, spanGaps:true },
-      ]
-    },
-    options:{ ...CHART_DEFAULTS, scales:{ ...CHART_DEFAULTS.scales, y:{ ...CHART_DEFAULTS.scales.y, ticks:{ ...CHART_DEFAULTS.scales.y.ticks, callback:v=>v+'%' }}}},
-  });
+// ══ COMPANY SELECTION ════════════════════════════════════════════════════════
+function setCompany(co, el){
+  company = co;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  W = { ...V4[co] };
+  syncSliders();
+  renderAll();
 }
 
-function renderMarginChart(data) {
-  mkChart('chartMargin', {
-    type:'line',
-    data:{
-      labels: data.map(r=>r.quarter),
-      datasets:[
-        { label:'MBRF GM%',  data:data.map(r=>r.mbrf_gm        !=null?+(r.mbrf_gm        *100).toFixed(2):null), borderColor:'#FF5500', borderDash:[5,3], tension:.3, borderWidth:1.5, pointRadius:2, fill:false, spanGaps:true },
-        { label:'JBS GM%',   data:data.map(r=>r.jbs_gm         !=null?+(r.jbs_gm         *100).toFixed(2):null), borderColor:'#3498DB', borderDash:[5,3], tension:.3, borderWidth:1.5, pointRadius:2, fill:false, spanGaps:true },
-        { label:'Tyson Op%', data:data.map(r=>r.tyson_adj_op_mgn!=null?+(r.tyson_adj_op_mgn*100).toFixed(2):null), borderColor:'#27AE60', borderDash:[5,3], tension:.3, borderWidth:1.5, pointRadius:2, fill:false, spanGaps:true },
-      ]
-    },
-    options:{ ...CHART_DEFAULTS, scales:{ ...CHART_DEFAULTS.scales, y:{ ...CHART_DEFAULTS.scales.y, ticks:{ ...CHART_DEFAULTS.scales.y.ticks, callback:v=>v+'%' }}}},
-  });
+// ══ RENDER ALL ═══════════════════════════════════════════════════════════════
+function renderAll(){
+  renderCorr();
+  renderTimeline();
+  renderTable();
 }
 
-function renderCorrelCharts(data, wKey) {
-  const WIN = { MBRF:['2Q23','4Q25'], JBS:['1Q24','3Q25'], Tyson:['2Q23','4Q25'] };
-  COMPANIES.forEach(co => {
-    const [qs, qe] = WIN[co];
-    const slice = data.filter(r => {
-      const d = new Date(r.quarter_start);
-      return d >= qToDate(qs) && d <= qToDate(qe);
+// ── Chart 1: ΔSpread vs ΔMargin ───────────────────────────────────────────────
+function renderCorr(){
+  if(company==='Industry'){
+    // All 3 companies on same scatter
+    const datasets = Object.entries(CO_COLORS).map(([co,col])=>{
+      const [qs,qe] = CORR_WIN[co];
+      const slice   = allQtr.filter(r=>new Date(r.quarter_start)>=qToDate(qs)&&new Date(r.quarter_start)<=qToDate(qe));
+      const wSnap   = V4[co]; // use each co's V4 weights
+      const getM    = r => co==='MBRF'?r.mbrf_gm : co==='JBS'?r.jbs_gm : r.tyson_adj_op_mgn;
+      const getSp   = (r,w) => {
+        const ct=r.ct150_steer??r.ct150_all; if(!r.choice||!r.select_||!ct) return null;
+        const ks=r.ks_avg??ct, ne=r.ne_avg??ct, dr=r.drop_credit??0, hh=r.henry_hub??0;
+        const rev=(w.choiceP/100)*r.choice+(1-w.choiceP/100)*r.select_;
+        const _ct=Math.max(0,100-w.ksP-w.neP)/100,_ks=w.ksP/100,_ne=w.neP/100;
+        const s=_ct+_ks+_ne||1;
+        return rev>0?(rev-(_ks*ks+_ne*ne+_ct*ct)/s+w.wDrop*dr-w.wEnergy*hh)/rev:null;
+      };
+      const pts=[]; for(let i=1;i<slice.length;i++){
+        const c=slice[i],p=slice[i-1];
+        const ds=getSp(c,wSnap)!=null&&getSp(p,wSnap)!=null?getSp(c,wSnap)-getSp(p,wSnap):null;
+        const dm=getM(c)!=null&&getM(p)!=null?getM(c)-getM(p):null;
+        if(ds!=null&&dm!=null) pts.push({x:+(ds*100).toFixed(3),y:+(dm*100).toFixed(3),q:c.quarter});
+      }
+      const r=pearson(pts.map(p=>p.x),pts.map(p=>p.y));
+      return { label:`${co}  r=${r!=null?r.toFixed(2):'n/a'}`, data:pts, backgroundColor:col+'CC', pointRadius:5, pointHoverRadius:7 };
     });
-    const getSp = r => r['spread_'+co.toLowerCase()];
-    const getMg = r => co==='MBRF' ? r.mbrf_gm : co==='JBS' ? r.jbs_gm : r.tyson_adj_op_mgn;
-    const pts = [];
-    for (let i=1; i<slice.length; i++) {
-      const c=slice[i], p=slice[i-1];
-      const ds = getSp(c)!=null&&getSp(p)!=null ? getSp(c)-getSp(p) : null;
-      const dm = getMg(c)!=null&&getMg(p)!=null ? getMg(c)-getMg(p) : null;
-      if (ds!=null&&dm!=null) pts.push({ x:+(ds*100).toFixed(3), y:+(dm*100).toFixed(3), q:c.quarter });
-    }
-    const r = pearson(pts.map(p=>p.x), pts.map(p=>p.y));
-    document.getElementById(`corr-stat-${co.toLowerCase()}`).textContent =
-      r!=null ? `r = ${r.toFixed(3)}  R² = ${(r*r).toFixed(3)}  N = ${pts.length}` : 'Insufficient data';
-    mkChart(`chartCorr${co}`, {
-      type:'scatter',
-      data:{ datasets:[{ label:`Δ${co}`, data:pts, backgroundColor:C_COLORS[co]+'BB', pointRadius:5, pointHoverRadius:7 }]},
+    document.getElementById('corr-stat').textContent='';
+    mkChart('chartCorr',{
+      type:'scatter', data:{datasets},
       options:{
-        ...CHART_DEFAULTS,
-        plugins:{ ...CHART_DEFAULTS.plugins, tooltip:{ ...CHART_DEFAULTS.plugins.tooltip,
-          callbacks:{ label:ctx=>`${ctx.raw.q}: ΔSpread ${ctx.raw.x>0?'+':''}${ctx.raw.x}pp  ΔMargin ${ctx.raw.y>0?'+':''}${ctx.raw.y}pp` }}},
-        scales:{
-          x:{ ...CHART_DEFAULTS.scales.x, title:{ display:true, text:'ΔSpread (pp)', color:'#666' }, ticks:{ ...CHART_DEFAULTS.scales.x.ticks, callback:v=>v+'pp' }},
-          y:{ ...CHART_DEFAULTS.scales.y, title:{ display:true, text:'ΔMargin (pp)', color:'#666' }, ticks:{ ...CHART_DEFAULTS.scales.y.ticks, callback:v=>v+'pp' }},
-        },
+        plugins:{ legend:{ display:true, labels:{color:'#333',font:{size:10}} }, tooltip:{...TOOLTIP_BASE, callbacks:{label:ctx=>`${ctx.raw.q}: ΔSpread ${ctx.raw.x>0?'+':''}${ctx.raw.x}pp | ΔMargin ${ctx.raw.y>0?'+':''}${ctx.raw.y}pp`}} },
+        scales: baseScales(v=>v+'pp', v=>v+'pp'),
       }
     });
+    return;
+  }
+
+  // Single company
+  const [qs,qe] = CORR_WIN[company]||['1Q18','4Q99'];
+  const slice = allQtr.filter(r=>new Date(r.quarter_start)>=qToDate(qs)&&new Date(r.quarter_start)<=qToDate(qe));
+  const getM  = r => company==='MBRF'?r.mbrf_gm : company==='JBS'?r.jbs_gm : r.tyson_adj_op_mgn;
+  const pts=[]; for(let i=1;i<slice.length;i++){
+    const c=slice[i],p=slice[i-1];
+    const ds=calcSpread(c)!=null&&calcSpread(p)!=null?calcSpread(c)-calcSpread(p):null;
+    const dm=getM(c)!=null&&getM(p)!=null?getM(c)-getM(p):null;
+    if(ds!=null&&dm!=null) pts.push({x:+(ds*100).toFixed(3),y:+(dm*100).toFixed(3),q:c.quarter});
+  }
+  const r=pearson(pts.map(p=>p.x),pts.map(p=>p.y));
+  document.getElementById('corr-stat').textContent =
+    r!=null?`r = ${r.toFixed(3)}   R² = ${(r*r).toFixed(3)}   N = ${pts.length}`:'Insufficient data';
+  mkChart('chartCorr',{
+    type:'scatter',
+    data:{ datasets:[{ label:company, data:pts, backgroundColor:'#FF5500CC', pointRadius:5, pointHoverRadius:7 }] },
+    options:{
+      plugins:{ legend:{display:false}, tooltip:{...TOOLTIP_BASE, callbacks:{label:ctx=>`${ctx.raw.q}: ΔSpread ${ctx.raw.x>0?'+':''}${ctx.raw.x}pp | ΔMargin ${ctx.raw.y>0?'+':''}${ctx.raw.y}pp`}} },
+      scales: baseScales(v=>v+'pp', v=>v+'pp'),
+    }
   });
 }
 
-function renderTable(data, wKey) {
-  const recent = [...data].reverse().slice(0,16);
-  document.getElementById('tbl-body').innerHTML = recent.map(r => {
-    const sm=fmtPct(r.spread_mbrf), sj=fmtPct(r.spread_jbs), st=fmtPct(r.spread_tyson);
-    const mm=fmtPct(r.mbrf_gm),     mj=fmtPct(r.jbs_gm),     mt=fmtPct(r.tyson_adj_op_mgn);
+// ── Chart 2: Spread % vs Margin % ────────────────────────────────────────────
+function renderTimeline(){
+  const labels = allQtr.map(r=>r.quarter);
+  if(company==='Industry'){
+    // All 3 companies' spreads (no margin lines)
+    const datasets = Object.entries(CO_COLORS).map(([co,col])=>{
+      const wSnap=V4[co];
+      const getSpSnap=(r)=>{
+        const ct=r.ct150_steer??r.ct150_all; if(!r.choice||!r.select_||!ct) return null;
+        const ks=r.ks_avg??ct,ne=r.ne_avg??ct,dr=r.drop_credit??0,hh=r.henry_hub??0;
+        const rev=(wSnap.choiceP/100)*r.choice+(1-wSnap.choiceP/100)*r.select_;
+        const _ct=Math.max(0,100-wSnap.ksP-wSnap.neP)/100,_ks=wSnap.ksP/100,_ne=wSnap.neP/100;
+        const s=_ct+_ks+_ne||1;
+        return rev>0?(rev-(_ks*ks+_ne*ne+_ct*ct)/s+wSnap.wDrop*dr-wSnap.wEnergy*hh)/rev:null;
+      };
+      return { label:`${co} Spread`, data:allQtr.map(r=>getSpSnap(r)!=null?+(getSpSnap(r)*100).toFixed(2):null),
+        borderColor:col, borderWidth:2, pointRadius:2, tension:.3, fill:false, spanGaps:true };
+    });
+    mkChart('chartTimeline',{
+      type:'line', data:{labels, datasets},
+      options:{
+        plugins:{ legend:{display:true,labels:{color:'#333',font:{size:10}}}, tooltip:{...TOOLTIP_BASE} },
+        scales: baseScales(null, v=>v+'%'),
+      }
+    });
+    return;
+  }
+
+  const getM = r => company==='MBRF'?r.mbrf_gm : company==='JBS'?r.jbs_gm : r.tyson_adj_op_mgn;
+  const mLabel = company==='Tyson'?'Tyson Adj. Op%':'Reported GM%';
+  mkChart('chartTimeline',{
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Spread Proxy %', data:allQtr.map(r=>calcSpread(r)!=null?+(calcSpread(r)*100).toFixed(2):null),
+        borderColor:'#FF5500', borderWidth:2.5, pointRadius:3, tension:.3, fill:false, spanGaps:true },
+      { label:mLabel, data:allQtr.map(r=>getM(r)!=null?+(getM(r)*100).toFixed(2):null),
+        borderColor:'#333333', borderWidth:1.5, borderDash:[6,3], pointRadius:2, tension:.3, fill:false, spanGaps:true },
+    ]},
+    options:{
+      plugins:{ legend:{display:true,labels:{color:'#333',font:{size:10}}}, tooltip:{...TOOLTIP_BASE} },
+      scales: baseScales(null, v=>v+'%'),
+    }
+  });
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
+function renderTable(){
+  const tbody = document.getElementById('tbl-body');
+  const thead = document.getElementById('tbl-head');
+
+  const showMargin = (company!=='Industry') && (tblMode==='quarterly');
+  const mLabel = company==='Tyson'?'Tyson Op%': company==='JBS'?'JBS GM%':'MBRF GM%';
+
+  // Headers
+  const mgnCols = showMargin
+    ? `<th style="color:var(--or)">Spread%</th><th style="color:var(--or)">${mLabel}</th>`
+    : `<th style="color:var(--or)">Spread%</th>`;
+
+  thead.innerHTML = `<tr>
+    <th style="text-align:left">Period</th>
+    <th>Choice<br>$/cwt</th><th>Select<br>$/cwt</th>
+    <th>CT150<br>$/cwt</th><th>KS Avg<br>$/cwt</th><th>NE Avg<br>$/cwt</th>
+    <th>HH<br>$/MMBtu</th><th>Drop Cr.<br>$/cwt</th>
+    ${mgnCols}
+  </tr>`;
+
+  const rows = tblMode==='quarterly' ? [...allQtr].reverse().slice(0,24)
+                                     : [...allMon].reverse().slice(0,24);
+  const getM = r => company==='MBRF'?r.mbrf_gm : company==='JBS'?r.jbs_gm : r.tyson_adj_op_mgn;
+
+  tbody.innerHTML = rows.map(r=>{
+    const sp  = calcSpread(r);
+    const mgn = showMargin ? getM(r) : null;
+    const period = r.quarter ?? r.month;
+    const mgnCells = showMargin
+      ? `<td class="ov">${p1(sp)}</td><td class="${clsSign(mgn)}">${p1(mgn)}</td>`
+      : `<td class="ov">${p1(sp)}</td>`;
     return `<tr>
-      <td>${r.quarter}</td>
-      <td>${fmtNum(r.choice)}</td><td>${fmtNum(r.ct150_steer)}</td><td>${r.ks_avg?fmtNum(r.ks_avg):'—'}</td>
-      <td class="${r.mbrf_gm>0?'pos':'neg'}">${sm}</td><td class="${r.mbrf_gm>0?'pos':'neg'}">${mm}</td>
-      <td class="${r.jbs_gm>0?'pos':'neg'}">${sj}</td><td class="${r.jbs_gm>0?'pos':'neg'}">${mj}</td>
-      <td class="${r.tyson_adj_op_mgn>0?'pos':'neg'}">${st}</td><td class="${r.tyson_adj_op_mgn>0?'pos':'neg'}">${mt}</td>
+      <td>${period}</td>
+      <td>${n1(r.choice)}</td><td>${n1(r.select_)}</td>
+      <td>${n1(r.ct150_steer??r.ct150_all)}</td>
+      <td>${n1(r.ks_avg)}</td><td>${n1(r.ne_avg)}</td>
+      <td>${n2(r.henry_hub)}</td><td>${n2(r.drop_credit)}</td>
+      ${mgnCells}
     </tr>`;
   }).join('');
 }
 
-// ══ MAIN — load sql.js + fetch beef.db ═══════════════════════════════════════
-async function init() {
-  const root = document.getElementById('root');
-  try {
-    // 1. Initialise sql.js (wasm served from cdnjs)
-    const SQL = await initSqlJs({
-      locateFile: filename =>
-        `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${filename}`
-    });
+// ══ SLIDERS ══════════════════════════════════════════════════════════════════
+function syncSliders(){
+  document.getElementById('sl-choice').value   = W.choiceP;
+  document.getElementById('sl-ks').value        = W.ksP;
+  document.getElementById('sl-ne').value        = W.neP;
+  document.getElementById('sl-drop').value      = W.wDrop;
+  document.getElementById('sl-energy').value    = W.wEnergy;
+  updateLabels();
+}
+function updateLabels(){
+  document.getElementById('v-choice').textContent   = W.choiceP+'%';
+  document.getElementById('v-select').textContent   = (100-W.choiceP)+'%';
+  document.getElementById('v-ks').textContent        = W.ksP+'%';
+  document.getElementById('v-ne').textContent        = W.neP+'%';
+  document.getElementById('v-ct').textContent        = ctP()+'%';
+  document.getElementById('v-drop').textContent     = W.wDrop.toFixed(2);
+  document.getElementById('v-energy').textContent   = W.wEnergy.toFixed(2);
+}
+function onSlider(key,val,isFloat=false){
+  W[key] = isFloat ? parseFloat(val) : parseInt(val);
+  updateLabels();
+  renderAll();
+}
+function resetWeights(){
+  W = { ...V4[company] };
+  syncSliders();
+  renderAll();
+}
 
-    // 2. Fetch beef.db from the same folder as this HTML file
-    const resp = await fetch('./beef.db');
-    if (!resp.ok) throw new Error(
-      `Could not fetch beef.db (HTTP ${resp.status}). ` +
-      `Run: python extractor_beef.py --history tracker_v4.xlsx`
-    );
-    const buf = await resp.arrayBuffer();
-    const db  = new SQL.Database(new Uint8Array(buf));
+// ══ MONTHLY AGGREGATION ═══════════════════════════════════════════════════════
+function buildMonthly(weekly){
+  const grp={};
+  weekly.forEach(r=>{
+    const d=new Date(r.week_ending);
+    const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    if(!grp[key]) grp[key]=[];
+    grp[key].push(r);
+  });
+  const avg=(rows,col)=>{
+    const vs=rows.map(r=>r[col]).filter(v=>v!=null);
+    return vs.length?vs.reduce((a,b)=>a+b,0)/vs.length:null;
+  };
+  return Object.entries(grp).sort().map(([month,rows])=>({
+    month,
+    choice:avg(rows,'choice'), select_:avg(rows,'select_'),
+    ct150_steer:avg(rows,'ct150_steer'), ct150_all:avg(rows,'ct150_all'),
+    ks_avg:avg(rows,'ks_avg'), ne_avg:avg(rows,'ne_avg'),
+    henry_hub:avg(rows,'henry_hub'), drop_credit:avg(rows,'drop_credit'),
+  }));
+}
 
-    // 3. Query beef_quarterly, convert to array of plain objects
-    const result = db.exec(
-      "SELECT * FROM beef_quarterly ORDER BY quarter_start ASC"
-    );
-    if (!result.length || !result[0].values.length)
-      throw new Error('beef_quarterly table exists but contains no rows.');
+// ══ LAYOUT HTML ══════════════════════════════════════════════════════════════
+function buildLayout(){
+  document.getElementById('root').innerHTML = `
+  <div class="content">
 
-    const { columns, values } = result[0];
-    allRows = values.map(row =>
-      Object.fromEntries(columns.map((c, i) => [c, row[i]]))
-    );
-
-    db.close();
-
-    const lastQ = allRows[allRows.length - 1];
-    document.getElementById('last-update').textContent = `Latest: ${lastQ.quarter}`;
-
-    // 4. Inject layout HTML then render
-    root.innerHTML = `
-      <div style="padding:12px 24px 0;display:flex;gap:16px;flex-wrap:wrap;">
-        ${COMPANIES.map(c=>`<div class="legend-item"><div class="legend-dot" style="background:${C_COLORS[c]}"></div>${c}</div>`).join('')}
-        <span style="font-size:11px;color:#555;margin-left:6px;">Solid = spread proxy · Dashed = reported margin</span>
+    <!-- Charts row -->
+    <div class="row2">
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-title">QoQ ΔSpread vs. ΔMargin</span>
+          <span class="card-stat" id="corr-stat"></span>
+        </div>
+        <canvas id="chartCorr"></canvas>
+        <div class="src" id="corr-win-note"></div>
       </div>
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-title">Spread Proxy % vs. Reported Margin %</span>
+          <span class="card-stat">Quarterly</span>
+        </div>
+        <canvas id="chartTimeline"></canvas>
+      </div>
+    </div>
 
-      <div class="section">
-        <div class="section-title">Spread Proxy vs. Reported Margin — Quarterly</div>
-        <div class="charts-2col">
-          <div class="chart-card">
-            <div class="chart-card-title">Spread Proxy % (model) — all companies</div>
-            <canvas id="chartSpread"></canvas>
+    <!-- Bottom row: control panel + table -->
+    <div class="row-bot">
+
+      <!-- Control Panel -->
+      <div class="card">
+        <div class="card-hdr"><span class="card-title">Weight Parameters</span></div>
+
+        <div class="cp-section">
+          <div class="cp-section-label">Revenue Mix</div>
+          <div class="cp-row">
+            <span class="cp-lbl">Choice</span>
+            <input id="sl-choice" class="cp-slider" type="range" min="0" max="100" step="1"
+              oninput="onSlider('choiceP',this.value)">
+            <span class="cp-val" id="v-choice">100%</span>
           </div>
-          <div class="chart-card">
-            <div class="chart-card-title">Reported Gross / Operating Margin %</div>
-            <canvas id="chartMargin"></canvas>
+          <div class="cp-row">
+            <span class="cp-lbl auto">Select (auto)</span>
+            <div style="flex:1"></div>
+            <span class="cp-val auto" id="v-select">0%</span>
           </div>
         </div>
-      </div>
+        <hr class="cp-divider">
 
-      <div class="section">
-        <div class="section-title">ΔSpread vs. ΔMargin — Quarter-over-Quarter Correlation</div>
-        <div class="charts-3col">
-          ${COMPANIES.map(co=>`
-          <div class="chart-card">
-            <div class="chart-card-title">${co} &nbsp;<span id="corr-stat-${co.toLowerCase()}" style="font-weight:400;color:#555;font-size:10px;"></span></div>
-            <canvas id="chartCorr${co}"></canvas>
-          </div>`).join('')}
+        <div class="cp-section">
+          <div class="cp-section-label">Cattle Price Mix</div>
+          <div class="cp-row">
+            <span class="cp-lbl">KS Avg</span>
+            <input id="sl-ks" class="cp-slider" type="range" min="0" max="100" step="5"
+              oninput="onSlider('ksP',this.value)">
+            <span class="cp-val" id="v-ks">100%</span>
+          </div>
+          <div class="cp-row">
+            <span class="cp-lbl">NE Avg</span>
+            <input id="sl-ne" class="cp-slider" type="range" min="0" max="100" step="5"
+              oninput="onSlider('neP',this.value)">
+            <span class="cp-val" id="v-ne">0%</span>
+          </div>
+          <div class="cp-row">
+            <span class="cp-lbl auto">5-Area (auto)</span>
+            <div style="flex:1"></div>
+            <span class="cp-val auto" id="v-ct">0%</span>
+          </div>
         </div>
+        <hr class="cp-divider">
+
+        <div class="cp-section">
+          <div class="cp-section-label">Adjustments</div>
+          <div class="cp-row">
+            <span class="cp-lbl">Drop Credit</span>
+            <input id="sl-drop" class="cp-slider" type="range" min="0" max="1" step="0.05"
+              oninput="onSlider('wDrop',this.value,true)">
+            <span class="cp-val" id="v-drop">0.00</span>
+          </div>
+          <div class="cp-row">
+            <span class="cp-lbl">Henry Hub</span>
+            <input id="sl-energy" class="cp-slider" type="range" min="0" max="1" step="0.05"
+              oninput="onSlider('wEnergy',this.value,true)">
+            <span class="cp-val" id="v-energy">0.00</span>
+          </div>
+        </div>
+        <hr class="cp-divider">
+
+        <button class="btn-reset" onclick="resetWeights()">↺ Reset to V4 defaults</button>
       </div>
 
-      <div class="section">
-        <div class="section-title">Quarterly Data — Most Recent 16 Quarters</div>
+      <!-- Table -->
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-title">Spread Analysis</span>
+          <div class="toggle-group">
+            <button class="tog-btn active" id="tog-qtr" onclick="setTblMode('quarterly',this)">Quarterly</button>
+            <button class="tog-btn" id="tog-mon" onclick="setTblMode('monthly',this)">Monthly</button>
+          </div>
+        </div>
         <div class="tbl-wrap">
           <table>
-            <thead><tr>
-              <th style="text-align:left">Quarter</th>
-              <th>Choice<br>($/cwt)</th><th>CT150<br>($/cwt)</th><th>KS Avg<br>($/cwt)</th>
-              <th style="color:#FF5500">MBRF<br>Spread</th><th style="color:#FF5500">MBRF<br>GM%</th>
-              <th style="color:#3498DB">JBS<br>Spread</th><th style="color:#3498DB">JBS<br>GM%</th>
-              <th style="color:#27AE60">Tyson<br>Spread</th><th style="color:#27AE60">Tyson<br>Op%</th>
-            </tr></thead>
+            <thead id="tbl-head"></thead>
             <tbody id="tbl-body"></tbody>
           </table>
         </div>
+        <div class="src">Sources: USDA AMS (CT150 rpt 2461, Cutout rpt 2527, KS rpt 2484, NE rpt 2667, Drop Credit rpt 2829) · EIA (Henry Hub NG.RNGWHHD.D) · MBRF/IFRS · JBS/US GAAP · Tyson/US GAAP</div>
       </div>
+    </div>
 
-      <div style="padding:12px 24px 24px;font-size:10px;color:#444;line-height:1.7;">
-        Sources: USDA AMS (CT150 rpt 2461, Cutout rpt 2527, KS rpt 2484, NE rpt 2667, Drop Credit rpt 2829) · EIA (Henry Hub NG.RNGWHHD.D) · MBRF/IFRS · JBS/US GAAP · Tyson/US GAAP<br>
-        Spread = (Revenue − Cattle + w_drop×Drop − w_energy×HH) / Revenue.
-        V4 weights: MBRF = 100% Choice / 100% KS avg; JBS ≈ 70% Choice / 100% NE avg; Tyson = 75% Choice / 30% CT150 + 50% KS + 20% NE / HH w=0.30.
-      </div>`;
+  </div>`;
+}
 
+function setTblMode(mode, el){
+  tblMode = mode;
+  document.querySelectorAll('.tog-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  renderTable();
+}
+
+// ══ INIT ═════════════════════════════════════════════════════════════════════
+async function init(){
+  try{
+    const SQL = await initSqlJs({
+      locateFile: f=>`https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}`
+    });
+    const resp = await fetch('./beef.db');
+    if(!resp.ok) throw new Error(
+      `beef.db not found (HTTP ${resp.status}). `+
+      `Run: python extractor_beef.py --history tracker_v4.xlsx  then commit beef.db to the repo.`
+    );
+    const db = new SQL.Database(new Uint8Array(await resp.arrayBuffer()));
+
+    const toArr = res => {
+      if(!res.length) return [];
+      const {columns,values}=res[0];
+      return values.map(row=>Object.fromEntries(columns.map((c,i)=>[c,row[i]])));
+    };
+
+    allQtr = toArr(db.exec('SELECT * FROM beef_quarterly ORDER BY quarter_start ASC'));
+    allWk  = toArr(db.exec('SELECT * FROM beef_weekly ORDER BY week_ending ASC'));
+    allMon = buildMonthly(allWk);
+    db.close();
+
+    if(!allQtr.length) throw new Error('beef_quarterly is empty. Run extractor_beef.py --history first.');
+
+    const last = allQtr[allQtr.length-1];
+    document.getElementById('last-upd').textContent = `Latest data: ${last.quarter}`;
+
+    buildLayout();
+    syncSliders();
     renderAll();
 
-  } catch(e) {
-    root.innerHTML = `<div class="error-box">
-      ⚠ ${e.message}<br><br>
-      <strong>Setup steps:</strong><br>
+  } catch(e){
+    document.getElementById('root').innerHTML=`<div class="error-box">
+      <strong>⚠ ${e.message}</strong><br><br>
+      <strong>Setup:</strong><br>
       1. Run <code>python extractor_beef.py --history US_Beef_Packer_Margin_Tracker_v4.xlsx</code><br>
-      2. Commit the generated <code>beef.db</code> to the same folder as this HTML file<br>
-      3. Push to GitHub — the dashboard will load automatically
+      2. Commit <code>beef.db</code> to <code>Beef/U.S. Tracker/</code> in GitHub<br>
+      3. Reload this page
     </div>`;
   }
 }
