@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Agro MT — Cost & Margin Dashboard</title>
+<title>IMEA Margin Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -26,7 +26,7 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
   cursor:pointer;font-family:var(--font);background:transparent;color:var(--gray-mid);transition:all .15s;}
 .seg-btn.on{background:var(--white);color:var(--orange);box-shadow:0 1px 3px rgba(0,0,0,.1);}
 .seg-btn:hover:not(.on){color:var(--gray-dark);}
-.price-seg .seg-btn.on{background:var(--orange);color:white;box-shadow:none;}
+.price-seg .seg-btn.on,.unit-seg .seg-btn.on{background:var(--orange);color:white;box-shadow:none;}
 .cmdty-pills{display:flex;gap:6px;flex-wrap:wrap;}
 .pill{display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;
   border:1.5px solid var(--border);cursor:pointer;font-size:12px;font-weight:600;
@@ -54,14 +54,15 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .kpi-value{font-size:19px;font-weight:700;color:var(--black);line-height:1;}
 .kpi-unit{font-size:9.5px;color:var(--gray-mid);margin-top:3px;}
 .kpi-delta{font-size:11px;font-weight:700;margin-top:4px;}
-.pos{color:var(--green);} .neg{color:var(--red);} .warn{color:var(--amber);}
+.pos{color:var(--green);} .neg{color:var(--red);} .neu{color:var(--gray-mid);}
 
 /* ── Section header ── */
 .section-hdr{display:flex;align-items:center;justify-content:space-between;margin:22px 0 10px;flex-wrap:wrap;gap:8px;}
 .section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
   color:var(--gray-mid);border-left:3px solid var(--orange);padding-left:8px;}
+
+/* ── Chart cards ── */
 .chart-grid{display:grid;gap:12px;margin-bottom:12px;}
-.g2{grid-template-columns:1fr 1fr;}
 .g3{grid-template-columns:1fr 1fr 1fr;}
 .chart-card{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;}
 .chart-title{font-size:13px;font-weight:700;color:var(--black);margin-bottom:2px;}
@@ -74,22 +75,13 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .asel-btn.on{background:var(--orange);border-color:var(--orange);color:white;}
 .asel-btn:hover:not(.on){border-color:var(--orange);color:var(--orange);}
 
-/* Margin toggles */
-.mtog-row{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
-.mtog{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:4px;
-  border:1.5px solid var(--border);cursor:pointer;font-size:10.5px;font-weight:600;
-  color:var(--gray-mid);background:var(--white);transition:all .15s;user-select:none;}
-.mtog .mdot{width:7px;height:7px;border-radius:50%;background:var(--border);flex-shrink:0;transition:all .15s;}
-.mtog.on{border-color:currentColor;}
-.mtog.on .mdot{background:currentColor;}
-
 /* P&L cross-tab */
 .pl-wrap{overflow-x:auto;margin-top:2px;}
 .pl-table{border-collapse:collapse;font-size:11px;min-width:100%;}
 .pl-table th{padding:6px 10px;text-align:right;font-size:9px;font-weight:700;
   text-transform:uppercase;letter-spacing:.4px;color:var(--gray-mid);
   border-bottom:2px solid var(--border);white-space:nowrap;background:var(--gray-light);}
-.pl-table th.lbl-col{text-align:left;min-width:175px;position:sticky;left:0;z-index:2;background:var(--gray-light);}
+.pl-table th.lbl-col{text-align:left;min-width:210px;position:sticky;left:0;z-index:2;background:var(--gray-light);}
 .pl-table td{padding:5px 10px;text-align:right;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:11px;}
 .pl-table td.lbl-col{text-align:left;color:var(--gray-dark);font-size:11.5px;
   position:sticky;left:0;background:var(--white);z-index:1;}
@@ -97,6 +89,7 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
   text-transform:uppercase;letter-spacing:.4px;color:var(--gray-mid);padding-top:9px;}
 .pl-table tr.g-row td.lbl-col{background:#fafafa;}
 .pl-table tr.res-row td{font-weight:700;border-top:1px solid var(--border);}
+.pl-table tr.res-row.hi td{background:#fff8f5;}
 .pl-table tr.sub-row td.lbl-col{padding-left:22px;color:var(--gray-mid);}
 .pl-table .na{color:#ccc;}
 .pl-table .pos-v{color:var(--green);}
@@ -106,7 +99,7 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .pl-table tr.cult-hdr th.lbl-col{background:var(--gray-light);color:var(--gray-mid);}
 
 .source-note{font-size:10px;color:#bbb;text-align:right;margin-top:14px;font-style:italic;}
-@media(max-width:860px){.g2,.g3{grid-template-columns:1fr;}.kpi-row{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:860px){.g3{grid-template-columns:1fr;}.kpi-row{grid-template-columns:repeat(2,1fr);}}
 </style>
 </head>
 <body>
@@ -115,9 +108,9 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
   <div class="filter-group">
     <div class="filter-label">Commodity</div>
     <div class="cmdty-pills">
-      <div class="pill on-SOJA"    id="pill-SOJA"    onclick="toggleCult('SOJA')"><span class="dot"></span>Soy (GMO)</div>
-      <div class="pill on-MILHO"   id="pill-MILHO"   onclick="toggleCult('MILHO')"><span class="dot"></span>Corn (High Tech)</div>
-      <div class="pill on-ALGODAO" id="pill-ALGODAO" onclick="toggleCult('ALGODAO')"><span class="dot"></span>Cotton (R$/ha)</div>
+      <div class="pill on-SOJA"  id="pill-SOJA"    onclick="toggleCult('SOJA')"><span class="dot"></span>Soybean</div>
+      <div class="pill"          id="pill-MILHO"   onclick="toggleCult('MILHO')"><span class="dot"></span>Corn</div>
+      <div class="pill"          id="pill-ALGODAO" onclick="toggleCult('ALGODAO')"><span class="dot"></span>Cotton</div>
     </div>
   </div>
   <div class="filter-sep"></div>
@@ -132,8 +125,16 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
   <div class="filter-group">
     <div class="filter-label">Price Basis</div>
     <div class="seg price-seg" id="seg-price">
-      <button class="seg-btn on" onclick="setPrice('std',this)">STD — Crop YTD Avg</button>
+      <button class="seg-btn on" onclick="setPrice('std',this)">Crop Avg.</button>
       <button class="seg-btn"    onclick="setPrice('spot',this)">Spot</button>
+    </div>
+  </div>
+  <div class="filter-sep"></div>
+  <div class="filter-group">
+    <div class="filter-label">Unit</div>
+    <div class="seg unit-seg" id="seg-unit">
+      <button class="seg-btn on" onclick="setUnit('brl',this)">R$/ha</button>
+      <button class="seg-btn"    onclick="setUnit('sc',this)">sc/ha</button>
     </div>
   </div>
 </div>
@@ -141,59 +142,36 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 <div class="body">
   <div class="kpi-row" id="kpi-row"></div>
 
-  <!-- ══ 1. REVENUE & COST OVERVIEW ══ -->
+  <!-- ══ 3 charts ══ -->
   <div class="section-hdr">
     <div class="section-title">Revenue & Cost Overview</div>
   </div>
-  <div class="chart-grid g2">
-    <!-- LEFT: Revenue (L) vs Input Cost (R) — dual axis -->
+  <div class="chart-grid g3">
     <div class="chart-card">
-      <div class="chart-title">Revenue (L) vs Input Cost (R)</div>
-      <div class="chart-sub">Right axis:</div>
+      <div class="chart-title">Revenue vs Input Cost</div>
+      <div class="chart-sub" id="dual-sub">Right axis:</div>
       <div class="axis-sel" id="axis-sel">
         <button class="asel-btn on" onclick="setAxis('total',this)">Total</button>
         <button class="asel-btn"    onclick="setAxis('sem',this)">Seeds</button>
         <button class="asel-btn"    onclick="setAxis('fer',this)">Fertilizers</button>
         <button class="asel-btn"    onclick="setAxis('pes',this)">Pesticides</button>
       </div>
-      <div style="position:relative;height:224px"><canvas id="ch-dual"></canvas></div>
+      <div style="position:relative;height:210px"><canvas id="ch-dual"></canvas></div>
     </div>
-    <!-- RIGHT: Inputs as % of Revenue -->
     <div class="chart-card">
       <div class="chart-title">Inputs as % of Revenue</div>
       <div class="chart-sub">Total (bold) · Seeds · Fertilizers · Pesticides (dashed)</div>
-      <div style="position:relative;height:248px"><canvas id="ch-rt-pct"></canvas></div>
+      <div style="position:relative;height:234px"><canvas id="ch-rt-pct"></canvas></div>
     </div>
-  </div>
-
-  <!-- ══ 2. MARGIN ANALYSIS ══ -->
-  <div class="section-hdr" style="margin-top:22px;">
-    <div class="section-title">Margin Analysis — Interactive</div>
-    <span style="font-size:11px;color:var(--gray-mid)">Toggle cost items to customise each margin</span>
-  </div>
-  <div class="chart-grid g3">
     <div class="chart-card">
       <div class="chart-title">Gross Margin %</div>
-      <div class="chart-sub">Toggle input & direct costs</div>
-      <div class="mtog-row" id="tog-mb"></div>
-      <div style="position:relative;height:200px"><canvas id="ch-mb"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <div class="chart-title">EBITDA Margin %</div>
-      <div class="chart-sub">Gross Margin minus labor items</div>
-      <div class="mtog-row" id="tog-ebitda"></div>
-      <div style="position:relative;height:200px"><canvas id="ch-ebitda"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <div class="chart-title">EBIT Margin %</div>
-      <div class="chart-sub">EBITDA minus non-cash & fixed charges</div>
-      <div class="mtog-row" id="tog-ebit"></div>
-      <div style="position:relative;height:200px"><canvas id="ch-ebit"></canvas></div>
+      <div class="chart-sub">Ex-Lease (solid) · With Lease (dashed)</div>
+      <div style="position:relative;height:234px"><canvas id="ch-gm"></canvas></div>
     </div>
   </div>
 
-  <!-- ══ 3. P&L STATEMENT ══ -->
-  <div class="section-hdr" style="margin-top:22px;">
+  <!-- ══ P&L ══ -->
+  <div class="section-hdr" style="margin-top:18px;">
     <div class="section-title">P&L Statement</div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span style="font-size:11px;color:var(--gray-mid)">View:</span>
@@ -208,44 +186,103 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
     <div class="pl-wrap"><table class="pl-table" id="pl-table"></table></div>
   </div>
 
-  <div class="source-note">IMEA Mato Grosso (GMO Soy · High-Tech Corn · R$/ha Cotton) + CONAB prices &amp; yield | Updated monthly via GitHub Actions</div>
+  <div class="source-note">IMEA Mato Grosso (Soybean · Corn · Cotton) + CONAB prices &amp; yield | Updated monthly via GitHub Actions</div>
 </div>
 
 <script>
-const RAW={"SOJA": {"monthly": [{"d": "2023-01", "safra": "2022/23", "spot": null, "std": 160.81, "prod": 60.0, "rb_spot": null, "rb_std": 9648.6, "sem": 655.21, "fer": 1920.25, "pes": 1407.87, "coe_s": 6053.05, "mo": 325.25, "dep": 416.05, "arr": 364.57, "cop": 1216.01, "mb": 3595.55, "ebitda": 3270.3, "ebit": 2489.68, "nl": 1273.67, "ok": true}, {"d": "2023-02", "safra": "2022/23", "spot": 146.51, "std": 157.95, "prod": 61.6667, "rb_spot": 9034.79, "rb_std": 9740.26, "sem": 655.51, "fer": 1914.98, "pes": 1401.77, "coe_s": 6042.85, "mo": 325.52, "dep": 418.52, "arr": 363.49, "cop": 1210.92, "mb": 3697.41, "ebitda": 3371.89, "ebit": 2589.88, "nl": 1378.96, "ok": true}, {"d": "2023-03", "safra": "2022/23", "spot": 139.58, "std": 154.88, "prod": 61.6667, "rb_spot": 8607.44, "rb_std": 9550.94, "sem": 659.68, "fer": 1906.88, "pes": 1399.6, "coe_s": 6032.22, "mo": 325.72, "dep": 418.54, "arr": 360.61, "cop": 1205.54, "mb": 3518.72, "ebitda": 3193.0, "ebit": 2413.85, "nl": 1208.31, "ok": true}, {"d": "2023-04", "safra": "2022/23", "spot": null, "std": 150.4, "prod": 63.3333, "rb_spot": null, "rb_std": 9525.33, "sem": 661.85, "fer": 1901.73, "pes": 1375.75, "coe_s": 6000.26, "mo": 325.69, "dep": 417.22, "arr": 360.72, "cop": 1186.68, "mb": 3525.07, "ebitda": 3199.38, "ebit": 2421.44, "nl": 1234.76, "ok": true}, {"d": "2023-05", "safra": "2022/23", "spot": null, "std": 145.61, "prod": 63.3333, "rb_spot": null, "rb_std": 9221.96, "sem": 666.95, "fer": 1864.36, "pes": 1370.82, "coe_s": 5955.82, "mo": 325.74, "dep": 417.23, "arr": 356.02, "cop": 1178.32, "mb": 3266.14, "ebitda": 2940.4, "ebit": 2167.15, "nl": 988.83, "ok": true}, {"d": "2023-06", "safra": "2022/23", "spot": 107.92, "std": 141.42, "prod": 63.3333, "rb_spot": 6834.93, "rb_std": 8956.6, "sem": 667.33, "fer": 1856.62, "pes": 1360.73, "coe_s": 5928.03, "mo": 325.69, "dep": 417.23, "arr": 350.8, "cop": 1168.71, "mb": 3028.57, "ebitda": 2702.88, "ebit": 1934.85, "nl": 766.14, "ok": true}, {"d": "2023-07", "safra": "2022/23", "spot": null, "std": 138.65, "prod": 63.3333, "rb_spot": null, "rb_std": 8781.16, "sem": 670.9, "fer": 1830.45, "pes": 1329.51, "coe_s": 5864.28, "mo": 325.62, "dep": 417.24, "arr": 346.19, "cop": 1159.87, "mb": 2916.88, "ebitda": 2591.26, "ebit": 1827.83, "nl": 667.96, "ok": true}, {"d": "2023-08", "safra": "2022/23", "spot": 117.97, "std": 136.77, "prod": 63.3333, "rb_spot": 7471.43, "rb_std": 8662.1, "sem": 668.37, "fer": 1805.0, "pes": 1304.81, "coe_s": 5801.51, "mo": 325.48, "dep": 417.25, "arr": 336.95, "cop": 1137.84, "mb": 2860.59, "ebitda": 2535.11, "ebit": 1780.91, "nl": 643.07, "ok": true}, {"d": "2023-09", "safra": "2022/23", "spot": 119.69, "std": 135.34, "prod": 65.0, "rb_spot": 7779.85, "rb_std": 8797.1, "sem": 668.37, "fer": 1805.0, "pes": 1304.81, "coe_s": 5801.51, "mo": 325.48, "dep": 417.25, "arr": 336.95, "cop": 1137.84, "mb": 2995.59, "ebitda": 2670.11, "ebit": 1915.91, "nl": 778.07, "ok": true}, {"d": "2023-10", "safra": "2023/24", "spot": null, "std": 118.05, "prod": 60.0, "rb_spot": null, "rb_std": 7083.0, "sem": 659.82, "fer": 1816.02, "pes": 1281.5, "coe_s": 6020.09, "mo": 446.09, "dep": 487.44, "arr": 304.71, "cop": 1123.44, "mb": 1062.91, "ebitda": 616.82, "ebit": -175.33, "nl": -1298.77, "ok": true}, {"d": "2023-11", "safra": "2023/24", "spot": 121.69, "std": 119.87, "prod": 60.0, "rb_spot": 7301.4, "rb_std": 7192.2, "sem": 666.14, "fer": 1807.85, "pes": 1277.46, "coe_s": 6014.93, "mo": 446.1, "dep": 487.25, "arr": 307.08, "cop": 1112.07, "mb": 1177.27, "ebitda": 731.17, "ebit": -63.16, "nl": -1175.23, "ok": true}, {"d": "2023-12", "safra": "2023/24", "spot": 122.84, "std": 120.86, "prod": 58.3333, "rb_spot": 7165.66, "rb_std": 7050.16, "sem": 665.29, "fer": 1807.51, "pes": 1275.93, "coe_s": 6012.15, "mo": 446.2, "dep": 487.25, "arr": 307.58, "cop": 1100.03, "mb": 1038.01, "ebitda": 591.81, "ebit": -203.02, "nl": -1303.05, "ok": true}, {"d": "2024-01", "safra": "2023/24", "spot": 109.09, "std": 117.92, "prod": 55.0, "rb_spot": 5999.95, "rb_std": 6485.6, "sem": 664.17, "fer": 1801.8, "pes": 1271.13, "coe_s": 6003.56, "mo": 446.87, "dep": 487.25, "arr": 306.97, "cop": 1092.64, "mb": 482.04, "ebitda": 35.17, "ebit": -759.05, "nl": -1851.69, "ok": true}, {"d": "2024-02", "safra": "2023/24", "spot": 97.98, "std": 113.93, "prod": 53.3333, "rb_spot": 5225.6, "rb_std": 6076.26, "sem": 662.96, "fer": 1800.1, "pes": 1267.97, "coe_s": 5997.8, "mo": 445.89, "dep": 487.25, "arr": 299.08, "cop": 1070.62, "mb": 78.46, "ebitda": -367.43, "ebit": -1153.76, "nl": -2224.38, "ok": true}, {"d": "2024-03", "safra": "2023/24", "spot": 104.32, "std": 112.33, "prod": 51.6667, "rb_spot": 5389.87, "rb_std": 5803.72, "sem": 666.3, "fer": 1724.76, "pes": 1228.38, "coe_s": 5872.15, "mo": 443.31, "dep": 485.9, "arr": 290.43, "cop": 1033.81, "mb": -68.43, "ebitda": -511.74, "ebit": -1288.07, "nl": -2321.88, "ok": true}, {"d": "2024-05", "safra": "2023/24", "spot": 114.96, "std": 112.25, "prod": 53.3333, "rb_spot": 6131.2, "rb_std": 5986.66, "sem": 666.96, "fer": 1695.45, "pes": 1190.71, "coe_s": 5801.94, "mo": 443.49, "dep": 485.9, "arr": 289.96, "cop": 1025.45, "mb": 184.72, "ebitda": -258.77, "ebit": -1034.63, "nl": -2060.08, "ok": true}, {"d": "2024-06", "safra": "2023/24", "spot": null, "std": 113.16, "prod": 53.3333, "rb_spot": null, "rb_std": 6035.2, "sem": 678.11, "fer": 1714.97, "pes": 1181.17, "coe_s": 5824.78, "mo": 443.88, "dep": 485.9, "arr": 291.0, "cop": 1021.77, "mb": 210.42, "ebitda": -233.46, "ebit": -1010.36, "nl": -2032.13, "ok": true}, {"d": "2024-07", "safra": "2023/24", "spot": 120.98, "std": 113.94, "prod": 53.3333, "rb_spot": 6452.26, "rb_std": 6076.8, "sem": 677.13, "fer": 1720.04, "pes": 1165.53, "coe_s": 5811.48, "mo": 443.83, "dep": 485.8, "arr": 290.26, "cop": 1016.64, "mb": 265.32, "ebitda": -178.51, "ebit": -954.57, "nl": -1971.21, "ok": true}, {"d": "2024-08", "safra": "2023/24", "spot": 119.17, "std": 114.42, "prod": 53.3333, "rb_spot": 6355.73, "rb_std": 6102.4, "sem": 677.19, "fer": 1720.82, "pes": 1163.64, "coe_s": 5809.72, "mo": 444.02, "dep": 485.8, "arr": 290.86, "cop": 1013.72, "mb": 292.68, "ebitda": -151.34, "ebit": -928.0, "nl": -1941.72, "ok": true}, {"d": "2024-09", "safra": "2023/24", "spot": null, "std": 115.36, "prod": 55.0, "rb_spot": null, "rb_std": 6344.8, "sem": 678.17, "fer": 1719.9, "pes": 1162.57, "coe_s": 5807.28, "mo": 444.26, "dep": 485.8, "arr": 291.5, "cop": 1012.28, "mb": 537.52, "ebitda": 93.26, "ebit": -684.04, "nl": -1696.32, "ok": true}, {"d": "2024-12", "safra": "2024/25", "spot": null, "std": 135.36, "prod": 60.0, "rb_spot": null, "rb_std": 8121.6, "sem": null, "fer": null, "pes": 154.69, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-01", "safra": "2024/25", "spot": 116.25, "std": 130.58, "prod": 60.0, "rb_spot": 6975.0, "rb_std": 7834.8, "sem": null, "fer": null, "pes": 154.53, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-02", "safra": "2024/25", "spot": null, "std": 126.08, "prod": 61.6667, "rb_spot": null, "rb_std": 7774.94, "sem": null, "fer": null, "pes": 154.44, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-03", "safra": "2024/25", "spot": null, "std": 123.33, "prod": 63.3333, "rb_spot": null, "rb_std": 7810.9, "sem": null, "fer": null, "pes": 154.65, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-04", "safra": "2024/25", "spot": 111.43, "std": 121.63, "prod": 65.0, "rb_spot": 7242.95, "rb_std": 7905.95, "sem": null, "fer": null, "pes": 159.73, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-05", "safra": "2024/25", "spot": 110.02, "std": 120.18, "prod": 65.0, "rb_spot": 7151.3, "rb_std": 7811.7, "sem": null, "fer": null, "pes": 160.65, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-06", "safra": "2024/25", "spot": null, "std": 119.1, "prod": 66.6667, "rb_spot": null, "rb_std": 7940.0, "sem": null, "fer": null, "pes": 163.51, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-07", "safra": "2024/25", "spot": 113.73, "std": 118.56, "prod": 66.6667, "rb_spot": 7582.0, "rb_std": 7904.0, "sem": null, "fer": null, "pes": 167.66, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-08", "safra": "2024/25", "spot": 120.2, "std": 118.71, "prod": 66.6667, "rb_spot": 8013.34, "rb_std": 7914.0, "sem": null, "fer": null, "pes": 169.5, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-09", "safra": "2024/25", "spot": 120.73, "std": 118.88, "prod": 66.6667, "rb_spot": 8048.67, "rb_std": 7925.34, "sem": null, "fer": null, "pes": 177.65, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-12", "safra": "2025/26", "spot": 117.93, "std": 119.68, "prod": 61.6667, "rb_spot": 7272.35, "rb_std": 7380.27, "sem": 513.19, "fer": 1830.42, "pes": 1388.63, "coe_s": 5639.86, "mo": 566.95, "dep": 537.26, "arr": 264.24, "cop": 1490.08, "mb": 1740.41, "ebitda": 1173.46, "ebit": 371.95, "nl": -1118.13, "ok": true}, {"d": "2026-01", "safra": "2025/26", "spot": 106.0, "std": 116.26, "prod": 61.6667, "rb_spot": 6536.67, "rb_std": 7169.37, "sem": 486.34, "fer": 1896.18, "pes": 1303.85, "coe_s": 5586.92, "mo": 566.79, "dep": 525.49, "arr": 250.01, "cop": 1448.11, "mb": 1582.45, "ebitda": 1015.66, "ebit": 240.15, "nl": -1207.96, "ok": true}, {"d": "2026-02", "safra": "2025/26", "spot": 102.26, "std": 113.46, "prod": 63.3333, "rb_spot": 6476.46, "rb_std": 7185.8, "sem": 475.12, "fer": 1870.5, "pes": 1297.92, "coe_s": 5548.39, "mo": 573.38, "dep": 525.49, "arr": 257.71, "cop": 1465.9, "mb": 1637.41, "ebitda": 1064.02, "ebit": 280.82, "nl": -1185.08, "ok": true}], "annual": [{"d": "2023-09", "safra": "2022/23", "spot": 119.69, "std": 135.34, "prod": 65.0, "rb_spot": 7779.85, "rb_std": 8797.1, "sem": 668.37, "fer": 1805.0, "pes": 1304.81, "coe_s": 5801.51, "mo": 325.48, "dep": 417.25, "arr": 336.95, "cop": 1137.84, "mb": 2995.59, "ebitda": 2670.11, "ebit": 1915.91, "nl": 778.07, "ok": true}, {"d": "2024-09", "safra": "2023/24", "spot": null, "std": 115.36, "prod": 55.0, "rb_spot": null, "rb_std": 6344.8, "sem": 678.17, "fer": 1719.9, "pes": 1162.57, "coe_s": 5807.28, "mo": 444.26, "dep": 485.8, "arr": 291.5, "cop": 1012.28, "mb": 537.52, "ebitda": 93.26, "ebit": -684.04, "nl": -1696.32, "ok": true}, {"d": "2025-09", "safra": "2024/25", "spot": 120.73, "std": 118.88, "prod": 66.6667, "rb_spot": 8048.67, "rb_std": 7925.34, "sem": null, "fer": null, "pes": 177.65, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2026-02", "safra": "2025/26", "spot": 102.26, "std": 113.46, "prod": 63.3333, "rb_spot": 6476.46, "rb_std": 7185.8, "sem": 475.12, "fer": 1870.5, "pes": 1297.92, "coe_s": 5548.39, "mo": 573.38, "dep": 525.49, "arr": 257.71, "cop": 1465.9, "mb": 1637.41, "ebitda": 1064.02, "ebit": 280.82, "nl": -1185.08, "ok": true}]}, "MILHO": {"monthly": [{"d": "2023-01", "safra": "2023/24", "spot": null, "std": 64.04, "prod": 136.6667, "rb_spot": null, "rb_std": 8752.14, "sem": 670.53, "fer": 1816.57, "pes": 804.28, "coe_s": 4540.32, "mo": 266.62, "dep": 322.36, "arr": 246.11, "cop": 1092.64, "mb": 4211.82, "ebitda": 3945.2, "ebit": 3376.73, "nl": 2284.09, "ok": true}, {"d": "2023-02", "safra": "2023/24", "spot": 61.55, "std": 62.8, "prod": 136.6667, "rb_spot": 8411.84, "rb_std": 8582.67, "sem": 669.79, "fer": 1764.84, "pes": 798.78, "coe_s": 4554.41, "mo": 267.54, "dep": 322.36, "arr": 244.81, "cop": 1090.17, "mb": 4028.26, "ebitda": 3760.72, "ebit": 3193.55, "nl": 2103.38, "ok": true}, {"d": "2023-03", "safra": "2023/24", "spot": 59.94, "std": 61.84, "prod": 138.3333, "rb_spot": 8291.7, "rb_std": 8554.53, "sem": 675.2, "fer": 1749.93, "pes": 785.33, "coe_s": 4526.27, "mo": 267.84, "dep": 322.36, "arr": 242.74, "cop": 1084.97, "mb": 4028.26, "ebitda": 3760.42, "ebit": 3195.32, "nl": 2110.35, "ok": true}, {"d": "2023-04", "safra": "2023/24", "spot": null, "std": 59.88, "prod": 136.6667, "rb_spot": null, "rb_std": 8183.6, "sem": 692.82, "fer": 1719.96, "pes": 775.32, "coe_s": 4496.62, "mo": 267.97, "dep": 322.36, "arr": 239.61, "cop": 1076.86, "mb": 3686.98, "ebitda": 3419.01, "ebit": 2857.04, "nl": 1780.18, "ok": true}, {"d": "2023-05", "safra": "2023/24", "spot": 44.87, "std": 56.88, "prod": 136.6667, "rb_spot": 6132.23, "rb_std": 7773.6, "sem": 690.05, "fer": 1713.16, "pes": 774.36, "coe_s": 4475.12, "mo": 268.1, "dep": 322.36, "arr": 235.82, "cop": 1065.77, "mb": 3298.48, "ebitda": 3030.38, "ebit": 2472.2, "nl": 1406.43, "ok": true}, {"d": "2023-06", "safra": "2023/24", "spot": 36.58, "std": 53.5, "prod": 136.6667, "rb_spot": 4999.27, "rb_std": 7311.67, "sem": 693.11, "fer": 1639.44, "pes": 773.37, "coe_s": 4390.57, "mo": 268.18, "dep": 322.36, "arr": 231.71, "cop": 1053.74, "mb": 2921.1, "ebitda": 2652.92, "ebit": 2098.85, "nl": 1045.11, "ok": true}, {"d": "2023-07", "safra": "2023/24", "spot": null, "std": 50.83, "prod": 138.3333, "rb_spot": null, "rb_std": 7031.48, "sem": 693.9, "fer": 1626.2, "pes": 766.54, "coe_s": 4360.01, "mo": 268.25, "dep": 323.9, "arr": 228.17, "cop": 1041.89, "mb": 2671.47, "ebitda": 2403.22, "ebit": 1851.15, "nl": 809.26, "ok": true}, {"d": "2023-08", "safra": "2023/24", "spot": 35.1, "std": 48.87, "prod": 140.0, "rb_spot": 4914.0, "rb_std": 6841.8, "sem": 694.26, "fer": 1603.4, "pes": 765.27, "coe_s": 4330.79, "mo": 268.27, "dep": 324.05, "arr": 224.93, "cop": 1030.55, "mb": 2511.01, "ebitda": 2242.74, "ebit": 1693.76, "nl": 663.21, "ok": true}, {"d": "2023-09", "safra": "2023/24", "spot": 36.28, "std": 47.47, "prod": 140.0, "rb_spot": 5079.2, "rb_std": 6645.8, "sem": 705.9, "fer": 1572.8, "pes": 744.94, "coe_s": 4289.2, "mo": 268.28, "dep": 324.05, "arr": 221.76, "cop": 1018.51, "mb": 2356.6, "ebitda": 2088.32, "ebit": 1542.51, "nl": 524.0, "ok": true}, {"d": "2023-10", "safra": "2023/24", "spot": null, "std": 46.32, "prod": 140.0, "rb_spot": null, "rb_std": 6484.8, "sem": 721.13, "fer": 1555.94, "pes": 745.81, "coe_s": 4287.37, "mo": 268.57, "dep": 324.28, "arr": 219.55, "cop": 1010.97, "mb": 2197.43, "ebitda": 1928.86, "ebit": 1385.03, "nl": 374.06, "ok": true}, {"d": "2023-11", "safra": "2023/24", "spot": 36.23, "std": 45.4, "prod": 140.0, "rb_spot": 5072.2, "rb_std": 6356.0, "sem": 745.31, "fer": 1527.99, "pes": 734.51, "coe_s": 4270.07, "mo": 268.54, "dep": 324.44, "arr": 217.86, "cop": 1003.07, "mb": 2085.93, "ebitda": 1817.39, "ebit": 1275.09, "nl": 272.02, "ok": true}, {"d": "2023-12", "safra": "2023/24", "spot": 39.21, "std": 44.89, "prod": 140.0, "rb_spot": 5489.4, "rb_std": 6284.6, "sem": 750.78, "fer": 1518.66, "pes": 733.24, "coe_s": 4263.51, "mo": 268.55, "dep": 324.44, "arr": 216.5, "cop": 994.73, "mb": 2021.09, "ebitda": 1752.54, "ebit": 1211.6, "nl": 216.87, "ok": true}, {"d": "2024-01", "safra": "2024/25", "spot": 42.69, "std": 42.69, "prod": 138.3333, "rb_spot": 5905.45, "rb_std": 5905.45, "sem": 895.42, "fer": 1324.24, "pes": 841.9, "coe_s": 4631.72, "mo": 419.98, "dep": 426.56, "arr": 193.46, "cop": 967.08, "mb": 1273.73, "ebitda": 853.75, "ebit": 233.73, "nl": -733.35, "ok": true}, {"d": "2024-02", "safra": "2024/25", "spot": 37.61, "std": 40.15, "prod": 138.3333, "rb_spot": 5202.72, "rb_std": 5554.08, "sem": 882.88, "fer": 1324.35, "pes": 833.13, "coe_s": 4601.17, "mo": 418.7, "dep": 426.56, "arr": 190.7, "cop": 948.57, "mb": 952.91, "ebitda": 534.21, "ebit": -83.05, "nl": -1031.62, "ok": true}, {"d": "2024-03", "safra": "2024/25", "spot": 36.23, "std": 38.84, "prod": 138.3333, "rb_spot": 5011.82, "rb_std": 5372.87, "sem": 875.16, "fer": 1278.82, "pes": 821.82, "coe_s": 4527.86, "mo": 418.31, "dep": 426.56, "arr": 189.78, "cop": 933.22, "mb": 845.01, "ebitda": 426.7, "ebit": -189.64, "nl": -1122.86, "ok": true}, {"d": "2024-04", "safra": "2024/25", "spot": 35.23, "std": 37.94, "prod": 138.3333, "rb_spot": 4873.48, "rb_std": 5248.37, "sem": 867.49, "fer": 1232.7, "pes": 800.18, "coe_s": 4449.65, "mo": 419.34, "dep": 426.56, "arr": 193.01, "cop": 933.35, "mb": 798.72, "ebitda": 379.38, "ebit": -240.19, "nl": -1173.54, "ok": true}, {"d": "2024-05", "safra": "2024/25", "spot": 35.42, "std": 37.44, "prod": 138.3333, "rb_spot": 4899.77, "rb_std": 5179.2, "sem": 848.76, "fer": 1206.76, "pes": 780.4, "coe_s": 4382.15, "mo": 420.32, "dep": 426.56, "arr": 196.22, "cop": 932.8, "mb": 797.05, "ebitda": 376.73, "ebit": -246.05, "nl": -1178.85, "ok": true}, {"d": "2024-06", "safra": "2024/25", "spot": null, "std": 37.48, "prod": 136.6667, "rb_spot": null, "rb_std": 5122.27, "sem": 832.84, "fer": 1224.93, "pes": 780.1, "coe_s": 4388.31, "mo": 421.81, "dep": 426.56, "arr": 201.05, "cop": 936.84, "mb": 733.96, "ebitda": 312.15, "ebit": -315.46, "nl": -1252.3, "ok": true}, {"d": "2024-07", "safra": "2024/25", "spot": 38.09, "std": 37.57, "prod": 136.6667, "rb_spot": 5205.63, "rb_std": 5134.57, "sem": 814.89, "fer": 1259.27, "pes": 762.01, "coe_s": 4384.41, "mo": 421.43, "dep": 426.56, "arr": 199.88, "cop": 933.43, "mb": 750.16, "ebitda": 328.73, "ebit": -297.71, "nl": -1231.14, "ok": true}, {"d": "2024-08", "safra": "2024/25", "spot": 39.31, "std": 37.78, "prod": 136.6667, "rb_spot": 5372.37, "rb_std": 5163.27, "sem": 809.15, "fer": 1266.39, "pes": 759.41, "coe_s": 4382.88, "mo": 422.17, "dep": 426.56, "arr": 202.66, "cop": 935.08, "mb": 780.39, "ebitda": 358.22, "ebit": -271.0, "nl": -1206.08, "ok": true}, {"d": "2024-09", "safra": "2024/25", "spot": null, "std": 38.38, "prod": 138.3333, "rb_spot": null, "rb_std": 5309.23, "sem": 792.28, "fer": 1284.77, "pes": 760.61, "coe_s": 4390.71, "mo": 423.24, "dep": 424.95, "arr": 205.98, "cop": 936.12, "mb": 918.52, "ebitda": 495.28, "ebit": -135.65, "nl": -1071.77, "ok": true}, {"d": "2024-10", "safra": "2024/25", "spot": 49.21, "std": 39.46, "prod": 138.3333, "rb_spot": 6807.38, "rb_std": 5458.63, "sem": 783.59, "fer": 1300.66, "pes": 748.06, "coe_s": 4386.04, "mo": 423.86, "dep": 424.95, "arr": 207.84, "cop": 939.75, "mb": 1072.59, "ebitda": 648.73, "ebit": 15.94, "nl": -923.81, "ok": true}, {"d": "2024-11", "safra": "2024/25", "spot": 56.11, "std": 40.97, "prod": 138.3333, "rb_spot": 7761.88, "rb_std": 5667.52, "sem": 766.94, "fer": 1312.0, "pes": 742.46, "coe_s": 4377.82, "mo": 424.67, "dep": 424.85, "arr": 209.16, "cop": 943.64, "mb": 1289.7, "ebitda": 865.03, "ebit": 231.02, "nl": -712.62, "ok": true}, {"d": "2024-12", "safra": "2024/25", "spot": null, "std": 42.41, "prod": 138.3333, "rb_spot": null, "rb_std": 5866.72, "sem": 762.92, "fer": 1342.32, "pes": 735.94, "coe_s": 4400.8, "mo": 425.21, "dep": 424.85, "arr": 210.55, "cop": 947.02, "mb": 1465.92, "ebitda": 1040.71, "ebit": 405.31, "nl": -541.71, "ok": true}, {"d": "2025-06", "safra": "2025/26", "spot": null, "std": 60.29, "prod": 138.3333, "rb_spot": null, "rb_std": 8340.11, "sem": null, "fer": null, "pes": 118.15, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-08", "safra": "2025/26", "spot": 44.13, "std": 55.86, "prod": 140.0, "rb_spot": 6178.2, "rb_std": 7820.4, "sem": null, "fer": null, "pes": 120.44, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-09", "safra": "2025/26", "spot": 44.98, "std": 54.65, "prod": 140.0, "rb_spot": 6297.2, "rb_std": 7651.0, "sem": null, "fer": null, "pes": 120.78, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-10", "safra": "2025/26", "spot": 46.12, "std": 53.79, "prod": 140.0, "rb_spot": 6456.8, "rb_std": 7530.6, "sem": null, "fer": null, "pes": 120.96, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-11", "safra": "2025/26", "spot": null, "std": 53.24, "prod": 140.0, "rb_spot": null, "rb_std": 7453.6, "sem": null, "fer": null, "pes": 121.14, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2025-12", "safra": "2025/26", "spot": 49.25, "std": 52.91, "prod": 140.0, "rb_spot": 6895.0, "rb_std": 7407.4, "sem": 815.08, "fer": 1474.03, "pes": 763.46, "coe_s": 4694.25, "mo": 458.16, "dep": 456.37, "arr": 230.95, "cop": 1353.87, "mb": 2713.15, "ebitda": 2255.0, "ebit": 1567.68, "nl": 213.81, "ok": true}, {"d": "2026-01", "safra": "2026/27", "spot": 48.72, "std": 48.72, "prod": 138.3333, "rb_spot": 6739.6, "rb_std": 6739.6, "sem": 826.94, "fer": 1399.93, "pes": 875.29, "coe_s": 5055.22, "mo": 473.58, "dep": 450.4, "arr": 205.46, "cop": 1323.71, "mb": 1684.38, "ebitda": 1210.79, "ebit": 554.93, "nl": -768.78, "ok": true}, {"d": "2026-02", "safra": "2026/27", "spot": 46.79, "std": 47.75, "prod": 138.3333, "rb_spot": 6472.62, "rb_std": 6605.42, "sem": 843.48, "fer": 1387.43, "pes": 866.98, "coe_s": 5058.64, "mo": 466.78, "dep": 450.4, "arr": 204.66, "cop": 1321.54, "mb": 1546.78, "ebitda": 1080.0, "ebit": 424.94, "nl": -896.6, "ok": true}], "annual": [{"d": "2023-12", "safra": "2023/24", "spot": 39.21, "std": 44.89, "prod": 140.0, "rb_spot": 5489.4, "rb_std": 6284.6, "sem": 750.78, "fer": 1518.66, "pes": 733.24, "coe_s": 4263.51, "mo": 268.55, "dep": 324.44, "arr": 216.5, "cop": 994.73, "mb": 2021.09, "ebitda": 1752.54, "ebit": 1211.6, "nl": 216.87, "ok": true}, {"d": "2024-12", "safra": "2024/25", "spot": null, "std": 42.41, "prod": 138.3333, "rb_spot": null, "rb_std": 5866.72, "sem": 762.92, "fer": 1342.32, "pes": 735.94, "coe_s": 4400.8, "mo": 425.21, "dep": 424.85, "arr": 210.55, "cop": 947.02, "mb": 1465.92, "ebitda": 1040.71, "ebit": 405.31, "nl": -541.71, "ok": true}, {"d": "2025-12", "safra": "2025/26", "spot": 49.25, "std": 52.91, "prod": 140.0, "rb_spot": 6895.0, "rb_std": 7407.4, "sem": 815.08, "fer": 1474.03, "pes": 763.46, "coe_s": 4694.25, "mo": 458.16, "dep": 456.37, "arr": 230.95, "cop": 1353.87, "mb": 2713.15, "ebitda": 2255.0, "ebit": 1567.68, "nl": 213.81, "ok": true}, {"d": "2026-02", "safra": "2026/27", "spot": 46.79, "std": 47.75, "prod": 138.3333, "rb_spot": 6472.62, "rb_std": 6605.42, "sem": 843.48, "fer": 1387.43, "pes": 866.98, "coe_s": 5058.64, "mo": 466.78, "dep": 450.4, "arr": 204.66, "cop": 1321.54, "mb": 1546.78, "ebitda": 1080.0, "ebit": 424.94, "nl": -896.6, "ok": true}]}, "ALGODAO": {"monthly": [{"d": "2023-01", "safra": "2022/23", "spot": null, "std": 677.26, "prod": 30.0, "rb_spot": null, "rb_std": 20317.8, "sem": 1045.27, "fer": 4226.13, "pes": 4641.16, "coe_s": 15179.68, "mo": 402.97, "dep": 709.71, "arr": 342.62, "cop": 2026.49, "mb": 5138.12, "ebitda": 4735.15, "ebit": 3682.82, "nl": 1656.33, "ok": true}, {"d": "2023-02", "safra": "2022/23", "spot": 667.6, "std": 675.33, "prod": 30.0, "rb_spot": 20028.0, "rb_std": 20259.9, "sem": 1056.09, "fer": 4212.69, "pes": 4632.76, "coe_s": 15087.12, "mo": 403.32, "dep": 709.93, "arr": 328.72, "cop": 1996.64, "mb": 5172.78, "ebitda": 4769.46, "ebit": 3730.81, "nl": 1734.17, "ok": true}, {"d": "2023-03", "safra": "2022/23", "spot": 622.4, "std": 666.51, "prod": 26.6667, "rb_spot": 16597.35, "rb_std": 17773.62, "sem": 1058.49, "fer": 4168.6, "pes": 4591.02, "coe_s": 14946.92, "mo": 403.37, "dep": 709.93, "arr": 322.22, "cop": 1977.4, "mb": 2826.7, "ebitda": 2423.33, "ebit": 1391.18, "nl": -586.22, "ok": true}, {"d": "2023-04", "safra": "2022/23", "spot": null, "std": 650.19, "prod": 26.6667, "rb_spot": null, "rb_std": 17338.42, "sem": 1066.96, "fer": 4007.99, "pes": 4533.45, "coe_s": 14687.05, "mo": 403.28, "dep": 709.93, "arr": 314.23, "cop": 1952.14, "mb": 2651.37, "ebitda": 2248.09, "ebit": 1223.93, "nl": -728.21, "ok": true}, {"d": "2023-05", "safra": "2022/23", "spot": 491.96, "std": 630.41, "prod": 28.3333, "rb_spot": 13938.85, "rb_std": 17861.6, "sem": 1071.75, "fer": 3863.72, "pes": 4503.89, "coe_s": 14525.17, "mo": 386.28, "dep": 708.77, "arr": 318.28, "cop": 1925.48, "mb": 3336.43, "ebitda": 2950.15, "ebit": 1923.1, "nl": -2.38, "ok": true}, {"d": "2023-06", "safra": "2022/23", "spot": 504.52, "std": 616.43, "prod": 30.0, "rb_spot": 15135.6, "rb_std": 18492.9, "sem": 1076.56, "fer": 3726.15, "pes": 4469.66, "coe_s": 14297.84, "mo": 385.51, "dep": 707.54, "arr": 310.78, "cop": 1902.13, "mb": 4195.06, "ebitda": 3809.55, "ebit": 2791.23, "nl": 889.1, "ok": true}, {"d": "2023-07", "safra": "2022/23", "spot": null, "std": 601.9, "prod": 30.0, "rb_spot": null, "rb_std": 18057.0, "sem": null, "fer": null, "pes": null, "coe_s": null, "mo": null, "dep": null, "arr": null, "cop": null, "mb": null, "ebitda": null, "ebit": null, "nl": null, "ok": false}, {"d": "2023-08", "safra": "2022/23", "spot": 509.68, "std": 593.51, "prod": 30.0, "rb_spot": 15290.4, "rb_std": 17805.3, "sem": 1064.09, "fer": 3471.59, "pes": 4344.5, "coe_s": 13747.11, "mo": 385.39, "dep": 707.54, "arr": 300.45, "cop": 1863.14, "mb": 4058.19, "ebitda": 3672.8, "ebit": 2664.81, "nl": 801.67, "ok": true}, {"d": "2023-09", "safra": "2022/23", "spot": 505.28, "std": 586.16, "prod": 31.6667, "rb_spot": 16000.55, "rb_std": 18561.75, "sem": 1059.02, "fer": 3426.64, "pes": 4323.29, "coe_s": 13594.73, "mo": 383.83, "dep": 701.09, "arr": 292.65, "cop": 1836.25, "mb": 4967.02, "ebitda": 4583.19, "ebit": 3589.45, "nl": 1753.2, "ok": true}, {"d": "2023-10", "safra": "2023/24", "spot": null, "std": 503.92, "prod": 28.3333, "rb_spot": null, "rb_std": 14277.72, "sem": 1063.64, "fer": 3403.26, "pes": 4305.96, "coe_s": 13488.23, "mo": 383.83, "dep": 701.09, "arr": 289.92, "cop": 1821.57, "mb": 789.49, "ebitda": 405.66, "ebit": -585.35, "nl": -2406.92, "ok": true}, {"d": "2023-11", "safra": "2023/24", "spot": 483.56, "std": 493.74, "prod": 28.3333, "rb_spot": 13700.85, "rb_std": 13989.28, "sem": 1057.62, "fer": 3404.53, "pes": 4299.77, "coe_s": 13406.82, "mo": 383.77, "dep": 697.1, "arr": 287.02, "cop": 1806.36, "mb": 582.46, "ebitda": 198.69, "ebit": -785.43, "nl": -2591.79, "ok": true}, {"d": "2023-12", "safra": "2023/24", "spot": 492.6, "std": 493.36, "prod": 28.3333, "rb_spot": 13956.98, "rb_std": 13978.52, "sem": 969.89, "fer": 3508.8, "pes": 4474.84, "coe_s": 13221.99, "mo": 526.1, "dep": 898.04, "arr": 276.61, "cop": 1784.9, "mb": 756.53, "ebitda": 230.43, "ebit": -944.22, "nl": -2729.12, "ok": true}, {"d": "2024-01", "safra": "2023/24", "spot": 494.44, "std": 493.63, "prod": 28.3333, "rb_spot": 14009.12, "rb_std": 13986.17, "sem": 981.33, "fer": 3438.39, "pes": 4459.96, "coe_s": 13163.48, "mo": 525.28, "dep": 903.4, "arr": 269.05, "cop": 1752.84, "mb": 822.69, "ebitda": 297.41, "ebit": -875.04, "nl": -2627.88, "ok": true}, {"d": "2024-02", "safra": "2023/24", "spot": 516.44, "std": 498.19, "prod": 28.3333, "rb_spot": 14632.45, "rb_std": 14115.37, "sem": 985.0, "fer": 3465.87, "pes": 4442.44, "coe_s": 13181.76, "mo": 525.24, "dep": 903.4, "arr": 255.44, "cop": 1708.59, "mb": 933.61, "ebitda": 408.37, "ebit": -750.47, "nl": -2459.06, "ok": true}, {"d": "2024-03", "safra": "2023/24", "spot": 531.0, "std": 503.66, "prod": 30.0, "rb_spot": 15930.0, "rb_std": 15109.8, "sem": 986.79, "fer": 3449.5, "pes": 4433.38, "coe_s": 13161.61, "mo": 529.26, "dep": 906.21, "arr": 246.4, "cop": 1678.45, "mb": 1948.19, "ebitda": 1418.93, "ebit": 266.32, "nl": -1412.13, "ok": true}, {"d": "2024-04", "safra": "2023/24", "spot": 506.8, "std": 504.11, "prod": 31.6667, "rb_spot": 16048.68, "rb_std": 15963.5, "sem": 987.87, "fer": 3386.45, "pes": 4398.89, "coe_s": 13058.06, "mo": 529.27, "dep": 906.21, "arr": 244.89, "cop": 1659.79, "mb": 2905.44, "ebitda": 2376.17, "ebit": 1225.07, "nl": -434.72, "ok": true}, {"d": "2024-05", "safra": "2023/24", "spot": 492.96, "std": 502.72, "prod": 31.6667, "rb_spot": 15610.42, "rb_std": 15919.48, "sem": 984.39, "fer": 3347.7, "pes": 4403.08, "coe_s": 13027.99, "mo": 525.27, "dep": 902.89, "arr": 240.29, "cop": 1647.34, "mb": 2891.49, "ebitda": 2366.22, "ebit": 1223.04, "nl": -424.3, "ok": true}, {"d": "2024-06", "safra": "2023/24", "spot": null, "std": 501.96, "prod": 31.6667, "rb_spot": null, "rb_std": 15895.42, "sem": 985.03, "fer": 3414.49, "pes": 4371.43, "coe_s": 13064.92, "mo": 525.29, "dep": 902.89, "arr": 241.64, "cop": 1642.57, "mb": 2830.5, "ebitda": 2305.21, "ebit": 1160.68, "nl": -481.89, "ok": true}, {"d": "2024-07", "safra": "2023/24", "spot": 512.72, "std": 503.04, "prod": 31.6667, "rb_spot": 16236.15, "rb_std": 15929.62, "sem": 987.22, "fer": 3449.14, "pes": 4333.57, "coe_s": 13071.83, "mo": 525.83, "dep": 904.77, "arr": 240.88, "cop": 1639.37, "mb": 2857.79, "ebitda": 2331.96, "ebit": 1186.31, "nl": -453.06, "ok": true}, {"d": "2024-08", "safra": "2023/24", "spot": 504.16, "std": 503.14, "prod": 31.6667, "rb_spot": 15965.08, "rb_std": 15932.78, "sem": 988.01, "fer": 3460.53, "pes": 4310.89, "coe_s": 13060.14, "mo": 526.14, "dep": 904.57, "arr": 241.77, "cop": 1636.31, "mb": 2872.64, "ebitda": 2346.5, "ebit": 1200.16, "nl": -436.15, "ok": true}, {"d": "2024-09", "safra": "2023/24", "spot": null, "std": 502.96, "prod": 31.6667, "rb_spot": null, "rb_std": 15927.08, "sem": 1005.07, "fer": 3469.2, "pes": 4088.4, "coe_s": 12854.98, "mo": 527.3, "dep": 902.73, "arr": 240.52, "cop": 1634.28, "mb": 3072.1, "ebitda": 2544.8, "ebit": 1401.55, "nl": -232.73, "ok": true}, {"d": "2024-10", "safra": "2024/25", "spot": 506.12, "std": 506.12, "prod": 30.0, "rb_spot": 15183.6, "rb_std": 15183.6, "sem": 992.89, "fer": 3523.16, "pes": 4033.75, "coe_s": 12842.78, "mo": 527.33, "dep": 902.73, "arr": 241.61, "cop": 1635.18, "mb": 2340.82, "ebitda": 1813.49, "ebit": 669.15, "nl": -966.03, "ok": true}, {"d": "2024-11", "safra": "2024/25", "spot": 503.08, "std": 504.6, "prod": 30.0, "rb_spot": 15092.4, "rb_std": 15138.0, "sem": 990.52, "fer": 3543.0, "pes": 4012.99, "coe_s": 12847.42, "mo": 527.92, "dep": 905.44, "arr": 244.2, "cop": 1639.22, "mb": 2290.58, "ebitda": 1762.66, "ebit": 613.02, "nl": -1026.2, "ok": true}, {"d": "2025-12", "safra": "2025/26", "spot": 436.4, "std": 437.33, "prod": 31.6667, "rb_spot": 13819.35, "rb_std": 13848.8, "sem": 1103.64, "fer": 3614.61, "pes": 4734.98, "coe_s": 14717.52, "mo": 729.39, "dep": 971.06, "arr": 341.3, "cop": 2490.76, "mb": -868.72, "ebitda": -1598.11, "ebit": -2910.47, "nl": -5401.23, "ok": true}, {"d": "2026-01", "safra": "2025/26", "spot": 439.2, "std": 437.8, "prod": 31.6667, "rb_spot": 13908.01, "rb_std": 13863.68, "sem": 1087.26, "fer": 3636.32, "pes": 4588.79, "coe_s": 14542.23, "mo": 729.59, "dep": 971.06, "arr": 339.94, "cop": 2468.86, "mb": -678.55, "ebitda": -1408.14, "ebit": -2719.13, "nl": -5188.0, "ok": true}, {"d": "2026-02", "safra": "2025/26", "spot": 437.12, "std": 437.66, "prod": 31.6667, "rb_spot": 13842.15, "rb_std": 13859.25, "sem": 1062.94, "fer": 3649.21, "pes": 4525.48, "coe_s": 14465.57, "mo": 728.02, "dep": 968.16, "arr": 337.58, "cop": 2453.41, "mb": -606.32, "ebitda": -1334.34, "ebit": -2640.09, "nl": -5093.49, "ok": true}], "annual": [{"d": "2023-09", "safra": "2022/23", "spot": 505.28, "std": 586.16, "prod": 31.6667, "rb_spot": 16000.55, "rb_std": 18561.75, "sem": 1059.02, "fer": 3426.64, "pes": 4323.29, "coe_s": 13594.73, "mo": 383.83, "dep": 701.09, "arr": 292.65, "cop": 1836.25, "mb": 4967.02, "ebitda": 4583.19, "ebit": 3589.45, "nl": 1753.2, "ok": true}, {"d": "2024-09", "safra": "2023/24", "spot": null, "std": 502.96, "prod": 31.6667, "rb_spot": null, "rb_std": 15927.08, "sem": 1005.07, "fer": 3469.2, "pes": 4088.4, "coe_s": 12854.98, "mo": 527.3, "dep": 902.73, "arr": 240.52, "cop": 1634.28, "mb": 3072.1, "ebitda": 2544.8, "ebit": 1401.55, "nl": -232.73, "ok": true}, {"d": "2024-11", "safra": "2024/25", "spot": 503.08, "std": 504.6, "prod": 30.0, "rb_spot": 15092.4, "rb_std": 15138.0, "sem": 990.52, "fer": 3543.0, "pes": 4012.99, "coe_s": 12847.42, "mo": 527.92, "dep": 905.44, "arr": 244.2, "cop": 1639.22, "mb": 2290.58, "ebitda": 1762.66, "ebit": 613.02, "nl": -1026.2, "ok": true}, {"d": "2026-02", "safra": "2025/26", "spot": 437.12, "std": 437.66, "prod": 31.6667, "rb_spot": 13842.15, "rb_std": 13859.25, "sem": 1062.94, "fer": 3649.21, "pes": 4525.48, "coe_s": 14465.57, "mo": 728.02, "dep": 968.16, "arr": 337.58, "cop": 2453.41, "mb": -606.32, "ebitda": -1334.34, "ebit": -2640.09, "nl": -5093.49, "ok": true}]}};
+const RAW={"SOJA": {"monthly": [{"d": "2023-01", "safra": "2022/23", "spot": 155.21, "std": 160.81, "prod": 60.0, "rb_spot": 9312.6, "rb_std": 9648.6, "sem": 655.21, "fer": 1920.25, "pes": 1407.87, "coe_s": 5398.88, "mo": 238.12, "dep": 416.05, "arr": 364.57, "gm_ex": 4249.72, "gm_inc": 3885.15, "gm_ex_pct": 0.4404, "gm_inc_pct": 0.4027, "ok": true}, {"d": "2023-02", "safra": "2022/23", "spot": 146.51, "std": 157.95, "prod": 61.6667, "rb_spot": 9034.79, "rb_std": 9740.26, "sem": 655.51, "fer": 1914.98, "pes": 1401.77, "coe_s": 5386.12, "mo": 238.21, "dep": 418.52, "arr": 363.49, "gm_ex": 4354.14, "gm_inc": 3990.65, "gm_ex_pct": 0.447, "gm_inc_pct": 0.4097, "ok": true}, {"d": "2023-03", "safra": "2022/23", "spot": 139.58, "std": 154.88, "prod": 61.6667, "rb_spot": 8607.44, "rb_std": 9550.94, "sem": 659.68, "fer": 1906.88, "pes": 1399.6, "coe_s": 5375.27, "mo": 238.41, "dep": 418.54, "arr": 360.61, "gm_ex": 4175.67, "gm_inc": 3815.06, "gm_ex_pct": 0.4372, "gm_inc_pct": 0.3994, "ok": true}, {"d": "2023-04", "safra": "2022/23", "spot": 123.52, "std": 150.4, "prod": 63.3333, "rb_spot": 7822.93, "rb_std": 9525.33, "sem": 661.85, "fer": 1901.73, "pes": 1375.75, "coe_s": 5344.86, "mo": 238.18, "dep": 417.22, "arr": 360.72, "gm_ex": 4180.47, "gm_inc": 3819.75, "gm_ex_pct": 0.4389, "gm_inc_pct": 0.401, "ok": true}, {"d": "2023-05", "safra": "2022/23", "spot": 112.02, "std": 145.61, "prod": 63.3333, "rb_spot": 7094.6, "rb_std": 9221.96, "sem": 666.95, "fer": 1864.36, "pes": 1370.82, "coe_s": 5300.36, "mo": 238.23, "dep": 417.23, "arr": 356.02, "gm_ex": 3921.6, "gm_inc": 3565.58, "gm_ex_pct": 0.4252, "gm_inc_pct": 0.3866, "ok": true}, {"d": "2023-06", "safra": "2022/23", "spot": 107.92, "std": 141.42, "prod": 63.3333, "rb_spot": 6834.93, "rb_std": 8956.6, "sem": 667.33, "fer": 1856.62, "pes": 1360.73, "coe_s": 5272.62, "mo": 238.18, "dep": 417.23, "arr": 350.8, "gm_ex": 3683.98, "gm_inc": 3333.18, "gm_ex_pct": 0.4113, "gm_inc_pct": 0.3721, "ok": true}, {"d": "2023-07", "safra": "2022/23", "spot": 113.68, "std": 138.65, "prod": 63.3333, "rb_spot": 7199.73, "rb_std": 8781.16, "sem": 667.33, "fer": 1856.62, "pes": 1360.73, "coe_s": 5272.62, "mo": 238.18, "dep": 417.23, "arr": 350.8, "gm_ex": 3508.54, "gm_inc": 3157.74, "gm_ex_pct": 0.3996, "gm_inc_pct": 0.3596, "ok": true}, {"d": "2023-08", "safra": "2022/23", "spot": 117.97, "std": 136.77, "prod": 63.3333, "rb_spot": 7471.43, "rb_std": 8662.1, "sem": 668.37, "fer": 1805.0, "pes": 1304.81, "coe_s": 5146.29, "mo": 237.97, "dep": 417.25, "arr": 336.95, "gm_ex": 3515.81, "gm_inc": 3178.86, "gm_ex_pct": 0.4059, "gm_inc_pct": 0.367, "ok": true}, {"d": "2023-09", "safra": "2022/23", "spot": 119.69, "std": 135.34, "prod": 65.0, "rb_spot": 7779.85, "rb_std": 8797.1, "sem": 668.37, "fer": 1805.0, "pes": 1304.81, "coe_s": 5146.29, "mo": 237.97, "dep": 417.25, "arr": 336.95, "gm_ex": 3650.81, "gm_inc": 3313.86, "gm_ex_pct": 0.415, "gm_inc_pct": 0.3767, "ok": true}, {"d": "2023-10", "safra": "2023/24", "spot": 118.05, "std": 118.05, "prod": 60.0, "rb_spot": 7083.0, "rb_std": 7083.0, "sem": 659.82, "fer": 1816.02, "pes": 1281.5, "coe_s": 5205.12, "mo": 327.53, "dep": 487.44, "arr": 304.71, "gm_ex": 1877.88, "gm_inc": 1573.17, "gm_ex_pct": 0.2651, "gm_inc_pct": 0.2221, "ok": true}, {"d": "2023-11", "safra": "2023/24", "spot": 121.69, "std": 119.87, "prod": 60.0, "rb_spot": 7301.4, "rb_std": 7192.2, "sem": 666.14, "fer": 1807.85, "pes": 1277.46, "coe_s": 5200.16, "mo": 327.52, "dep": 487.25, "arr": 307.08, "gm_ex": 1992.04, "gm_inc": 1684.96, "gm_ex_pct": 0.277, "gm_inc_pct": 0.2343, "ok": true}, {"d": "2023-12", "safra": "2023/24", "spot": 122.84, "std": 120.86, "prod": 58.3333, "rb_spot": 7165.66, "rb_std": 7050.16, "sem": 665.29, "fer": 1807.51, "pes": 1275.93, "coe_s": 5197.28, "mo": 327.62, "dep": 487.25, "arr": 307.58, "gm_ex": 1852.88, "gm_inc": 1545.3, "gm_ex_pct": 0.2628, "gm_inc_pct": 0.2192, "ok": true}, {"d": "2024-01", "safra": "2023/24", "spot": 109.09, "std": 117.92, "prod": 55.0, "rb_spot": 5999.95, "rb_std": 6485.6, "sem": 664.17, "fer": 1801.8, "pes": 1271.13, "coe_s": 5188.02, "mo": 328.29, "dep": 487.25, "arr": 306.97, "gm_ex": 1297.58, "gm_inc": 990.61, "gm_ex_pct": 0.2001, "gm_inc_pct": 0.1527, "ok": true}, {"d": "2024-02", "safra": "2023/24", "spot": 97.98, "std": 113.93, "prod": 53.3333, "rb_spot": 5225.6, "rb_std": 6076.26, "sem": 662.96, "fer": 1800.1, "pes": 1267.97, "coe_s": 5183.24, "mo": 327.31, "dep": 487.25, "arr": 299.08, "gm_ex": 893.02, "gm_inc": 593.94, "gm_ex_pct": 0.147, "gm_inc_pct": 0.0977, "ok": true}, {"d": "2024-03", "safra": "2023/24", "spot": 104.32, "std": 112.33, "prod": 51.6667, "rb_spot": 5389.87, "rb_std": 5803.72, "sem": 666.3, "fer": 1724.76, "pes": 1228.38, "coe_s": 5061.03, "mo": 325.22, "dep": 485.9, "arr": 290.43, "gm_ex": 742.69, "gm_inc": 452.26, "gm_ex_pct": 0.128, "gm_inc_pct": 0.0779, "ok": true}, {"d": "2024-05", "safra": "2023/24", "spot": 114.96, "std": 112.25, "prod": 53.3333, "rb_spot": 6131.2, "rb_std": 5986.66, "sem": 666.96, "fer": 1695.45, "pes": 1190.71, "coe_s": 4990.64, "mo": 325.4, "dep": 485.9, "arr": 289.96, "gm_ex": 996.02, "gm_inc": 706.06, "gm_ex_pct": 0.1664, "gm_inc_pct": 0.1179, "ok": true}, {"d": "2024-06", "safra": "2023/24", "spot": 120.47, "std": 113.16, "prod": 53.3333, "rb_spot": 6425.06, "rb_std": 6035.2, "sem": 678.11, "fer": 1714.97, "pes": 1181.17, "coe_s": 5013.09, "mo": 325.79, "dep": 485.9, "arr": 291.0, "gm_ex": 1022.11, "gm_inc": 731.11, "gm_ex_pct": 0.1694, "gm_inc_pct": 0.1211, "ok": true}, {"d": "2024-07", "safra": "2023/24", "spot": 120.98, "std": 113.94, "prod": 53.3333, "rb_spot": 6452.26, "rb_std": 6076.8, "sem": 677.13, "fer": 1720.04, "pes": 1165.53, "coe_s": 4999.88, "mo": 325.8, "dep": 485.8, "arr": 290.26, "gm_ex": 1076.92, "gm_inc": 786.66, "gm_ex_pct": 0.1772, "gm_inc_pct": 0.1295, "ok": true}, {"d": "2024-08", "safra": "2023/24", "spot": 119.17, "std": 114.42, "prod": 53.3333, "rb_spot": 6355.73, "rb_std": 6102.4, "sem": 677.19, "fer": 1720.82, "pes": 1163.64, "coe_s": 4997.93, "mo": 325.99, "dep": 485.8, "arr": 290.86, "gm_ex": 1104.47, "gm_inc": 813.61, "gm_ex_pct": 0.181, "gm_inc_pct": 0.1333, "ok": true}, {"d": "2024-09", "safra": "2023/24", "spot": 125.73, "std": 115.36, "prod": 55.0, "rb_spot": 6915.15, "rb_std": 6344.8, "sem": 678.17, "fer": 1719.9, "pes": 1162.57, "coe_s": 4995.25, "mo": 326.23, "dep": 485.8, "arr": 291.5, "gm_ex": 1349.55, "gm_inc": 1058.05, "gm_ex_pct": 0.2127, "gm_inc_pct": 0.1668, "ok": true}, {"d": "2024-12", "safra": "2024/25", "spot": 133.21, "std": 135.36, "prod": 60.0, "rb_spot": 7992.6, "rb_std": 8121.6, "sem": 714.83, "fer": 1807.51, "pes": 1275.93, "coe_s": 3901.88, "mo": 327.63, "dep": 487.25, "arr": 307.58, "gm_ex": 4219.72, "gm_inc": 3912.14, "gm_ex_pct": 0.5196, "gm_inc_pct": 0.4817, "ok": true}, {"d": "2025-01", "safra": "2024/25", "spot": 116.25, "std": 130.58, "prod": 60.0, "rb_spot": 6975.0, "rb_std": 7834.8, "sem": 659.23, "fer": 1738.49, "pes": 1261.21, "coe_s": 3778.24, "mo": 330.3, "dep": 487.25, "arr": 305.15, "gm_ex": 4056.56, "gm_inc": 3751.41, "gm_ex_pct": 0.5178, "gm_inc_pct": 0.4788, "ok": true}, {"d": "2025-02", "safra": "2024/25", "spot": 108.08, "std": 126.08, "prod": 61.6667, "rb_spot": 6664.94, "rb_std": 7774.94, "sem": 660.7, "fer": 1762.24, "pes": 1238.73, "coe_s": 3801.69, "mo": 323.39, "dep": 487.25, "arr": 267.48, "gm_ex": 3973.25, "gm_inc": 3705.77, "gm_ex_pct": 0.511, "gm_inc_pct": 0.4766, "ok": true}, {"d": "2025-03", "safra": "2024/25", "spot": 109.58, "std": 123.33, "prod": 63.3333, "rb_spot": 6940.06, "rb_std": 7810.9, "sem": 670.23, "fer": 1654.06, "pes": 1217.19, "coe_s": 3683.38, "mo": 321.3, "dep": 487.25, "arr": 258.2, "gm_ex": 4127.52, "gm_inc": 3869.32, "gm_ex_pct": 0.5284, "gm_inc_pct": 0.4954, "ok": true}, {"d": "2025-04", "safra": "2024/25", "spot": 111.43, "std": 121.63, "prod": 65.0, "rb_spot": 7242.95, "rb_std": 7905.95, "sem": 671.44, "fer": 1630.17, "pes": 1181.75, "coe_s": 3606.01, "mo": 324.9, "dep": 485.9, "arr": 279.43, "gm_ex": 4299.94, "gm_inc": 4020.51, "gm_ex_pct": 0.5439, "gm_inc_pct": 0.5085, "ok": true}, {"d": "2025-05", "safra": "2024/25", "spot": 110.02, "std": 120.18, "prod": 65.0, "rb_spot": 7151.3, "rb_std": 7811.7, "sem": 668.38, "fer": 1585.08, "pes": 1155.22, "coe_s": 3524.76, "mo": 326.71, "dep": 485.9, "arr": 286.66, "gm_ex": 4286.94, "gm_inc": 4000.28, "gm_ex_pct": 0.5488, "gm_inc_pct": 0.5121, "ok": true}, {"d": "2025-06", "safra": "2024/25", "spot": 110.44, "std": 119.1, "prod": 66.6667, "rb_spot": 7362.67, "rb_std": 7940.0, "sem": 746.2, "fer": 1816.91, "pes": 1138.92, "coe_s": 3814.93, "mo": 328.86, "dep": 485.9, "arr": 299.34, "gm_ex": 4125.07, "gm_inc": 3825.74, "gm_ex_pct": 0.5195, "gm_inc_pct": 0.4818, "ok": true}, {"d": "2025-07", "safra": "2024/25", "spot": 113.73, "std": 118.56, "prod": 66.6667, "rb_spot": 7582.0, "rb_std": 7904.0, "sem": 673.83, "fer": 1791.73, "pes": 1039.53, "coe_s": 3625.78, "mo": 326.43, "dep": 485.8, "arr": 286.26, "gm_ex": 4278.22, "gm_inc": 3991.96, "gm_ex_pct": 0.5413, "gm_inc_pct": 0.5051, "ok": true}, {"d": "2025-08", "safra": "2024/25", "spot": 120.2, "std": 118.71, "prod": 66.6667, "rb_spot": 8013.34, "rb_std": 7914.0, "sem": 679.43, "fer": 1773.62, "pes": 1017.76, "coe_s": 3581.99, "mo": 327.93, "dep": 485.8, "arr": 296.87, "gm_ex": 4332.01, "gm_inc": 4035.14, "gm_ex_pct": 0.5474, "gm_inc_pct": 0.5099, "ok": true}, {"d": "2025-09", "safra": "2024/25", "spot": 120.73, "std": 118.88, "prod": 66.6667, "rb_spot": 8048.67, "rb_std": 7925.34, "sem": 724.34, "fer": 1645.67, "pes": 967.62, "coe_s": 3449.39, "mo": 328.85, "dep": 485.8, "arr": 298.56, "gm_ex": 4475.95, "gm_inc": 4177.38, "gm_ex_pct": 0.5648, "gm_inc_pct": 0.5271, "ok": true}, {"d": "2025-12", "safra": "2025/26", "spot": 117.93, "std": 119.68, "prod": 61.6667, "rb_spot": 7272.35, "rb_std": 7380.27, "sem": 304.38, "fer": 1542.97, "pes": 1685.8, "coe_s": 4974.34, "mo": 332.73, "dep": 460.93, "arr": 311.52, "gm_ex": 2405.93, "gm_inc": 2094.41, "gm_ex_pct": 0.326, "gm_inc_pct": 0.2838, "ok": true}, {"d": "2026-01", "safra": "2025/26", "spot": 106.0, "std": 116.26, "prod": 61.6667, "rb_spot": 6536.67, "rb_std": 7169.37, "sem": 299.25, "fer": 1566.67, "pes": 1603.96, "coe_s": 4891.47, "mo": 320.12, "dep": 460.93, "arr": 267.16, "gm_ex": 2277.9, "gm_inc": 2010.74, "gm_ex_pct": 0.3177, "gm_inc_pct": 0.2805, "ok": true}, {"d": "2026-02", "safra": "2025/26", "spot": 102.26, "std": 113.46, "prod": 63.3333, "rb_spot": 6476.46, "rb_std": 7185.8, "sem": 327.21, "fer": 1535.91, "pes": 1577.69, "coe_s": 4858.45, "mo": 319.18, "dep": 460.93, "arr": 260.88, "gm_ex": 2327.35, "gm_inc": 2066.47, "gm_ex_pct": 0.3239, "gm_inc_pct": 0.2876, "ok": true}], "annual": [{"d": "2020-09", "safra": "2019/20", "spot": 135.45, "std": 90.76, "prod": 60.0, "rb_spot": 8127.0, "rb_std": 5445.6, "sem": 336.23, "fer": 909.74, "pes": 829.25, "coe_s": 2178.55, "mo": 188.02, "dep": 189.42, "arr": 134.14, "gm_ex": 3267.05, "gm_inc": 3132.92, "gm_ex_pct": 0.5999, "gm_inc_pct": 0.5753, "ok": true}, {"d": "2021-09", "safra": "2020/21", "spot": 163.57, "std": 157.33, "prod": 58.3333, "rb_spot": 9541.58, "rb_std": 9177.58, "sem": 348.65, "fer": 906.7, "pes": 933.94, "coe_s": 2218.74, "mo": 173.91, "dep": 208.87, "arr": 172.52, "gm_ex": 6958.84, "gm_inc": 6786.32, "gm_ex_pct": 0.7582, "gm_inc_pct": 0.7394, "ok": true}, {"d": "2022-09", "safra": "2021/22", "spot": 160.77, "std": 163.61, "prod": 65.0, "rb_spot": 10450.05, "rb_std": 10634.65, "sem": 494.95, "fer": 1141.09, "pes": 1077.84, "coe_s": 2654.77, "mo": 176.93, "dep": 208.57, "arr": 281.79, "gm_ex": 7979.88, "gm_inc": 7698.09, "gm_ex_pct": 0.7504, "gm_inc_pct": 0.7239, "ok": true}, {"d": "2023-09", "safra": "2022/23", "spot": 119.69, "std": 135.34, "prod": 65.0, "rb_spot": 7779.85, "rb_std": 8797.1, "sem": 668.37, "fer": 1805.0, "pes": 1304.81, "coe_s": 5146.29, "mo": 237.97, "dep": 417.25, "arr": 336.95, "gm_ex": 3650.81, "gm_inc": 3313.86, "gm_ex_pct": 0.415, "gm_inc_pct": 0.3767, "ok": true}, {"d": "2024-09", "safra": "2023/24", "spot": 125.73, "std": 115.36, "prod": 55.0, "rb_spot": 6915.15, "rb_std": 6344.8, "sem": 678.17, "fer": 1719.9, "pes": 1162.57, "coe_s": 4995.25, "mo": 326.23, "dep": 485.8, "arr": 291.5, "gm_ex": 1349.55, "gm_inc": 1058.05, "gm_ex_pct": 0.2127, "gm_inc_pct": 0.1668, "ok": true}, {"d": "2025-09", "safra": "2024/25", "spot": 120.73, "std": 118.88, "prod": 66.6667, "rb_spot": 8048.67, "rb_std": 7925.34, "sem": 724.34, "fer": 1645.67, "pes": 967.62, "coe_s": 3449.39, "mo": 328.85, "dep": 485.8, "arr": 298.56, "gm_ex": 4475.95, "gm_inc": 4177.38, "gm_ex_pct": 0.5648, "gm_inc_pct": 0.5271, "ok": true}, {"d": "2026-02", "safra": "2025/26", "spot": 102.26, "std": 113.46, "prod": 63.3333, "rb_spot": 6476.46, "rb_std": 7185.8, "sem": 327.21, "fer": 1535.91, "pes": 1577.69, "coe_s": 4858.45, "mo": 319.18, "dep": 460.93, "arr": 260.88, "gm_ex": 2327.35, "gm_inc": 2066.47, "gm_ex_pct": 0.3239, "gm_inc_pct": 0.2876, "ok": true}]}, "MILHO": {"monthly": [{"d": "2023-01", "safra": "2022/23", "spot": 64.04, "std": 68.35, "prod": 136.6667, "rb_spot": 8752.14, "rb_std": 9341.17, "sem": 664.92, "fer": 1751.35, "pes": 804.28, "coe_s": 4540.32, "mo": 196.56, "dep": 322.36, "arr": 246.11, "gm_ex": 4800.85, "gm_inc": 4554.74, "gm_ex_pct": 0.5139, "gm_inc_pct": 0.4876, "ok": true}, {"d": "2023-02", "safra": "2022/23", "spot": 61.55, "std": 67.87, "prod": 136.6667, "rb_spot": 8411.84, "rb_std": 9275.57, "sem": 669.79, "fer": 1764.84, "pes": 798.78, "coe_s": 4554.41, "mo": 197.48, "dep": 322.36, "arr": 244.81, "gm_ex": 4721.16, "gm_inc": 4476.35, "gm_ex_pct": 0.509, "gm_inc_pct": 0.4826, "ok": true}, {"d": "2023-03", "safra": "2022/23", "spot": 59.94, "std": 67.34, "prod": 138.3333, "rb_spot": 8291.7, "rb_std": 9315.36, "sem": 675.2, "fer": 1749.93, "pes": 785.33, "coe_s": 4526.27, "mo": 197.78, "dep": 322.36, "arr": 242.74, "gm_ex": 4789.09, "gm_inc": 4546.35, "gm_ex_pct": 0.5141, "gm_inc_pct": 0.488, "ok": true}, {"d": "2023-04", "safra": "2022/23", "spot": 53.99, "std": 66.5, "prod": 136.6667, "rb_spot": 7378.64, "rb_std": 9088.34, "sem": 692.82, "fer": 1719.96, "pes": 775.32, "coe_s": 4496.62, "mo": 197.91, "dep": 322.36, "arr": 239.61, "gm_ex": 4591.72, "gm_inc": 4352.11, "gm_ex_pct": 0.5052, "gm_inc_pct": 0.4789, "ok": true}, {"d": "2023-05", "safra": "2022/23", "spot": 44.87, "std": 65.23, "prod": 136.6667, "rb_spot": 6132.23, "rb_std": 8914.77, "sem": 690.05, "fer": 1713.16, "pes": 774.36, "coe_s": 4475.12, "mo": 198.04, "dep": 322.36, "arr": 235.82, "gm_ex": 4439.65, "gm_inc": 4203.83, "gm_ex_pct": 0.498, "gm_inc_pct": 0.4716, "ok": true}, {"d": "2023-06", "safra": "2022/23", "spot": 36.58, "std": 63.64, "prod": 136.6667, "rb_spot": 4999.27, "rb_std": 8697.47, "sem": 693.11, "fer": 1639.44, "pes": 773.37, "coe_s": 4390.57, "mo": 198.12, "dep": 322.36, "arr": 231.71, "gm_ex": 4306.9, "gm_inc": 4075.19, "gm_ex_pct": 0.4952, "gm_inc_pct": 0.4685, "ok": true}, {"d": "2023-07", "safra": "2022/23", "spot": 34.86, "std": 62.12, "prod": 138.3333, "rb_spot": 4822.3, "rb_std": 8593.26, "sem": 693.11, "fer": 1639.44, "pes": 773.37, "coe_s": 4390.57, "mo": 198.12, "dep": 322.36, "arr": 231.71, "gm_ex": 4202.69, "gm_inc": 3970.98, "gm_ex_pct": 0.4891, "gm_inc_pct": 0.4621, "ok": true}, {"d": "2023-08", "safra": "2022/23", "spot": 35.1, "std": 60.77, "prod": 140.0, "rb_spot": 4914.0, "rb_std": 8507.8, "sem": 694.26, "fer": 1603.4, "pes": 765.27, "coe_s": 4330.79, "mo": 198.33, "dep": 324.05, "arr": 224.93, "gm_ex": 4177.01, "gm_inc": 3952.08, "gm_ex_pct": 0.491, "gm_inc_pct": 0.4645, "ok": true}, {"d": "2023-09", "safra": "2022/23", "spot": 36.28, "std": 59.61, "prod": 140.0, "rb_spot": 5079.2, "rb_std": 8345.4, "sem": 705.9, "fer": 1572.8, "pes": 744.94, "coe_s": 4289.2, "mo": 198.34, "dep": 324.05, "arr": 221.76, "gm_ex": 4056.2, "gm_inc": 3834.44, "gm_ex_pct": 0.486, "gm_inc_pct": 0.4595, "ok": true}, {"d": "2023-10", "safra": "2022/23", "spot": 36.0, "std": 58.53, "prod": 140.0, "rb_spot": 5040.0, "rb_std": 8194.2, "sem": 721.13, "fer": 1555.94, "pes": 745.81, "coe_s": 4287.37, "mo": 198.57, "dep": 324.28, "arr": 219.55, "gm_ex": 3906.83, "gm_inc": 3687.28, "gm_ex_pct": 0.4768, "gm_inc_pct": 0.45, "ok": true}, {"d": "2023-11", "safra": "2022/23", "spot": 36.23, "std": 57.56, "prod": 140.0, "rb_spot": 5072.2, "rb_std": 8058.4, "sem": 745.31, "fer": 1527.99, "pes": 734.51, "coe_s": 4270.07, "mo": 198.59, "dep": 324.44, "arr": 217.86, "gm_ex": 3788.33, "gm_inc": 3570.47, "gm_ex_pct": 0.4701, "gm_inc_pct": 0.4431, "ok": true}, {"d": "2023-12", "safra": "2022/23", "spot": 39.21, "std": 56.8, "prod": 140.0, "rb_spot": 5489.4, "rb_std": 7952.0, "sem": 750.78, "fer": 1518.66, "pes": 733.24, "coe_s": 4263.51, "mo": 198.6, "dep": 324.44, "arr": 216.5, "gm_ex": 3688.49, "gm_inc": 3471.99, "gm_ex_pct": 0.4638, "gm_inc_pct": 0.4366, "ok": true}, {"d": "2024-01", "safra": "2023/24", "spot": 42.69, "std": 44.72, "prod": 138.3333, "rb_spot": 5905.45, "rb_std": 6186.27, "sem": 895.42, "fer": 1324.24, "pes": 841.9, "coe_s": 4631.72, "mo": 309.53, "dep": 426.56, "arr": 193.46, "gm_ex": 1554.55, "gm_inc": 1361.09, "gm_ex_pct": 0.2513, "gm_inc_pct": 0.22, "ok": true}, {"d": "2024-02", "safra": "2023/24", "spot": 37.61, "std": 44.21, "prod": 138.3333, "rb_spot": 5202.72, "rb_std": 6115.72, "sem": 882.88, "fer": 1324.35, "pes": 833.13, "coe_s": 4601.17, "mo": 308.25, "dep": 426.56, "arr": 190.7, "gm_ex": 1514.55, "gm_inc": 1323.85, "gm_ex_pct": 0.2476, "gm_inc_pct": 0.2165, "ok": true}, {"d": "2024-03", "safra": "2023/24", "spot": 36.23, "std": 43.68, "prod": 138.3333, "rb_spot": 5011.82, "rb_std": 6042.4, "sem": 875.16, "fer": 1278.82, "pes": 821.82, "coe_s": 4527.86, "mo": 307.86, "dep": 426.56, "arr": 189.78, "gm_ex": 1514.54, "gm_inc": 1324.76, "gm_ex_pct": 0.2507, "gm_inc_pct": 0.2192, "ok": true}, {"d": "2024-04", "safra": "2023/24", "spot": 35.23, "std": 43.15, "prod": 138.3333, "rb_spot": 4873.48, "rb_std": 5969.08, "sem": 867.49, "fer": 1232.7, "pes": 800.18, "coe_s": 4449.65, "mo": 308.89, "dep": 426.56, "arr": 193.01, "gm_ex": 1519.43, "gm_inc": 1326.42, "gm_ex_pct": 0.2546, "gm_inc_pct": 0.2222, "ok": true}, {"d": "2024-05", "safra": "2023/24", "spot": 35.42, "std": 42.7, "prod": 138.3333, "rb_spot": 4899.77, "rb_std": 5906.83, "sem": 848.76, "fer": 1206.76, "pes": 780.4, "coe_s": 4382.15, "mo": 309.87, "dep": 426.56, "arr": 196.22, "gm_ex": 1524.68, "gm_inc": 1328.46, "gm_ex_pct": 0.2581, "gm_inc_pct": 0.2249, "ok": true}, {"d": "2024-06", "safra": "2023/24", "spot": 37.69, "std": 42.42, "prod": 136.6667, "rb_spot": 5150.97, "rb_std": 5797.4, "sem": 832.84, "fer": 1224.93, "pes": 780.1, "coe_s": 4388.31, "mo": 311.36, "dep": 426.56, "arr": 201.05, "gm_ex": 1409.09, "gm_inc": 1208.04, "gm_ex_pct": 0.2431, "gm_inc_pct": 0.2084, "ok": true}, {"d": "2024-07", "safra": "2023/24", "spot": 38.09, "std": 42.19, "prod": 136.6667, "rb_spot": 5205.63, "rb_std": 5765.97, "sem": 814.89, "fer": 1259.27, "pes": 762.01, "coe_s": 4384.41, "mo": 310.98, "dep": 426.56, "arr": 199.88, "gm_ex": 1381.56, "gm_inc": 1181.68, "gm_ex_pct": 0.2396, "gm_inc_pct": 0.2049, "ok": true}, {"d": "2024-08", "safra": "2023/24", "spot": 39.31, "std": 42.05, "prod": 136.6667, "rb_spot": 5372.37, "rb_std": 5746.83, "sem": 809.15, "fer": 1266.39, "pes": 759.41, "coe_s": 4382.88, "mo": 311.72, "dep": 426.56, "arr": 202.66, "gm_ex": 1363.95, "gm_inc": 1161.29, "gm_ex_pct": 0.2373, "gm_inc_pct": 0.2021, "ok": true}, {"d": "2024-09", "safra": "2023/24", "spot": 43.13, "std": 42.1, "prod": 138.3333, "rb_spot": 5966.32, "rb_std": 5823.83, "sem": 792.28, "fer": 1284.77, "pes": 760.61, "coe_s": 4390.71, "mo": 312.37, "dep": 424.95, "arr": 205.98, "gm_ex": 1433.12, "gm_inc": 1227.14, "gm_ex_pct": 0.2461, "gm_inc_pct": 0.2107, "ok": true}, {"d": "2024-10", "safra": "2023/24", "spot": 49.21, "std": 42.42, "prod": 138.3333, "rb_spot": 6807.38, "rb_std": 5868.1, "sem": 783.59, "fer": 1300.66, "pes": 748.06, "coe_s": 4386.04, "mo": 312.99, "dep": 424.95, "arr": 207.84, "gm_ex": 1482.06, "gm_inc": 1274.22, "gm_ex_pct": 0.2526, "gm_inc_pct": 0.2171, "ok": true}, {"d": "2024-11", "safra": "2023/24", "spot": 56.11, "std": 43.02, "prod": 138.3333, "rb_spot": 7761.88, "rb_std": 5951.1, "sem": 766.94, "fer": 1312.0, "pes": 742.46, "coe_s": 4377.82, "mo": 313.71, "dep": 424.85, "arr": 209.16, "gm_ex": 1573.28, "gm_inc": 1364.12, "gm_ex_pct": 0.2644, "gm_inc_pct": 0.2292, "ok": true}, {"d": "2024-12", "safra": "2023/24", "spot": 58.2, "std": 43.65, "prod": 138.3333, "rb_spot": 8051.0, "rb_std": 6038.25, "sem": 762.92, "fer": 1342.32, "pes": 735.94, "coe_s": 4400.8, "mo": 314.25, "dep": 424.85, "arr": 210.55, "gm_ex": 1637.45, "gm_inc": 1426.9, "gm_ex_pct": 0.2712, "gm_inc_pct": 0.2363, "ok": true}, {"d": "2025-06", "safra": "2024/25", "spot": 42.26, "std": 48.37, "prod": 138.3333, "rb_spot": 5845.97, "rb_std": 6691.18, "sem": 769.44, "fer": 1356.29, "pes": 776.64, "coe_s": 3077.05, "mo": 310.55, "dep": 456.82, "arr": 211.72, "gm_ex": 3614.13, "gm_inc": 3402.42, "gm_ex_pct": 0.5401, "gm_inc_pct": 0.5085, "ok": true}, {"d": "2025-08", "safra": "2024/25", "spot": 44.13, "std": 47.79, "prod": 140.0, "rb_spot": 6178.2, "rb_std": 6690.6, "sem": 759.48, "fer": 1506.01, "pes": 737.74, "coe_s": 3162.7, "mo": 317.35, "dep": 456.37, "arr": 218.74, "gm_ex": 3527.9, "gm_inc": 3309.16, "gm_ex_pct": 0.5273, "gm_inc_pct": 0.4946, "ok": true}, {"d": "2025-09", "safra": "2024/25", "spot": 44.98, "std": 47.65, "prod": 140.0, "rb_spot": 6297.2, "rb_std": 6671.0, "sem": 797.99, "fer": 1454.25, "pes": 748.15, "coe_s": 3155.69, "mo": 319.89, "dep": 456.37, "arr": 221.83, "gm_ex": 3515.31, "gm_inc": 3293.48, "gm_ex_pct": 0.527, "gm_inc_pct": 0.4937, "ok": true}, {"d": "2025-10", "safra": "2024/25", "spot": 46.12, "std": 47.58, "prod": 140.0, "rb_spot": 6456.8, "rb_std": 6661.2, "sem": 794.96, "fer": 1395.34, "pes": 740.78, "coe_s": 3080.5, "mo": 321.83, "dep": 456.37, "arr": 227.26, "gm_ex": 3580.7, "gm_inc": 3353.44, "gm_ex_pct": 0.5375, "gm_inc_pct": 0.5034, "ok": true}, {"d": "2025-11", "safra": "2024/25", "spot": 47.74, "std": 47.59, "prod": 140.0, "rb_spot": 6683.6, "rb_std": 6662.6, "sem": 798.31, "fer": 1444.4, "pes": 746.99, "coe_s": 3136.71, "mo": 324.06, "dep": 456.37, "arr": 230.5, "gm_ex": 3525.89, "gm_inc": 3295.39, "gm_ex_pct": 0.5292, "gm_inc_pct": 0.4946, "ok": true}, {"d": "2025-12", "safra": "2024/25", "spot": 49.25, "std": 47.66, "prod": 140.0, "rb_spot": 6895.0, "rb_std": 6672.4, "sem": 815.08, "fer": 1474.03, "pes": 763.46, "coe_s": 4694.25, "mo": 325.84, "dep": 456.37, "arr": 230.95, "gm_ex": 1978.15, "gm_inc": 1747.21, "gm_ex_pct": 0.2965, "gm_inc_pct": 0.2619, "ok": true}, {"d": "2026-01", "safra": "2025/26", "spot": 48.72, "std": 52.59, "prod": 138.3333, "rb_spot": 6739.6, "rb_std": 7274.95, "sem": 826.94, "fer": 1399.93, "pes": 875.29, "coe_s": 5055.22, "mo": 354.64, "dep": 450.4, "arr": 205.46, "gm_ex": 2219.73, "gm_inc": 2014.26, "gm_ex_pct": 0.3051, "gm_inc_pct": 0.2769, "ok": true}, {"d": "2026-02", "safra": "2025/26", "spot": 46.79, "std": 52.17, "prod": 138.3333, "rb_spot": 6472.62, "rb_std": 7216.85, "sem": 843.48, "fer": 1387.43, "pes": 866.98, "coe_s": 5058.64, "mo": 351.66, "dep": 450.4, "arr": 204.66, "gm_ex": 2158.21, "gm_inc": 1953.55, "gm_ex_pct": 0.2991, "gm_inc_pct": 0.2707, "ok": true}], "annual": [{"d": "2021-12", "safra": "2020/21", "spot": 64.94, "std": 56.97, "prod": 140.0, "rb_spot": 9091.6, "rb_std": 7975.8, "sem": 445.42, "fer": 735.63, "pes": 398.17, "coe_s": 1606.04, "mo": 132.82, "dep": 196.96, "arr": 132.3, "gm_ex": 6369.76, "gm_inc": 6237.46, "gm_ex_pct": 0.7986, "gm_inc_pct": 0.782, "ok": true}, {"d": "2022-12", "safra": "2021/22", "spot": 64.45, "std": 69.54, "prod": 138.3333, "rb_spot": 8915.58, "rb_std": 9619.7, "sem": 554.43, "fer": 1168.51, "pes": 469.16, "coe_s": 2170.36, "mo": 137.88, "dep": 198.42, "arr": 210.01, "gm_ex": 7449.34, "gm_inc": 7239.33, "gm_ex_pct": 0.7744, "gm_inc_pct": 0.7526, "ok": true}, {"d": "2023-12", "safra": "2022/23", "spot": 39.21, "std": 56.8, "prod": 140.0, "rb_spot": 5489.4, "rb_std": 7952.0, "sem": 750.78, "fer": 1518.66, "pes": 733.24, "coe_s": 4263.51, "mo": 198.6, "dep": 324.44, "arr": 216.5, "gm_ex": 3688.49, "gm_inc": 3471.99, "gm_ex_pct": 0.4638, "gm_inc_pct": 0.4366, "ok": true}, {"d": "2024-12", "safra": "2023/24", "spot": 58.2, "std": 43.65, "prod": 138.3333, "rb_spot": 8051.0, "rb_std": 6038.25, "sem": 750.78, "fer": 1518.66, "pes": 733.24, "coe_s": 3067.94, "mo": 198.59, "dep": 324.44, "arr": 216.5, "gm_ex": 2970.31, "gm_inc": 2753.81, "gm_ex_pct": 0.4919, "gm_inc_pct": 0.4561, "ok": true}, {"d": "2025-12", "safra": "2024/25", "spot": 49.25, "std": 47.66, "prod": 140.0, "rb_spot": 6895.0, "rb_std": 6672.4, "sem": 815.08, "fer": 1474.03, "pes": 763.46, "coe_s": 4694.25, "mo": 325.84, "dep": 456.37, "arr": 230.95, "gm_ex": 1978.15, "gm_inc": 1747.21, "gm_ex_pct": 0.2965, "gm_inc_pct": 0.2619, "ok": true}, {"d": "2026-02", "safra": "2025/26", "spot": 46.79, "std": 52.17, "prod": 138.3333, "rb_spot": 6472.62, "rb_std": 7216.85, "sem": 843.48, "fer": 1387.43, "pes": 866.98, "coe_s": 5058.64, "mo": 351.66, "dep": 450.4, "arr": 204.66, "gm_ex": 2158.21, "gm_inc": 1953.55, "gm_ex_pct": 0.2991, "gm_inc_pct": 0.2707, "ok": true}]}, "ALGODAO": {"monthly": [{"d": "2023-01", "safra": "2022/23", "spot": 680.2, "std": 677.26, "prod": 30.0, "rb_spot": 20406.0, "rb_std": 20317.8, "sem": 1045.27, "fer": 4226.13, "pes": 4641.16, "coe_s": 15179.68, "mo": 381.15, "dep": 709.71, "arr": 342.62, "gm_ex": 5138.12, "gm_inc": 4795.5, "gm_ex_pct": 0.2529, "gm_inc_pct": 0.236, "ok": true}, {"d": "2023-02", "safra": "2022/23", "spot": 667.6, "std": 675.33, "prod": 30.0, "rb_spot": 20028.0, "rb_std": 20259.9, "sem": 1056.09, "fer": 4212.69, "pes": 4632.76, "coe_s": 15087.12, "mo": 381.63, "dep": 709.93, "arr": 328.72, "gm_ex": 5172.78, "gm_inc": 4844.06, "gm_ex_pct": 0.2553, "gm_inc_pct": 0.2391, "ok": true}, {"d": "2023-03", "safra": "2022/23", "spot": 622.4, "std": 666.51, "prod": 26.6667, "rb_spot": 16597.35, "rb_std": 17773.62, "sem": 1058.49, "fer": 4168.6, "pes": 4591.02, "coe_s": 14946.92, "mo": 381.68, "dep": 709.93, "arr": 322.22, "gm_ex": 2826.7, "gm_inc": 2504.48, "gm_ex_pct": 0.159, "gm_inc_pct": 0.1409, "ok": true}, {"d": "2023-04", "safra": "2022/23", "spot": 552.32, "std": 650.19, "prod": 26.6667, "rb_spot": 14728.55, "rb_std": 17338.42, "sem": 1066.96, "fer": 4007.99, "pes": 4533.45, "coe_s": 14687.05, "mo": 381.59, "dep": 709.93, "arr": 314.23, "gm_ex": 2651.37, "gm_inc": 2337.14, "gm_ex_pct": 0.1529, "gm_inc_pct": 0.1348, "ok": true}, {"d": "2023-05", "safra": "2022/23", "spot": 491.96, "std": 630.41, "prod": 28.3333, "rb_spot": 13938.85, "rb_std": 17861.6, "sem": 1071.75, "fer": 3863.72, "pes": 4503.89, "coe_s": 14525.17, "mo": 365.97, "dep": 708.77, "arr": 318.28, "gm_ex": 3336.43, "gm_inc": 3018.15, "gm_ex_pct": 0.1868, "gm_inc_pct": 0.169, "ok": true}, {"d": "2023-06", "safra": "2022/23", "spot": 504.52, "std": 616.43, "prod": 30.0, "rb_spot": 15135.6, "rb_std": 18492.9, "sem": 1076.56, "fer": 3726.15, "pes": 4469.66, "coe_s": 14297.84, "mo": 365.24, "dep": 707.54, "arr": 310.78, "gm_ex": 4195.06, "gm_inc": 3884.28, "gm_ex_pct": 0.2268, "gm_inc_pct": 0.21, "ok": true}, {"d": "2023-07", "safra": "2022/23", "spot": 471.12, "std": 601.9, "prod": 30.0, "rb_spot": 14133.6, "rb_std": 18057.0, "sem": 1076.56, "fer": 3726.15, "pes": 4469.66, "coe_s": 14297.84, "mo": 365.24, "dep": 707.54, "arr": 310.78, "gm_ex": 3759.16, "gm_inc": 3448.38, "gm_ex_pct": 0.2082, "gm_inc_pct": 0.191, "ok": true}, {"d": "2023-08", "safra": "2022/23", "spot": 509.68, "std": 593.51, "prod": 30.0, "rb_spot": 15290.4, "rb_std": 17805.3, "sem": 1064.09, "fer": 3471.59, "pes": 4344.5, "coe_s": 13747.11, "mo": 365.12, "dep": 707.54, "arr": 300.45, "gm_ex": 4058.19, "gm_inc": 3757.74, "gm_ex_pct": 0.2279, "gm_inc_pct": 0.211, "ok": true}, {"d": "2023-09", "safra": "2022/23", "spot": 505.28, "std": 586.16, "prod": 31.6667, "rb_spot": 16000.55, "rb_std": 18561.75, "sem": 1059.02, "fer": 3426.64, "pes": 4323.29, "coe_s": 13594.73, "mo": 363.56, "dep": 701.09, "arr": 292.65, "gm_ex": 4967.02, "gm_inc": 4674.37, "gm_ex_pct": 0.2676, "gm_inc_pct": 0.2518, "ok": true}, {"d": "2023-10", "safra": "2023/24", "spot": 503.92, "std": 503.92, "prod": 28.3333, "rb_spot": 14277.72, "rb_std": 14277.72, "sem": 1063.64, "fer": 3403.26, "pes": 4305.96, "coe_s": 13488.23, "mo": 363.56, "dep": 701.09, "arr": 289.92, "gm_ex": 789.49, "gm_inc": 499.57, "gm_ex_pct": 0.0553, "gm_inc_pct": 0.035, "ok": true}, {"d": "2023-11", "safra": "2023/24", "spot": 483.56, "std": 493.74, "prod": 28.3333, "rb_spot": 13700.85, "rb_std": 13989.28, "sem": 1057.62, "fer": 3404.53, "pes": 4299.77, "coe_s": 13406.82, "mo": 363.53, "dep": 697.1, "arr": 287.02, "gm_ex": 582.46, "gm_inc": 295.44, "gm_ex_pct": 0.0416, "gm_inc_pct": 0.0211, "ok": true}, {"d": "2023-12", "safra": "2023/24", "spot": 492.6, "std": 493.36, "prod": 28.3333, "rb_spot": 13956.98, "rb_std": 13978.52, "sem": 969.89, "fer": 3508.8, "pes": 4474.84, "coe_s": 13221.99, "mo": 501.55, "dep": 898.04, "arr": 276.61, "gm_ex": 756.53, "gm_inc": 479.92, "gm_ex_pct": 0.0541, "gm_inc_pct": 0.0343, "ok": true}, {"d": "2024-01", "safra": "2023/24", "spot": 494.44, "std": 493.63, "prod": 28.3333, "rb_spot": 14009.12, "rb_std": 13986.17, "sem": 981.33, "fer": 3438.39, "pes": 4459.96, "coe_s": 13163.48, "mo": 501.14, "dep": 903.4, "arr": 269.05, "gm_ex": 822.69, "gm_inc": 553.64, "gm_ex_pct": 0.0588, "gm_inc_pct": 0.0396, "ok": true}, {"d": "2024-02", "safra": "2023/24", "spot": 516.44, "std": 498.19, "prod": 28.3333, "rb_spot": 14632.45, "rb_std": 14115.37, "sem": 985.0, "fer": 3465.87, "pes": 4442.44, "coe_s": 13181.76, "mo": 501.1, "dep": 903.4, "arr": 255.44, "gm_ex": 933.61, "gm_inc": 678.17, "gm_ex_pct": 0.0661, "gm_inc_pct": 0.048, "ok": true}, {"d": "2024-03", "safra": "2023/24", "spot": 531.0, "std": 503.66, "prod": 30.0, "rb_spot": 15930.0, "rb_std": 15109.8, "sem": 986.79, "fer": 3449.5, "pes": 4433.38, "coe_s": 13161.61, "mo": 504.58, "dep": 906.21, "arr": 246.4, "gm_ex": 1948.19, "gm_inc": 1701.79, "gm_ex_pct": 0.1289, "gm_inc_pct": 0.1126, "ok": true}, {"d": "2024-04", "safra": "2023/24", "spot": 506.8, "std": 504.11, "prod": 31.6667, "rb_spot": 16048.68, "rb_std": 15963.5, "sem": 987.87, "fer": 3386.45, "pes": 4398.89, "coe_s": 13058.06, "mo": 504.59, "dep": 906.21, "arr": 244.89, "gm_ex": 2905.44, "gm_inc": 2660.55, "gm_ex_pct": 0.182, "gm_inc_pct": 0.1667, "ok": true}, {"d": "2024-05", "safra": "2023/24", "spot": 492.96, "std": 502.72, "prod": 31.6667, "rb_spot": 15610.42, "rb_std": 15919.48, "sem": 984.39, "fer": 3347.7, "pes": 4403.08, "coe_s": 13027.99, "mo": 501.09, "dep": 902.89, "arr": 240.29, "gm_ex": 2891.49, "gm_inc": 2651.2, "gm_ex_pct": 0.1816, "gm_inc_pct": 0.1665, "ok": true}, {"d": "2024-06", "safra": "2023/24", "spot": 495.92, "std": 501.96, "prod": 31.6667, "rb_spot": 15704.15, "rb_std": 15895.42, "sem": 985.03, "fer": 3414.49, "pes": 4371.43, "coe_s": 13064.92, "mo": 501.11, "dep": 902.89, "arr": 241.64, "gm_ex": 2830.5, "gm_inc": 2588.86, "gm_ex_pct": 0.1781, "gm_inc_pct": 0.1629, "ok": true}, {"d": "2024-07", "safra": "2023/24", "spot": 512.72, "std": 503.04, "prod": 31.6667, "rb_spot": 16236.15, "rb_std": 15929.62, "sem": 987.22, "fer": 3449.14, "pes": 4333.57, "coe_s": 13071.83, "mo": 501.45, "dep": 904.77, "arr": 240.88, "gm_ex": 2857.79, "gm_inc": 2616.91, "gm_ex_pct": 0.1794, "gm_inc_pct": 0.1643, "ok": true}, {"d": "2024-08", "safra": "2023/24", "spot": 504.16, "std": 503.14, "prod": 31.6667, "rb_spot": 15965.08, "rb_std": 15932.78, "sem": 988.01, "fer": 3460.53, "pes": 4310.89, "coe_s": 13060.14, "mo": 501.71, "dep": 904.57, "arr": 241.77, "gm_ex": 2872.64, "gm_inc": 2630.87, "gm_ex_pct": 0.1803, "gm_inc_pct": 0.1651, "ok": true}, {"d": "2024-09", "safra": "2023/24", "spot": 501.0, "std": 502.96, "prod": 31.6667, "rb_spot": 15865.02, "rb_std": 15927.08, "sem": 1005.07, "fer": 3469.2, "pes": 4088.4, "coe_s": 12854.98, "mo": 502.64, "dep": 902.73, "arr": 240.52, "gm_ex": 3072.1, "gm_inc": 2831.58, "gm_ex_pct": 0.1929, "gm_inc_pct": 0.1778, "ok": true}, {"d": "2024-10", "safra": "2024/25", "spot": 506.12, "std": 506.12, "prod": 30.0, "rb_spot": 15183.6, "rb_std": 15183.6, "sem": 992.89, "fer": 3523.16, "pes": 4033.75, "coe_s": 12842.78, "mo": 502.67, "dep": 902.73, "arr": 241.61, "gm_ex": 2340.82, "gm_inc": 2099.21, "gm_ex_pct": 0.1542, "gm_inc_pct": 0.1383, "ok": true}, {"d": "2024-11", "safra": "2024/25", "spot": 503.08, "std": 504.6, "prod": 30.0, "rb_spot": 15092.4, "rb_std": 15138.0, "sem": 990.52, "fer": 3543.0, "pes": 4012.99, "coe_s": 12847.42, "mo": 503.1, "dep": 905.44, "arr": 244.2, "gm_ex": 2290.58, "gm_inc": 2046.38, "gm_ex_pct": 0.1513, "gm_inc_pct": 0.1352, "ok": true}, {"d": "2025-12", "safra": "2025/26", "spot": 436.4, "std": 437.33, "prod": 31.6667, "rb_spot": 13819.35, "rb_std": 13848.8, "sem": 1103.64, "fer": 3614.61, "pes": 4734.98, "coe_s": 14717.52, "mo": 678.38, "dep": 971.06, "arr": 341.3, "gm_ex": -868.72, "gm_inc": -1210.03, "gm_ex_pct": -0.0627, "gm_inc_pct": -0.0874, "ok": true}, {"d": "2026-01", "safra": "2025/26", "spot": 439.2, "std": 437.8, "prod": 31.6667, "rb_spot": 13908.01, "rb_std": 13863.68, "sem": 1087.26, "fer": 3636.32, "pes": 4588.79, "coe_s": 14559.45, "mo": 678.48, "dep": 971.06, "arr": 340.62, "gm_ex": -695.77, "gm_inc": -1036.39, "gm_ex_pct": -0.0502, "gm_inc_pct": -0.0748, "ok": true}, {"d": "2026-02", "safra": "2025/26", "spot": 437.12, "std": 437.66, "prod": 31.6667, "rb_spot": 13842.15, "rb_std": 13859.25, "sem": 1079.81, "fer": 3649.21, "pes": 4564.21, "coe_s": 14519.06, "mo": 676.38, "dep": 968.16, "arr": 341.42, "gm_ex": -659.81, "gm_inc": -1001.24, "gm_ex_pct": -0.0476, "gm_inc_pct": -0.0722, "ok": true}], "annual": [{"d": "2023-09", "safra": "2022/23", "spot": 505.28, "std": 586.16, "prod": 31.6667, "rb_spot": 16000.55, "rb_std": 18561.75, "sem": 1059.02, "fer": 3426.64, "pes": 4323.29, "coe_s": 13594.73, "mo": 363.56, "dep": 701.09, "arr": 292.65, "gm_ex": 4967.02, "gm_inc": 4674.37, "gm_ex_pct": 0.2676, "gm_inc_pct": 0.2518, "ok": true}, {"d": "2024-09", "safra": "2023/24", "spot": 501.0, "std": 502.96, "prod": 31.6667, "rb_spot": 15865.02, "rb_std": 15927.08, "sem": 1065.39, "fer": 3850.74, "pes": 4525.66, "coe_s": 10137.78, "mo": 360.86, "dep": 718.92, "arr": 312.0, "gm_ex": 5789.3, "gm_inc": 5477.29, "gm_ex_pct": 0.3635, "gm_inc_pct": 0.3439, "ok": true}, {"d": "2024-11", "safra": "2024/25", "spot": 503.08, "std": 504.6, "prod": 30.0, "rb_spot": 15092.4, "rb_std": 15138.0, "sem": 990.52, "fer": 3543.0, "pes": 4012.99, "coe_s": 12847.42, "mo": 503.1, "dep": 905.44, "arr": 244.2, "gm_ex": 2290.58, "gm_inc": 2046.38, "gm_ex_pct": 0.1513, "gm_inc_pct": 0.1352, "ok": true}, {"d": "2026-02", "safra": "2025/26", "spot": 437.12, "std": 437.66, "prod": 31.6667, "rb_spot": 13842.15, "rb_std": 13859.25, "sem": 1079.81, "fer": 3649.21, "pes": 4564.21, "coe_s": 14519.06, "mo": 676.38, "dep": 968.16, "arr": 341.42, "gm_ex": -659.81, "gm_inc": -1001.24, "gm_ex_pct": -0.0476, "gm_inc_pct": -0.0722, "ok": true}]}};
 
 const CULT_COL={SOJA:'#1A1A1A',MILHO:'#FF5500',ALGODAO:'#888888'};
 const CULT_ALP={SOJA:'rgba(26,26,26,',MILHO:'rgba(255,85,0,',ALGODAO:'rgba(136,136,136,'};
-const CULT_LBL={SOJA:'Soy (GMO)',MILHO:'Corn (High Tech)',ALGODAO:'Cotton (R$/ha)'};
+const CULT_LBL={SOJA:'Soybean',MILHO:'Corn',ALGODAO:'Cotton'};
 
-let ACTIVE=['SOJA','MILHO','ALGODAO'],PERIOD='monthly',PRICE='std',DRE_VIEW='history',AXIS_RIGHT='total';
+let ACTIVE=['SOJA'], PERIOD='monthly', PRICE='std', UNIT='brl', DRE_VIEW='history', AXIS_RIGHT='total';
 let CH={};
 
-const MB_ITEMS    =[{k:'sem',l:'Seeds',c:'#FF5500'},{k:'fer',l:'Fertilizers',c:'#1A1A1A'},{k:'pes',l:'Pesticides',c:'#888'}];
-const EBITDA_ITEMS=[{k:'mo',l:'Labor & Mgmt',c:'#FF5500'}];
-const EBIT_ITEMS  =[{k:'dep',l:'Depreciation',c:'#FF5500'},{k:'arr',l:'Land Lease',c:'#1A1A1A'}];
-const MAR_STATE   ={mb:{sem:true,fer:true,pes:true},ebitda:{mo:true},ebit:{dep:true,arr:true}};
-
+/* ── Helpers ── */
 const fmt  =(v,d=0)=>v==null?'—':v.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtR =v=>v==null?'—':'R$ '+fmt(v);
+const fmtSc=v=>v==null?'—':fmt(v,1)+' sc';
 const fmtP =v=>v==null?'—':(v*100).toFixed(1)+'%';
 const rb   =r=>r[PRICE==='std'?'rb_std':'rb_spot'];
+const pr   =r=>r[PRICE==='std'?'std':'spot'];
 const rows =c=>(PERIOD==='monthly'?RAW[c].monthly:RAW[c].annual)||[];
 const lastOk=c=>{const r=rows(c).filter(x=>x.ok);return r[r.length-1]||null;};
 const kill  =id=>{if(CH[id]){CH[id].destroy();delete CH[id];}};
 const PR    =()=>PERIOD==='annual'?5:1.5;
-const fmtM =v=>'R$'+v.toLocaleString('en-US',{maximumFractionDigits:0});
-const fmtPc=v=>(v*100).toFixed(1)+'%';
 
+/* Convert BRL value to sc/ha using own commodity price */
+function toSc(val, r){
+  if(val==null) return null;
+  const p = pr(r);
+  if(!p) return null;
+  return val / p;
+}
+
+/* Format value based on current UNIT */
+function fmtVal(v, r, dec){
+  if(UNIT==='sc'){
+    const s=toSc(v,r);
+    return s==null?'—':fmt(s, dec??1)+' sc';
+  }
+  return v==null?'—':'R$ '+fmt(v, dec??0);
+}
+function fmtValRaw(v, r){ return UNIT==='sc' ? toSc(v,r) : v; }
+
+const fmtM = v => UNIT==='sc'
+  ? v.toFixed(1)+' sc'
+  : 'R$'+v.toLocaleString('en-US',{maximumFractionDigits:0});
+const fmtPc = v=>(v*100).toFixed(1)+'%';
+const unitLabel = () => UNIT==='sc' ? 'sc/ha' : 'R$/ha';
+
+/* ── MoM / YoY deltas for a culture ── */
+function getDeltas(c){
+  const data = rows(c).filter(r=>r.ok);
+  if(!data.length) return {mom:null,yoy:null};
+  const last = data[data.length-1];
+  const lastDate = last.d; // 'YYYY-MM'
+  const [ly,lm] = lastDate.split('-').map(Number);
+
+  // MoM: previous month in the array (regardless of gap)
+  const prevIdx = data.indexOf(last) - 1;
+  const prev = prevIdx >= 0 ? data[prevIdx] : null;
+
+  // YoY: same month previous year
+  const yrAgoStr = `${ly-1}-${String(lm).padStart(2,'0')}`;
+  const yrAgo = data.find(r=>r.d===yrAgoStr) || null;
+
+  function delta(a, b){
+    if(!a||!b||a.gm_ex==null||b.gm_ex==null) return null;
+    return a.gm_ex - b.gm_ex; // absolute BRL/ha difference
+  }
+  function deltaPct(a,b){
+    if(!a||!b||a.gm_ex==null||b.gm_ex==null||b.gm_ex===0) return null;
+    return (a.gm_ex - b.gm_ex)/Math.abs(b.gm_ex);
+  }
+
+  return {
+    mom: delta(last, prev),
+    momPct: deltaPct(last, prev),
+    momDate: prev?.d,
+    yoy: delta(last, yrAgo),
+    yoyPct: deltaPct(last, yrAgo),
+    yoyDate: yrAgo?.d,
+  };
+}
+
+/* ── Controls ── */
 function segOn(id,btn){document.querySelectorAll('#'+id+' .seg-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');}
 function toggleCult(c){
   const i=ACTIVE.indexOf(c);
   if(i>=0&&ACTIVE.length>1)ACTIVE.splice(i,1);else if(i<0)ACTIVE.push(c);
-  document.getElementById('pill-'+c).className='pill'+(ACTIVE.includes(c)?' on-'+c:'');
+  ['SOJA','MILHO','ALGODAO'].forEach(x=>{
+    document.getElementById('pill-'+x).className='pill'+(ACTIVE.includes(x)?' on-'+x:'');
+  });
   render();
 }
 function setPeriod(v,b){PERIOD=v;segOn('seg-period',b);render();}
 function setPrice(v,b){PRICE=v;segOn('seg-price',b);render();}
+function setUnit(v,b){UNIT=v;segOn('seg-unit',b);render();}
 function setAxis(v,b){
   AXIS_RIGHT=v;
   document.querySelectorAll('#axis-sel .asel-btn').forEach(x=>x.classList.remove('on'));b.classList.add('on');
@@ -253,84 +290,109 @@ function setAxis(v,b){
 }
 function setDreView(v,b){DRE_VIEW=v;segOn('seg-dre',b);renderPL();}
 
+/* ── Chart base options ── */
 function baseOpts(yFmt,extra){
   const o={responsive:true,maintainAspectRatio:false,
     plugins:{
-      legend:{display:true,labels:{font:{size:10,family:'Segoe UI'},boxWidth:10,usePointStyle:true,color:'#777'}},
+      legend:{display:true,labels:{font:{size:10,family:'Segoe UI'},boxWidth:10,usePointStyle:true,color:'#333'}},
       tooltip:{mode:'index',intersect:false,backgroundColor:'#fff',borderColor:'#e5e5e5',
-        borderWidth:1,titleColor:'#333',bodyColor:'#777',padding:8,
+        borderWidth:1,titleColor:'#333',bodyColor:'#555',padding:8,
         callbacks:{label:ctx=>{const v=ctx.raw?.y??ctx.raw;return v==null?null:' '+ctx.dataset.label+': '+yFmt(v);}}}
     },
     scales:{
-      x:{ticks:{font:{size:9},color:'#bbb',maxTicksLimit:16},grid:{color:'#f5f5f5'}},
-      y:{ticks:{font:{size:9},color:'#bbb',callback:yFmt},grid:{color:'#f5f5f5'},border:{dash:[3,3]}}
+      x:{ticks:{font:{size:9},color:'#333',maxTicksLimit:16},grid:{color:'#f0f0f0'}},
+      y:{ticks:{font:{size:9},color:'#333',callback:yFmt},grid:{color:'#f0f0f0'},border:{dash:[3,3]}}
     }};
   return Object.assign(o,extra||{});
 }
 
-/* KPIs */
+function dualOpts(){
+  return {responsive:true,maintainAspectRatio:false,
+    plugins:{
+      legend:{display:true,labels:{font:{size:10},boxWidth:10,usePointStyle:true,color:'#333'}},
+      tooltip:{mode:'index',intersect:false,backgroundColor:'#fff',borderColor:'#e5e5e5',
+        borderWidth:1,titleColor:'#333',bodyColor:'#555',
+        callbacks:{label:ctx=>` ${ctx.dataset.label}: ${fmtM(ctx.raw?.y??0)}`}}
+    },
+    scales:{
+      x:{ticks:{font:{size:9},color:'#333',maxTicksLimit:16},grid:{color:'#f0f0f0'}},
+      yL:{position:'left',  ticks:{font:{size:9},color:'#333',callback:fmtM},grid:{color:'#f0f0f0'},border:{dash:[3,3]}},
+      yR:{position:'right', ticks:{font:{size:9},color:'#FF5500',callback:fmtM},
+          grid:{drawOnChartArea:false},border:{color:'#FF5500'}}
+    }};
+}
+
+/* ── KPIs ── */
 function renderKPIs(){
   const el=document.getElementById('kpi-row');el.innerHTML='';
   ACTIVE.forEach(c=>{
     const L=lastOk(c);const col=CULT_COL[c];
     const rbv=L?rb(L):null;
-    const ti=L?((L.sem||0)+(L.fer||0)+(L.pes||0)):null;
-    const ir=ti&&rbv?ti/rbv:null;
-    const ep=L?.ebitda!=null&&rbv?L.ebitda/rbv:null;
-    const eip=L?.ebit!=null&&rbv?L.ebit/rbv:null;
-    const ic=ir==null?'':ir>.4?' neg':ir>.3?' warn':' pos';
+    const d=getDeltas(c);
+    const gex=L?.gm_ex_pct;
+    const ginc=L?.gm_inc_pct;
+
+    /* Revenue KPI */
     el.innerHTML+=`
     <div class="kpi-card c-${c}">
       <div class="kpi-label" style="color:${col}">● ${CULT_LBL[c]}</div>
-      <div class="kpi-value">R$ ${fmt(rbv)}</div>
-      <div class="kpi-unit">Revenue · ${L?.d||'N/A'} · ${PRICE.toUpperCase()}</div>
-    </div>
+      <div class="kpi-value">${UNIT==='sc'?fmtVal(rbv,L):fmtR(rbv)}</div>
+      <div class="kpi-unit">Revenue · ${L?.d||'N/A'} · ${PRICE==='std'?'Crop Avg':'Spot'}</div>
+    </div>`;
+
+    /* GM ex-Lease KPI */
+    el.innerHTML+=`
     <div class="kpi-card c-${c}">
-      <div class="kpi-label" style="color:${col}">● EBITDA</div>
-      <div class="kpi-value ${L?.ebitda>=0?'pos':'neg'}">${fmtP(ep)}</div>
-      <div class="kpi-unit">${fmtR(L?.ebitda)} · ${L?.d||'—'}</div>
-    </div>
+      <div class="kpi-label" style="color:${col}">● GM ex-Lease</div>
+      <div class="kpi-value ${gex>=0?'pos':'neg'}">${fmtP(gex)}</div>
+      <div class="kpi-unit">${UNIT==='sc'?fmtVal(L?.gm_ex,L):fmtR(L?.gm_ex)} · ${L?.d||'—'}</div>
+    </div>`;
+
+    /* GM w/ Lease KPI */
+    el.innerHTML+=`
     <div class="kpi-card c-${c}">
-      <div class="kpi-label" style="color:${col}">● EBIT</div>
-      <div class="kpi-value ${L?.ebit>=0?'pos':'neg'}">${fmtP(eip)}</div>
-      <div class="kpi-unit">${fmtR(L?.ebit)} · ${L?.d||'—'}</div>
-    </div>
+      <div class="kpi-label" style="color:${col}">● GM w/ Lease</div>
+      <div class="kpi-value ${ginc>=0?'pos':'neg'}">${fmtP(ginc)}</div>
+      <div class="kpi-unit">${UNIT==='sc'?fmtVal(L?.gm_inc,L):fmtR(L?.gm_inc)} · ${L?.d||'—'}</div>
+    </div>`;
+
+    /* MoM / YoY delta card */
+    const momV = d.mom!=null ? (UNIT==='sc'&&L?toSc(d.mom,L):d.mom) : null;
+    const yoyV = d.yoy!=null ? (UNIT==='sc'&&L?toSc(d.yoy,L):d.yoy) : null;
+    const momCls = momV==null?'neu':momV>0?'pos':'neg';
+    const yoyCls = yoyV==null?'neu':yoyV>0?'pos':'neg';
+    const arrow  = v=>v==null?'':v>0?'▲':'▼';
+    const fmtDelta = v => v==null?'—':(v>0?'+':'')+( UNIT==='sc'?fmt(v,1)+' sc':'R$ '+fmt(v,0));
+    el.innerHTML+=`
     <div class="kpi-card c-${c}">
-      <div class="kpi-label" style="color:${col}">● Inputs / Revenue</div>
-      <div class="kpi-value${ic}">${fmtP(ir)}</div>
-      <div class="kpi-unit">${fmtR(ti)} · ${L?.prod?.toFixed(1)||'—'} sc/ha</div>
+      <div class="kpi-label" style="color:${col}">● GM ex-Lease Change</div>
+      <div class="kpi-value ${momCls}" style="font-size:15px">${arrow(momV)} ${fmtDelta(momV)}</div>
+      <div class="kpi-unit">MoM vs ${d.momDate||'—'}${d.momPct!=null?' ('+fmtP(d.momPct)+')':''}</div>
+      <div class="kpi-delta ${yoyCls}">${arrow(yoyV)} ${fmtDelta(yoyV)} YoY${d.yoyPct!=null?' ('+fmtP(d.yoyPct)+')':''}</div>
     </div>`;
   });
 }
 
-/* Dual axis: Revenue (L) vs Input (R) */
+/* ── Dual axis ── */
 function renderDual(){
   kill('dual');
   const RLBL={total:'Total Inputs',sem:'Seeds',fer:'Fertilizers',pes:'Pesticides'};
+  document.getElementById('dual-sub').textContent='Right axis: '+RLBL[AXIS_RIGHT];
   const ds=[];
   ACTIVE.forEach(c=>{
     const data=rows(c);const col=CULT_COL[c];const alp=CULT_ALP[c];
-    ds.push({label:CULT_LBL[c]+' Revenue',data:data.map(r=>({x:r.d,y:rb(r)})),
+    ds.push({label:CULT_LBL[c]+' Revenue',
+      data:data.map(r=>({x:r.d,y:fmtValRaw(rb(r),r)})),
       borderColor:col,backgroundColor:alp+'0.07)',fill:true,tension:.33,pointRadius:0,borderWidth:2.5,yAxisID:'yL'});
     const gv=r=>AXIS_RIGHT==='total'?(r.sem||0)+(r.fer||0)+(r.pes||0):r[AXIS_RIGHT]||0;
-    ds.push({label:CULT_LBL[c]+' '+RLBL[AXIS_RIGHT],
-      data:data.map(r=>({x:r.d,y:r.ok?gv(r):null})),
-      borderColor:col,borderDash:[5,4],fill:false,tension:.33,pointRadius:PR(),borderWidth:2,yAxisID:'yR'});
+    ds.push({label:RLBL[AXIS_RIGHT],
+      data:data.map(r=>({x:r.d,y:r.ok?fmtValRaw(gv(r),r):null})),
+      borderColor:'#FF5500',borderDash:[5,4],fill:false,tension:.33,pointRadius:PR(),borderWidth:2,yAxisID:'yR'});
   });
-  const opts={responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:10,usePointStyle:true,color:'#777'}},
-      tooltip:{mode:'index',intersect:false,backgroundColor:'#fff',borderColor:'#e5e5e5',
-        borderWidth:1,titleColor:'#333',bodyColor:'#777',
-        callbacks:{label:ctx=>` ${ctx.dataset.label}: ${fmtM(ctx.raw?.y??0)}`}}},
-    scales:{
-      x:{ticks:{font:{size:9},color:'#bbb',maxTicksLimit:16},grid:{color:'#f5f5f5'}},
-      yL:{position:'left',ticks:{font:{size:9},color:'#bbb',callback:fmtM},grid:{color:'#f5f5f5'},border:{dash:[3,3]}},
-      yR:{position:'right',ticks:{font:{size:9},color:'#bbb',callback:fmtM},grid:{drawOnChartArea:false}}
-    }};
-  CH.dual=new Chart(document.getElementById('ch-dual'),{type:'line',data:{datasets:ds},options:opts});
+  CH.dual=new Chart(document.getElementById('ch-dual'),{type:'line',data:{datasets:ds},options:dualOpts()});
 }
 
-/* Inputs % of Revenue */
+/* ── Inputs % of Revenue — always % so no unit conversion needed ── */
 function renderRTPct(){
   kill('rt-pct');
   const ds=[];
@@ -340,7 +402,7 @@ function renderRTPct(){
       data:data.map(r=>{const t=(r.sem||0)+(r.fer||0)+(r.pes||0);return{x:r.d,y:rb(r)?t/rb(r):null};}),
       borderColor:col,fill:false,tension:.33,pointRadius:PR(),borderWidth:2.5});
     [{k:'sem',d:[3,4]},{k:'fer',d:[6,3]},{k:'pes',d:[1,4]}].forEach(ins=>{
-      ds.push({label:CULT_LBL[c].split(' ')[0]+' '+ins.k,
+      ds.push({label:CULT_LBL[c]+' '+ins.k,
         data:data.map(r=>({x:r.d,y:r[ins.k]&&rb(r)?r[ins.k]/rb(r):null})),
         borderColor:col,borderDash:ins.d,fill:false,tension:.33,pointRadius:0,borderWidth:1.2});
     });
@@ -350,90 +412,72 @@ function renderRTPct(){
   CH['rt-pct']=new Chart(document.getElementById('ch-rt-pct'),{type:'line',data:{datasets:ds},options:opts});
 }
 
-/* Margin toggles */
-function buildToggles(){
-  const CFGS={mb:{items:MB_ITEMS,state:MAR_STATE.mb},ebitda:{items:EBITDA_ITEMS,state:MAR_STATE.ebitda},ebit:{items:EBIT_ITEMS,state:MAR_STATE.ebit}};
-  Object.entries(CFGS).forEach(([m,cfg])=>{
-    const el=document.getElementById('tog-'+m);el.innerHTML='';
-    cfg.items.forEach(ci=>{
-      const div=document.createElement('div');
-      div.className='mtog'+(cfg.state[ci.k]?' on':'');
-      div.style.color=ci.c;
-      div.innerHTML=`<span class="mdot"></span>${ci.l}`;
-      div.onclick=()=>{cfg.state[ci.k]=!cfg.state[ci.k];div.classList.toggle('on');renderMarginChart(m);};
-      el.appendChild(div);
-    });
-  });
-}
-
-function calcGM(r){
-  const rbv=rb(r);if(!rbv||!r.ok)return null;
-  const picked=(MAR_STATE.mb.sem?r.sem||0:0)+(MAR_STATE.mb.fer?r.fer||0:0)+(MAR_STATE.mb.pes?r.pes||0:0);
-  const otherCoe=Math.max((r.coe_s||0)-((r.sem||0)+(r.fer||0)+(r.pes||0)),0);
-  return(rbv-picked-otherCoe)/rbv;
-}
-function calcEBITDA(r){
-  const gm=calcGM(r);if(gm==null)return null;
-  return gm-(MAR_STATE.ebitda.mo?(r.mo||0):0)/rb(r);
-}
-function calcEBIT(r){
-  const eb=calcEBITDA(r);if(eb==null)return null;
-  const rbv=rb(r);
-  return eb-((MAR_STATE.ebit.dep?r.dep||0:0)+(MAR_STATE.ebit.arr?r.arr||0:0))/rbv;
-}
-function renderMarginChart(m){
-  kill('ch-'+m);
-  const calcFn={mb:calcGM,ebitda:calcEBITDA,ebit:calcEBIT}[m];
+/* ── GM % chart — always % ── */
+function renderGM(){
+  kill('ch-gm');
   const ds=[];
   ACTIVE.forEach(c=>{
     const data=rows(c);const col=CULT_COL[c];const alp=CULT_ALP[c];
-    ds.push({label:CULT_LBL[c],data:data.map(r=>({x:r.d,y:calcFn(r)})),
-      borderColor:col,backgroundColor:alp+'0.07)',fill:true,tension:.33,pointRadius:PR(),borderWidth:2});
+    ds.push({label:CULT_LBL[c]+' ex-Lease',
+      data:data.map(r=>({x:r.d,y:r.ok?r.gm_ex_pct:null})),
+      borderColor:col,backgroundColor:alp+'0.07)',fill:true,tension:.33,pointRadius:PR(),borderWidth:2.5});
+    ds.push({label:CULT_LBL[c]+' w/ Lease',
+      data:data.map(r=>({x:r.d,y:r.ok?r.gm_inc_pct:null})),
+      borderColor:col,borderDash:[5,4],fill:false,tension:.33,pointRadius:0,borderWidth:1.8});
   });
   const opts=baseOpts(fmtPc);
-  opts.scales.y.grid.color=ctx=>ctx.tick.value===0?'#aaa':'#f5f5f5';
+  opts.scales.y.grid.color=ctx=>ctx.tick.value===0?'#aaa':'#f0f0f0';
   opts.plugins.tooltip.callbacks.label=ctx=>{const v=ctx.raw?.y;return v==null?null:' '+ctx.dataset.label+': '+fmtPc(v);};
-  CH['ch-'+m]=new Chart(document.getElementById('ch-'+m),{type:'line',data:{datasets:ds},options:opts});
+  CH['ch-gm']=new Chart(document.getElementById('ch-gm'),{type:'line',data:{datasets:ds},options:opts});
 }
 
-/* P&L cross-tab */
+/* ── P&L Table ── */
 function renderPL(){
   const tbl=document.getElementById('pl-table');
   const pk=PRICE==='std'?'rb_std':'rb_spot';
+  const priceKey=PRICE==='std'?'std':'spot';
+  const ul=unitLabel();
+
   const ROWS=[
     {lbl:'REVENUE',type:'grp'},
-    {lbl:'Yield (sc/ha)',key:'prod',type:'sub',fmt:'num1'},
-    {lbl:'Price '+PRICE.toUpperCase()+' (R$/sc)',key:PRICE==='std'?'std':'spot',type:'sub',fmt:'num0'},
-    {lbl:'Gross Revenue (R$/ha)',key:pk,type:'res'},
+    {lbl:'Yield (sc/ha)',key:'prod',type:'sub',fmt:'num1',noConv:true},
+    {lbl:'Price '+(PRICE==='std'?'Crop Avg':'Spot')+' (R$/sc)',key:priceKey,type:'sub',fmt:'num0',noConv:true},
+    {lbl:`Gross Revenue (${ul})`,key:pk,type:'res'},
     {lbl:'OPERATING COST',type:'grp'},
-    {lbl:'Seeds',key:'sem',type:'sub',fmt:'brl'},
-    {lbl:'Fertilizers',key:'fer',type:'sub',fmt:'brl'},
-    {lbl:'Pesticides',key:'pes',type:'sub',fmt:'brl'},
-    {lbl:'Labor & Management',key:'mo',type:'sub',fmt:'brl'},
-    {lbl:'Oper. Cost ex-Lease',key:'coe_s',type:'res'},
-    {lbl:'MARGINS',type:'grp'},
-    {lbl:'= Gross Margin',key:'mb',type:'res'},
-    {lbl:'  % Gross Margin',key:'mb',type:'pct'},
-    {lbl:'= EBITDA',key:'ebitda',type:'res'},
-    {lbl:'  % EBITDA',key:'ebitda',type:'pct'},
-    {lbl:'(-) Depreciation',key:'dep',type:'sub',fmt:'brl'},
-    {lbl:'(-) Land Lease',key:'arr',type:'sub',fmt:'brl'},
-    {lbl:'= EBIT',key:'ebit',type:'res'},
-    {lbl:'  % EBIT',key:'ebit',type:'pct'},
+    {lbl:`Seeds (${ul})`,key:'sem',type:'sub'},
+    {lbl:`Fertilizers (${ul})`,key:'fer',type:'sub'},
+    {lbl:`Pesticides (${ul})`,key:'pes',type:'sub'},
+    {lbl:`Labor & Mgmt (${ul})`,key:'mo',type:'sub'},
+    {lbl:`Oper. Cost ex-Lease (${ul})`,key:'coe_s',type:'res'},
+    {lbl:'GROSS MARGIN',type:'grp'},
+    {lbl:`= Gross Margin ex-Lease (${ul})`,key:'gm_ex',type:'res',hi:true},
+    {lbl:'  % GM ex-Lease',key:'gm_ex_pct',type:'pct_stored'},
+    {lbl:`(-) Land Lease (${ul})`,key:'arr',type:'sub'},
+    {lbl:`= Gross Margin w/ Lease (${ul})`,key:'gm_inc',type:'res',hi:true},
+    {lbl:'  % GM w/ Lease',key:'gm_inc_pct',type:'pct_stored'},
   ];
 
   function renderCell(r,row,noData){
-    if(row.type==='grp')return'';
-    if(noData||!r)return`<td class="na">—</td>`;
-    let v=r[row.key];if(v==null)return`<td class="na">—</td>`;
-    if(row.type==='pct'){const rbv=rb(r);const p=rbv?v/rbv:null;if(!p)return`<td class="na">—</td>`;
-      return`<td class="pct-v ${p<0?'neg-v':'pos-v'}">${fmtP(p)}</td>`;}
-    const neg=v<0;const vc=row.type==='res'?(neg?' neg-v':' pos-v'):'';
+    if(row.type==='grp') return '';
+    if(noData||!r) return `<td class="na">—</td>`;
+    let v=r[row.key]; if(v==null) return `<td class="na">—</td>`;
+    if(row.type==='pct_stored'){
+      const neg=v<0;
+      return `<td class="pct-v ${neg?'neg-v':'pos-v'}">${fmtP(v)}</td>`;
+    }
+    // Convert to sc if needed (skip yield, price, pure % fields)
+    if(UNIT==='sc' && !row.noConv){
+      v = toSc(v, r);
+      if(v==null) return `<td class="na">—</td>`;
+      const neg=v<0; const vc=row.type==='res'?(neg?' neg-v':' pos-v'):'';
+      return `<td><span class="${vc.trim()}">${neg?'('+fmt(-v,1)+' sc)':fmt(v,1)+' sc'}</span></td>`;
+    }
+    const neg=v<0; const vc=row.type==='res'?(neg?' neg-v':' pos-v'):'';
     let d;
-    if(row.fmt==='num1')d=fmt(v,1);
-    else if(row.fmt==='num0')d=fmt(v,0);
+    if(row.fmt==='num1') d=fmt(v,1);
+    else if(row.fmt==='num0') d=fmt(v,0);
     else d=neg?'('+fmtR(-v)+')':fmtR(v);
-    return`<td><span class="${vc.trim()}">${d}</span></td>`;
+    return `<td><span class="${vc.trim()}">${d}</span></td>`;
   }
 
   if(DRE_VIEW==='history'){
@@ -443,32 +487,37 @@ function renderPL(){
     ACTIVE.forEach(c=>{const col=CULT_COL[c];cultHdr+=`<th colspan="${rows(c).length}" style="background:${col};color:white">${CULT_LBL[c]}</th>`;});
     cultHdr+='</tr>';
     let dateHdr='<tr><th class="lbl-col">Line Item</th>';
-    ACTIVE.forEach(c=>rows(c).forEach(r=>{dateHdr+=`<th>${r.d}</th>`;}));dateHdr+='</tr>';
+    ACTIVE.forEach(c=>rows(c).forEach(r=>{dateHdr+=`<th>${r.d}</th>`;}));
+    dateHdr+='</tr>';
     let body='';
     ROWS.forEach(row=>{
-      if(row.type==='grp'){const total=ACTIVE.reduce((s,c)=>s+rows(c).length,0);
-        body+=`<tr class="g-row"><td class="lbl-col" colspan="${total+1}">${row.lbl}</td></tr>`;return;}
-      const res=row.type==='res';const sub=row.type==='sub'||row.type==='pct';
-      body+=`<tr${res?' class="res-row"':sub?' class="sub-row"':''}><td class="lbl-col">${row.lbl}</td>`;
+      if(row.type==='grp'){
+        const total=ACTIVE.reduce((s,c)=>s+rows(c).length,0);
+        body+=`<tr class="g-row"><td class="lbl-col" colspan="${total+1}">${row.lbl}</td></tr>`;return;
+      }
+      const res=row.type==='res'; const hi=row.hi?' hi':'';
+      body+=`<tr class="${res?'res-row'+hi:'sub-row'}"><td class="lbl-col">${row.lbl}</td>`;
       ACTIVE.forEach(c=>{
         rows(c).forEach(r=>{
-          const noData=!r.ok&&!['prod','std','spot','rb_std','rb_spot'].includes(row.key);
+          const skip=['prod','std','spot','rb_std','rb_spot'];
+          const noData=!r.ok&&!skip.includes(row.key)&&row.type!=='pct_stored';
           body+=renderCell(noData?null:r,row,noData);
         });
       });
       body+='</tr>';
     });
     tbl.innerHTML=`<thead>${cultHdr}${dateHdr}</thead><tbody>${body}</tbody>`;
-
   } else {
     document.getElementById('pl-sub').textContent=
       ACTIVE.map(c=>{const L=lastOk(c);return L?`${CULT_LBL[c]} (${L.d})`:''}).filter(Boolean).join(' · ');
-    const head=`<thead><tr><th class="lbl-col">Line Item</th>${ACTIVE.map(c=>{const col=CULT_COL[c];return`<th style="color:${col};min-width:130px">${CULT_LBL[c]}</th>`;}).join('')}</tr></thead>`;
+    const head=`<thead><tr><th class="lbl-col">Line Item</th>${ACTIVE.map(c=>{
+      const col=CULT_COL[c];return`<th style="color:${col};min-width:130px">${CULT_LBL[c]}</th>`;
+    }).join('')}</tr></thead>`;
     let body='';
     ROWS.forEach(row=>{
       if(row.type==='grp'){body+=`<tr class="g-row"><td class="lbl-col" colspan="${ACTIVE.length+1}">${row.lbl}</td></tr>`;return;}
-      const res=row.type==='res';const sub=row.type==='sub'||row.type==='pct';
-      body+=`<tr${res?' class="res-row"':sub?' class="sub-row"':''}><td class="lbl-col">${row.lbl}</td>`;
+      const res=row.type==='res'; const hi=row.hi?' hi':'';
+      body+=`<tr class="${res?'res-row'+hi:'sub-row'}"><td class="lbl-col">${row.lbl}</td>`;
       ACTIVE.forEach(c=>{body+=renderCell(lastOk(c),row,false);});
       body+='</tr>';
     });
@@ -477,13 +526,8 @@ function renderPL(){
 }
 
 function render(){
-  renderKPIs();
-  renderDual();renderRTPct();
-  renderMarginChart('mb');renderMarginChart('ebitda');renderMarginChart('ebit');
-  renderPL();
+  renderKPIs(); renderDual(); renderRTPct(); renderGM(); renderPL();
 }
-
-buildToggles();
 render();
 </script>
 </body>
