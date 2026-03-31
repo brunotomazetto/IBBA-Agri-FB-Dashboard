@@ -134,7 +134,7 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
     <div class="filter-label">Unit</div>
     <div class="seg unit-seg" id="seg-unit">
       <button class="seg-btn on" onclick="setUnit('brl',this)">R$/ha</button>
-      <button class="seg-btn"    onclick="setUnit('sc',this)">sc/ha</button>
+      <button class="seg-btn"    onclick="setUnit('sc',this)">bag/ha</button>
     </div>
   </div>
 </div>
@@ -202,7 +202,7 @@ let CH={};
 /* ── Helpers ── */
 const fmt  =(v,d=0)=>v==null?'—':v.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtR =v=>v==null?'—':'R$ '+fmt(v);
-const fmtSc=v=>v==null?'—':fmt(v,1)+' sc';
+const fmtSc=v=>v==null?'—':fmt(v,1)+' bag';
 const fmtP =v=>v==null?'—':(v*100).toFixed(1)+'%';
 const rb   =r=>r[PRICE==='std'?'rb_std':'rb_spot'];
 const pr   =r=>r[PRICE==='std'?'std':'spot'];
@@ -211,7 +211,7 @@ const lastOk=c=>{const r=rows(c).filter(x=>x.ok);return r[r.length-1]||null;};
 const kill  =id=>{if(CH[id]){CH[id].destroy();delete CH[id];}};
 const PR    =()=>PERIOD==='annual'?5:1.5;
 
-/* Convert BRL value to sc/ha using own commodity price */
+/* Convert BRL value to bag/ha using own commodity price */
 function toSc(val, r){
   if(val==null) return null;
   const p = pr(r);
@@ -223,17 +223,17 @@ function toSc(val, r){
 function fmtVal(v, r, dec){
   if(UNIT==='sc'){
     const s=toSc(v,r);
-    return s==null?'—':fmt(s, dec??1)+' sc';
+    return s==null?'—':fmt(s, dec??1)+' bag';
   }
   return v==null?'—':'R$ '+fmt(v, dec??0);
 }
 function fmtValRaw(v, r){ return UNIT==='sc' ? toSc(v,r) : v; }
 
 const fmtM = v => UNIT==='sc'
-  ? v.toFixed(1)+' sc'
+  ? v.toFixed(1)+' bag'
   : 'R$'+v.toLocaleString('en-US',{maximumFractionDigits:0});
 const fmtPc = v=>(v*100).toFixed(1)+'%';
-const unitLabel = () => UNIT==='sc' ? 'sc/ha' : 'R$/ha';
+const unitLabel = () => UNIT==='sc' ? 'bag/ha' : 'R$/ha';
 
 /* ── MoM / YoY deltas for a culture ── */
 function getDeltas(c){
@@ -273,8 +273,8 @@ function getDeltas(c){
 /* ── Controls ── */
 function segOn(id,btn){document.querySelectorAll('#'+id+' .seg-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');}
 function toggleCult(c){
-  const i=ACTIVE.indexOf(c);
-  if(i>=0&&ACTIVE.length>1)ACTIVE.splice(i,1);else if(i<0)ACTIVE.push(c);
+  if(ACTIVE[0]===c) return; // already selected, do nothing
+  ACTIVE=[c];
   ['SOJA','MILHO','ALGODAO'].forEach(x=>{
     document.getElementById('pill-'+x).className='pill'+(ACTIVE.includes(x)?' on-'+x:'');
   });
@@ -362,7 +362,7 @@ function renderKPIs(){
     const momCls = momV==null?'neu':momV>0?'pos':'neg';
     const yoyCls = yoyV==null?'neu':yoyV>0?'pos':'neg';
     const arrow  = v=>v==null?'':v>0?'▲':'▼';
-    const fmtDelta = v => v==null?'—':(v>0?'+':'')+( UNIT==='sc'?fmt(v,1)+' sc':'R$ '+fmt(v,0));
+    const fmtDelta = v => v==null?'—':(v>0?'+':'')+( UNIT==='sc'?fmt(v,1)+' bag':'R$ '+fmt(v,0));
     el.innerHTML+=`
     <div class="kpi-card c-${c}">
       <div class="kpi-label" style="color:${col}">● Gross Profit ex-Lease Change</div>
@@ -398,11 +398,11 @@ function renderRTPct(){
   const ds=[];
   ACTIVE.forEach(c=>{
     const data=rows(c).filter(r=>rb(r)&&r.ok);const col=CULT_COL[c];
-    ds.push({label:CULT_LBL[c]+' Total',
+    ds.push({label:'Total',
       data:data.map(r=>{const t=(r.sem||0)+(r.fer||0)+(r.pes||0);return{x:r.d,y:rb(r)?t/rb(r):null};}),
       borderColor:col,fill:false,tension:.33,pointRadius:PR(),borderWidth:2.5});
-    [{k:'sem',d:[3,4]},{k:'fer',d:[6,3]},{k:'pes',d:[1,4]}].forEach(ins=>{
-      ds.push({label:CULT_LBL[c]+' '+ins.k,
+    [{k:'sem',l:'Seeds',d:[3,4]},{k:'fer',l:'Fertilizers',d:[6,3]},{k:'pes',l:'Pesticides',d:[1,4]}].forEach(ins=>{
+      ds.push({label:ins.l,
         data:data.map(r=>({x:r.d,y:r[ins.k]&&rb(r)?r[ins.k]/rb(r):null})),
         borderColor:col,borderDash:ins.d,fill:false,tension:.33,pointRadius:0,borderWidth:1.2});
     });
@@ -440,8 +440,8 @@ function renderPL(){
 
   const ROWS=[
     {lbl:'REVENUE',type:'grp'},
-    {lbl:'Yield (sc/ha)',key:'prod',type:'sub',fmt:'num1',noConv:true},
-    {lbl:'Price '+(PRICE==='std'?'Crop Avg':'Spot')+' (R$/sc)',key:priceKey,type:'sub',fmt:'num0',noConv:true},
+    {lbl:'Yield (bag/ha)',key:'prod',type:'sub',fmt:'num1',noConv:true},
+    {lbl:'Price '+(PRICE==='std'?'Crop Avg':'Spot')+' (R$/bag)',key:priceKey,type:'sub',fmt:'num0',noConv:true},
     {lbl:`Gross Revenue (${ul})`,key:pk,type:'res'},
     {lbl:'OPERATING COST',type:'grp'},
     {lbl:`Seeds (${ul})`,key:'sem',type:'sub'},
@@ -470,7 +470,7 @@ function renderPL(){
       v = toSc(v, r);
       if(v==null) return `<td class="na">—</td>`;
       const neg=v<0; const vc=row.type==='res'?(neg?' neg-v':' pos-v'):'';
-      return `<td><span class="${vc.trim()}">${neg?'('+fmt(-v,1)+' sc)':fmt(v,1)+' sc'}</span></td>`;
+      return `<td><span class="${vc.trim()}">${neg?'('+fmt(-v,1)+' bag)':fmt(v,1)+' bag'}</span></td>`;
     }
     const neg=v<0; const vc=row.type==='res'?(neg?' neg-v':' pos-v'):'';
     let d;
