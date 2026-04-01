@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>U.S. Chicken Spread Tracker — Itaú BBA</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --orange:#FF5500;--black:#1A1A1A;--gray-dark:#333;--gray-mid:#888;
+  --gray-light:#F4F4F4;--border:#E5E5E5;--white:#fff;
+  --green:#27AE60;--red:#C0392B;--blue:#2980B9;
+  --font:'Segoe UI',Helvetica,Arial,sans-serif;
+}
+html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-dark);
+  height:100%;overflow:hidden;font-size:13px;}
+
+/* ── TOP BAR ── */
+.top-bar{background:var(--white);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;height:48px;flex-shrink:0;gap:14px;}
+.back-btn{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--gray-mid);
+  cursor:pointer;padding:5px 10px;border-radius:4px;border:1px solid var(--border);
+  background:none;transition:all .15s;white-space:nowrap;}
+.back-btn:hover{color:var(--gray-dark);border-color:#ccc;}
+.back-btn svg{width:14px;height:14px;}
+.top-bar-divider{width:1px;height:22px;background:var(--border);}
+.top-title{font-size:15px;font-weight:700;color:var(--black);}
+.top-sub{font-size:11.5px;color:var(--gray-mid);}
+.top-latest{margin-left:auto;font-size:11px;color:var(--gray-mid);
+  background:#F9F9F9;border:1px solid var(--border);border-radius:4px;
+  padding:4px 10px;white-space:nowrap;}
+.top-latest strong{color:var(--orange);}
+
+/* ── ORANGE RULE ── */
+.orange-rule{height:3px;background:var(--orange);flex-shrink:0;}
+
+/* ── VIEW CONTROLS ── */
+.controls-bar{background:var(--white);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;height:40px;gap:16px;flex-shrink:0;}
+.view-label{font-size:11px;font-weight:700;color:var(--gray-mid);
+  text-transform:uppercase;letter-spacing:.5px;}
+.view-btns{display:flex;gap:4px;}
+.view-btn{padding:4px 12px;font-size:12px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:none;color:var(--gray-mid);
+  font-family:var(--font);transition:all .15s;}
+.view-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
+.view-btn:hover:not(.active){border-color:#ccc;color:var(--gray-dark);}
+.controls-bar-right{margin-left:auto;display:flex;align-items:center;gap:6px;}
+.corr-badge{font-size:11px;color:var(--gray-mid);
+  background:#F9F9F9;border:1px solid var(--border);
+  border-radius:4px;padding:3px 9px;}
+.corr-badge strong{color:var(--orange);}
+
+/* ── MAIN LAYOUT ── */
+.main-wrap{display:flex;flex-direction:column;height:calc(100vh - 91px);overflow:hidden;}
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;
+  padding:12px 16px 8px;flex-shrink:0;}
+.chart-card{background:var(--white);border:1px solid var(--border);border-radius:8px;
+  padding:14px 16px 10px;display:flex;flex-direction:column;}
+.chart-card-header{display:flex;justify-content:space-between;align-items:flex-start;
+  margin-bottom:10px;}
+.chart-title{font-size:12.5px;font-weight:700;color:var(--black);}
+.chart-stat{font-size:11px;color:var(--gray-mid);text-align:right;}
+.chart-stat strong{color:var(--orange);}
+.chart-wrap{flex:1;min-height:0;position:relative;height:160px;}
+
+/* ── BOTTOM ROW ── */
+.bottom-row{display:grid;grid-template-columns:236px 1fr;gap:0;
+  flex:1;min-height:0;overflow:hidden;border-top:1px solid var(--border);}
+
+/* ── WEIGHT PANEL ── */
+.weight-panel{background:var(--white);border-right:1px solid var(--border);
+  overflow-y:auto;padding:14px 14px 24px;flex-shrink:0;}
+.weight-panel::-webkit-scrollbar{width:4px;}
+.weight-panel::-webkit-scrollbar-thumb{background:#e0e0e0;border-radius:2px;}
+.panel-title{font-size:13px;font-weight:700;color:var(--black);
+  margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--orange);}
+.wp-section{font-size:10px;font-weight:700;color:var(--orange);
+  text-transform:uppercase;letter-spacing:.7px;margin:12px 0 7px;}
+.wp-section:first-of-type{margin-top:2px;}
+
+/* slider rows */
+.slider-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+.slider-row label{font-size:11.5px;color:var(--gray-dark);flex:0 0 90px;white-space:nowrap;}
+.slider-row input[type=range]{flex:1;min-width:0;
+  -webkit-appearance:none;height:4px;border-radius:2px;
+  background:linear-gradient(to right,var(--orange) 0%,var(--orange) var(--pct,50%),#ddd var(--pct,50%),#ddd 100%);
+  cursor:pointer;outline:none;}
+.slider-row input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+  background:var(--orange);border:2px solid white;
+  box-shadow:0 1px 4px rgba(0,0,0,.25);cursor:pointer;}
+.slider-row .sl-val{font-size:11.5px;font-weight:700;color:var(--orange);
+  flex:0 0 32px;text-align:right;}
+.auto-row{display:flex;justify-content:space-between;align-items:center;
+  margin-bottom:7px;padding:3px 0;}
+.auto-row span:first-child{font-size:11.5px;color:var(--gray-mid);}
+.auto-row .auto-val{font-size:11.5px;font-weight:600;color:var(--gray-mid);}
+.total-check{font-size:11px;margin:5px 0 3px;text-align:right;}
+.total-check.ok{color:var(--green);}
+.total-check.err{color:var(--red);}
+
+/* cost lag radio */
+.lag-row{display:flex;gap:5px;margin-bottom:4px;}
+.lag-btn{flex:1;padding:5px 4px;border:1.5px solid var(--border);border-radius:4px;
+  font-size:11px;font-family:var(--font);cursor:pointer;
+  background:none;color:var(--gray-mid);transition:all .15s;text-align:center;}
+.lag-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
+.lag-desc{font-size:10.5px;color:var(--gray-mid);margin-bottom:8px;line-height:1.4;}
+
+/* reset button */
+.reset-btn{width:100%;padding:7px;margin-top:14px;
+  border:1.5px solid var(--border);border-radius:5px;
+  font-size:12px;font-family:var(--font);cursor:pointer;
+  background:none;color:var(--gray-mid);transition:all .15s;}
+.reset-btn:hover{border-color:var(--orange);color:var(--orange);}
+
+/* ── TABLE PANEL ── */
+.table-panel{overflow:hidden;display:flex;flex-direction:column;}
+.table-tabs{display:flex;align-items:center;padding:8px 16px 0;
+  border-bottom:1px solid var(--border);background:var(--white);flex-shrink:0;gap:4px;}
+.tab-btn{padding:5px 14px;font-size:12px;border:1px solid var(--border);
+  border-radius:4px 4px 0 0;cursor:pointer;font-family:var(--font);
+  background:none;color:var(--gray-mid);transition:all .12s;}
+.tab-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
+.table-wrap{flex:1;overflow:auto;}
+.table-wrap::-webkit-scrollbar{width:5px;height:5px;}
+.table-wrap::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px;}
+table{width:100%;border-collapse:collapse;font-size:11.5px;}
+thead tr{background:#FAFAFA;border-bottom:2px solid var(--border);}
+th{padding:7px 9px;text-align:right;font-weight:700;font-size:10.5px;
+  color:var(--gray-mid);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;
+  position:sticky;top:0;background:#FAFAFA;z-index:1;}
+th:first-child{text-align:left;}
+td{padding:5px 9px;text-align:right;border-bottom:1px solid #F5F5F5;
+  color:var(--gray-dark);white-space:nowrap;}
+td:first-child{text-align:left;font-weight:600;color:var(--black);}
+tr:hover td{background:#FFF8F5;}
+.td-spread{font-weight:700;color:var(--orange);}
+.td-gm{font-weight:700;color:var(--black);}
+.td-na{color:#ccc;font-size:10.5px;}
+.td-pos{color:var(--green);font-weight:600;}
+.td-neg{color:var(--red);font-weight:600;}
+
+/* ── LOADING OVERLAY ── */
+#loading{position:fixed;inset:0;background:rgba(255,255,255,.92);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:999;}
+.spinner{width:36px;height:36px;border:3px solid #eee;
+  border-top-color:var(--orange);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+#loading p{font-size:13px;color:var(--gray-mid);}
+
+/* ── NOTE BAR ── */
+.note-bar{background:#FFFBF8;border-top:1px solid #FFD9C8;
+  padding:5px 20px;font-size:10.5px;color:var(--gray-mid);flex-shrink:0;display:none;}
+.note-bar em{color:var(--orange);}
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <p>Loading chicken.db…</p>
+</div>
+
+<!-- TOP BAR -->
+<div class="top-bar">
+  <button class="back-btn" onclick="goBack()">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M10 3L5 8l5 5"/>
+    </svg>
+    Back
+  </button>
+  <div class="top-bar-divider"></div>
+  <div>
+    <div class="top-title">U.S. Chicken Spread Tracker</div>
+    <div class="top-sub">Quarterly spread model vs. reported gross margins — PPC Pilgrim's Pride (U.S. Operations)</div>
+  </div>
+  <div class="top-latest">Latest: <strong id="latest-q">—</strong></div>
+</div>
+<div class="orange-rule"></div>
+
+<!-- VIEW CONTROLS -->
+<div class="controls-bar">
+  <span class="view-label">VIEW:</span>
+  <div class="view-btns">
+    <button class="view-btn" data-view="all" onclick="setView('all')">All</button>
+    <button class="view-btn active" data-view="3y"  onclick="setView('3y')">Last 3 Years</button>
+    <button class="view-btn" data-view="1y"  onclick="setView('1y')">Last 12 Months</button>
+  </div>
+  <div class="controls-bar-right">
+    <div class="corr-badge" id="corr-badge">r = <strong>—</strong> &nbsp; R² = <strong>—</strong> &nbsp; N = <strong>—</strong></div>
+  </div>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="main-wrap">
+
+  <!-- CHARTS ROW -->
+  <div class="charts-row">
+    <div class="chart-card">
+      <div class="chart-card-header">
+        <div class="chart-title">QoQ ΔSpread vs. ΔPPC U.S. Gross Margin — by Quarter</div>
+        <div class="chart-stat" id="chart1-stat">r = <strong>—</strong> &nbsp; R² = <strong>—</strong> &nbsp; N = <strong>—</strong></div>
+      </div>
+      <div class="chart-wrap"><canvas id="deltaChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-header">
+        <div class="chart-title">Spread Proxy % vs. PPC U.S. Gross Margin %</div>
+        <div class="chart-stat" style="font-size:10.5px;color:#aaa;">Solid = Spread · Dashed = Gross Margin</div>
+      </div>
+      <div class="chart-wrap"><canvas id="levelChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- BOTTOM ROW -->
+  <div class="bottom-row">
+
+    <!-- WEIGHT PARAMETERS -->
+    <div class="weight-panel">
+      <div class="panel-title">Weight Parameters</div>
+
+      <div class="wp-section">Revenue Mix</div>
+      <div class="slider-row">
+        <label>BW Wholesale</label>
+        <input type="range" id="sl-bw" min="0" max="100" step="5" value="33"
+               oninput="updateSlider(this,'bw-val','parts-pct')">
+        <span class="sl-val" id="bw-val">33%</span>
+      </div>
+      <div class="auto-row">
+        <span>Parts Composite</span>
+        <span class="auto-val" id="parts-pct">67%</span>
+      </div>
+
+      <div class="wp-section">Cost Lag</div>
+      <div class="lag-row">
+        <button class="lag-btn" data-lag="spot" onclick="setLag('spot')">Spot</button>
+        <button class="lag-btn active" data-lag="0q5" onclick="setLag('0q5')">0.5Q</button>
+        <button class="lag-btn" data-lag="1q5" onclick="setLag('1q5')">1.5Q</button>
+      </div>
+      <div class="lag-desc" id="lag-desc">FC = 50% current quarter + 50% prior quarter feed costs</div>
+
+      <div class="wp-section">Parts Weights</div>
+      <div class="slider-row">
+        <label>Breast B/S</label>
+        <input type="range" id="sl-breast" min="0" max="100" step="1" value="40"
+               oninput="updatePartsSlider()">
+        <span class="sl-val" id="breast-val">40%</span>
+      </div>
+      <div class="slider-row">
+        <label>Leg Qtrs</label>
+        <input type="range" id="sl-leg" min="0" max="100" step="1" value="34"
+               oninput="updatePartsSlider()">
+        <span class="sl-val" id="leg-val">34%</span>
+      </div>
+      <div class="slider-row">
+        <label>Wings</label>
+        <input type="range" id="sl-wings" min="0" max="100" step="1" value="17"
+               oninput="updatePartsSlider()">
+        <span class="sl-val" id="wings-val">17%</span>
+      </div>
+      <div class="slider-row">
+        <label>Tenderloins</label>
+        <input type="range" id="sl-tenders" min="0" max="100" step="1" value="9"
+               oninput="updatePartsSlider()">
+        <span class="sl-val" id="tenders-val">9%</span>
+      </div>
+      <div class="total-check ok" id="parts-total-check">✓ Total = 100%</div>
+
+      <button class="reset-btn" onclick="resetDefaults()">↺ Reset to default</button>
+    </div>
+
+    <!-- TABLE PANEL -->
+    <div class="table-panel">
+      <div class="table-tabs">
+        <button class="tab-btn active">Quarterly</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="text-align:left;">Period</th>
+              <th>BW<br><span style="font-weight:400;font-size:9.5px;">(cts/lb)</span></th>
+              <th>Breast<br><span style="font-weight:400;font-size:9.5px;">(cts/lb)</span></th>
+              <th>Leg Qtrs<br><span style="font-weight:400;font-size:9.5px;">(cts/lb)</span></th>
+              <th>Wings<br><span style="font-weight:400;font-size:9.5px;">(cts/lb)</span></th>
+              <th>Tenders<br><span style="font-weight:400;font-size:9.5px;">(cts/lb)</span></th>
+              <th>SBM<br><span style="font-weight:400;font-size:9.5px;">($/t)</span></th>
+              <th>Corn<br><span style="font-weight:400;font-size:9.5px;">($/bu)</span></th>
+              <th>FC<br><span style="font-weight:400;font-size:9.5px;">(selected lag)</span></th>
+              <th>Spread%</th>
+              <th>PPC GM%</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- bottom-row -->
+
+  <div class="note-bar" id="note-bar">
+    * Sliders adjust Revenue Mix and Parts Weights only — PPC data is as reported.
+    Feed cost: <em>FC = 2.9802×Corn($/bu) + 0.03851×SBM($/ton)</em>. Best model: BW 33% + Parts 67%, FC lag 0.5Q, R²=0.817.
+  </div>
+
+</div><!-- main-wrap -->
+
+<script>
+// ─── GLOBALS ──────────────────────────────────────────────────────────────────
+let DB_ROWS    = [];     // raw quarterly rows from SQLite
+let charts     = {};     // Chart.js instances
+let currentView = '3y';  // 'all' | '3y' | '1y'
+let currentLag  = '0q5'; // 'spot' | '0q5' | '1q5'
+const DEFAULTS = { bw:33, breast:40, leg:34, wings:17, tenders:9, lag:'0q5' };
+
+// ─── NAVIGATION ──────────────────────────────────────────────────────────────
+function goBack() {
+  if (window.parent && window.parent !== window) {
+    window.parent.postMessage({ action: 'closeDash' }, '*');
+  } else {
+    window.history.back();
+  }
+}
+
+// ─── LOAD DATABASE ───────────────────────────────────────────────────────────
+async function loadDB() {
+  const loadEl = document.getElementById('loading');
+  try {
+    const SQL = await initSqlJs({
+      locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}`
+    });
+    const resp = await fetch('chicken.db');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: chicken.db not found`);
+    const buf  = await resp.arrayBuffer();
+    const db   = new SQL.Database(new Uint8Array(buf));
+    const stmt = db.exec(`
+      SELECT quarter, year_q, bw, breast, leg_qtrs, wings, tenders,
+             sbm, corn, fc_spot, fc_0q5, fc_1q5, ppc_us_gm, ppc_cnl_gm
+      FROM quarterly ORDER BY year_q ASC
+    `);
+    if (!stmt.length) throw new Error("Empty database");
+    const cols = stmt[0].columns;
+    DB_ROWS = stmt[0].values.map(r => {
+      const obj = {};
+      cols.forEach((c, i) => { obj[c] = r[i]; });
+      return obj;
+    });
+    db.close();
+    loadEl.style.display = 'none';
+    document.getElementById('note-bar').style.display = 'block';
+    // latest quarter
+    const latestQ = DB_ROWS.filter(r => r.ppc_us_gm !== null).slice(-1)[0];
+    if (latestQ) document.getElementById('latest-q').textContent = latestQ.quarter;
+    // init sliders
+    initSliders();
+    render();
+  } catch(e) {
+    loadEl.innerHTML = `<div style="text-align:center;padding:40px">
+      <div style="font-size:14px;color:#c00;margin-bottom:8px;">⚠ Failed to load chicken.db</div>
+      <div style="font-size:12px;color:#888;">${e.message}</div>
+    </div>`;
+  }
+}
+
+// ─── SLIDER HELPERS ──────────────────────────────────────────────────────────
+function initSliders() {
+  ['bw','breast','leg','wings','tenders'].forEach(id => {
+    const el = document.getElementById(`sl-${id}`);
+    if (el) updateSliderBg(el);
+  });
+  document.getElementById('parts-pct').textContent =
+    (100 - parseInt(document.getElementById('sl-bw').value)) + '%';
+}
+
+function updateSlider(el, valId, autoId) {
+  const v = parseInt(el.value);
+  document.getElementById(valId).textContent = v + '%';
+  if (autoId) document.getElementById(autoId).textContent = (100 - v) + '%';
+  updateSliderBg(el);
+  render();
+}
+
+function updateSliderBg(el) {
+  const pct = ((el.value - el.min) / (el.max - el.min)) * 100;
+  el.style.setProperty('--pct', pct + '%');
+}
+
+function updatePartsSlider() {
+  ['breast','leg','wings','tenders'].forEach(id => {
+    const el = document.getElementById(`sl-${id}`);
+    document.getElementById(`${id}-val`).textContent = el.value + '%';
+    updateSliderBg(el);
+  });
+  const total = ['breast','leg','wings','tenders']
+    .reduce((s,id) => s + parseInt(document.getElementById(`sl-${id}`).value), 0);
+  const chk = document.getElementById('parts-total-check');
+  if (total === 100) { chk.textContent = '✓ Total = 100%'; chk.className = 'total-check ok'; }
+  else               { chk.textContent = `⚠ Total = ${total}% (must = 100%)`; chk.className = 'total-check err'; }
+  render();
+}
+
+function setLag(lag) {
+  currentLag = lag;
+  document.querySelectorAll('.lag-btn').forEach(b => b.classList.toggle('active', b.dataset.lag === lag));
+  const descs = {
+    'spot': 'FC = current quarter average feed costs (no lag)',
+    '0q5':  'FC = 50% current quarter + 50% prior quarter feed costs',
+    '1q5':  'FC = 50% prior quarter + 50% two-quarters-ago feed costs',
+  };
+  document.getElementById('lag-desc').textContent = descs[lag];
+  render();
+}
+
+function setView(v) {
+  currentView = v;
+  document.querySelectorAll('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+  render();
+}
+
+function resetDefaults() {
+  document.getElementById('sl-bw').value = DEFAULTS.bw;
+  document.getElementById('bw-val').textContent = DEFAULTS.bw + '%';
+  document.getElementById('parts-pct').textContent = (100-DEFAULTS.bw) + '%';
+  ['breast','leg','wings','tenders'].forEach(id => {
+    document.getElementById(`sl-${id}`).value = DEFAULTS[id];
+    document.getElementById(`${id}-val`).textContent = DEFAULTS[id] + '%';
+  });
+  initSliders();
+  setLag(DEFAULTS.lag);
+  const chk = document.getElementById('parts-total-check');
+  chk.textContent = '✓ Total = 100%'; chk.className = 'total-check ok';
+  render();
+}
+
+// ─── WEIGHTS ─────────────────────────────────────────────────────────────────
+function getWeights() {
+  const bwPct = parseInt(document.getElementById('sl-bw').value) / 100;
+  const raw = {
+    breast:  parseInt(document.getElementById('sl-breast').value),
+    leg:     parseInt(document.getElementById('sl-leg').value),
+    wings:   parseInt(document.getElementById('sl-wings').value),
+    tenders: parseInt(document.getElementById('sl-tenders').value),
+  };
+  const total = raw.breast + raw.leg + raw.wings + raw.tenders;
+  // Normalize parts weights
+  const norm = total > 0 ? {
+    breast:  raw.breast  / total,
+    leg:     raw.leg     / total,
+    wings:   raw.wings   / total,
+    tenders: raw.tenders / total,
+  } : { breast:.40, leg:.34, wings:.17, tenders:.09 };
+  return { bwPct, partsPct: 1 - bwPct, parts: norm, lag: currentLag };
+}
+
+// ─── COMPUTE SERIES ──────────────────────────────────────────────────────────
+function fcValue(row) {
+  const key = { spot:'fc_spot', '0q5':'fc_0q5', '1q5':'fc_1q5' }[currentLag] || 'fc_0q5';
+  return row[key];
+}
+
+function computeSpread(row, w) {
+  const { bwPct, partsPct, parts } = w;
+  // Parts composite with current weights
+  if (row.breast == null || row.leg_qtrs == null) return null;
+  const partsComp = parts.breast * row.breast + parts.leg  * row.leg_qtrs
+                  + parts.wings  * row.wings  + parts.tenders * row.tenders;
+  // Revenue proxy
+  let rev;
+  if (bwPct > 0 && row.bw != null) {
+    rev = bwPct * row.bw + partsPct * partsComp;
+  } else {
+    rev = partsComp;  // fallback if BW not available
+  }
+  const fc = fcValue(row);
+  if (!rev || !fc || rev <= 0) return null;
+  return (rev - fc) / rev;
+}
+
+function computeSeries() {
+  const w = getWeights();
+  const ppcGm = r => r.ppc_us_gm ?? r.ppc_cnl_gm;
+
+  return DB_ROWS.map((row, i) => {
+    const spread = computeSpread(row, w);
+    const gm     = ppcGm(row);
+    const prevRow = i > 0 ? DB_ROWS[i-1] : null;
+    const prevSpread = prevRow ? computeSpread(prevRow, w) : null;
+    const prevGm     = prevRow ? ppcGm(prevRow) : null;
+    const dSpread = (spread != null && prevSpread != null) ? (spread - prevSpread) : null;
+    const dGm     = (gm     != null && prevGm     != null) ? (gm     - prevGm)     : null;
+    const fc      = fcValue(row);
+    return { ...row, spread, gm, dSpread, dGm, fc };
+  });
+}
+
+function filterByView(series) {
+  if (currentView === 'all') return series;
+  const last = series.filter(r => r.gm != null || r.spread != null).slice(-1)[0];
+  if (!last) return series;
+  const lastYQ = last.year_q;
+  const lastY  = Math.floor(lastYQ / 10);
+  const lastQ  = lastYQ % 10;
+  if (currentView === '3y') {
+    // last 12 quarters = 3 years
+    const cutYQ = lastY*10+lastQ - 12 + 1;
+    // safer: subtract 3 years from lastY
+    const cutY = lastY - 3; const cutYQ2 = cutY*10 + lastQ;
+    return series.filter(r => r.year_q >= cutYQ2);
+  }
+  if (currentView === '1y') {
+    // last 4 quarters
+    const cutY = lastY - 1; const cutYQ2 = cutY*10 + lastQ;
+    return series.filter(r => r.year_q >= cutYQ2);
+  }
+  return series;
+}
+
+// ─── PEARSON CORRELATION ─────────────────────────────────────────────────────
+function pearson(xs, ys) {
+  const pairs = xs.map((x,i) => [x,ys[i]]).filter(([a,b]) => a!=null && b!=null);
+  const n = pairs.length;
+  if (n < 4) return { r: null, r2: null, n };
+  const mx = pairs.reduce((s,[a]) => s+a, 0)/n;
+  const my = pairs.reduce((s,[,b]) => s+b, 0)/n;
+  let num=0, dx=0, dy=0;
+  for (const [a,b] of pairs) { num+=(a-mx)*(b-my); dx+=(a-mx)**2; dy+=(b-my)**2; }
+  const r = Math.sqrt(dx*dy) > 0 ? num/Math.sqrt(dx*dy) : null;
+  return { r, r2: r!=null ? r*r : null, n };
+}
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+function render() {
+  const series  = computeSeries();
+  const visible = filterByView(series);
+  renderDeltaChart(visible);
+  renderLevelChart(visible);
+  renderTable(series);     // table always shows all (newest first)
+  updateCorrBadge(series); // correlation over all quarters with data
+}
+
+// ─── CHART 1: QoQ Delta ──────────────────────────────────────────────────────
+function renderDeltaChart(data) {
+  // Filter to rows where BOTH dSpread and dGm are available
+  const valid = data.filter(r => r.dSpread != null && r.dGm != null);
+  const labels  = valid.map(r => r.quarter);
+  const spread  = valid.map(r => +(r.dSpread * 100).toFixed(3));
+  const gm      = valid.map(r => +(r.dGm     * 100).toFixed(3));
+
+  // Correlation for this window
+  const corr = pearson(spread, gm);
+  const rStr  = corr.r  != null ? corr.r.toFixed(3)  : '—';
+  const r2Str = corr.r2 != null ? corr.r2.toFixed(3) : '—';
+  document.getElementById('chart1-stat').innerHTML =
+    `r = <strong>${rStr}</strong> &nbsp; R² = <strong>${r2Str}</strong> &nbsp; N = <strong>${corr.n}</strong>`;
+
+  const ctx = document.getElementById('deltaChart').getContext('2d');
+  if (charts.delta) charts.delta.destroy();
+  charts.delta = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'ΔSpread', data: spread, backgroundColor: 'rgba(255,85,0,0.82)',
+          borderRadius: 3, borderSkipped: false },
+        { label: 'ΔGross Mgn', data: gm, backgroundColor: 'rgba(150,150,150,0.6)',
+          borderRadius: 3, borderSkipped: false },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font:{size:10.5}, boxWidth:10, padding:12,
+          color:'#555' } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y >= 0 ? '+' : ''}${ctx.parsed.y.toFixed(2)}pp`
+          }
+        }
+      },
+      scales: {
+        x: { grid:{display:false}, ticks:{font:{size:10}, color:'#888', maxRotation:45} },
+        y: {
+          grid: { color:'#f0f0f0' },
+          ticks: { font:{size:10}, color:'#888',
+            callback: v => (v >= 0 ? '+' : '') + v.toFixed(1) + 'pp' }
+        }
+      }
+    }
+  });
+}
+
+// ─── CHART 2: Level comparison (dual axis) ───────────────────────────────────
+function renderLevelChart(data) {
+  const valid = data.filter(r => r.spread != null || r.gm != null);
+  const labels  = valid.map(r => r.quarter);
+  const spreadL = valid.map(r => r.spread != null ? +(r.spread * 100).toFixed(2) : null);
+  const gmL     = valid.map(r => r.gm     != null ? +(r.gm     * 100).toFixed(2) : null);
+
+  const ctx = document.getElementById('levelChart').getContext('2d');
+  if (charts.level) charts.level.destroy();
+  charts.level = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Spread Proxy %',
+          data: spreadL,
+          yAxisID: 'y',
+          borderColor: 'rgb(255,85,0)',
+          backgroundColor: 'rgba(255,85,0,0.07)',
+          tension: 0.3, borderWidth: 2.5,
+          pointRadius: 3, pointBackgroundColor: 'rgb(255,85,0)',
+          fill: true,
+          spanGaps: true,
+        },
+        {
+          label: 'PPC GM %',
+          data: gmL,
+          yAxisID: 'y2',
+          borderColor: 'rgb(80,80,80)',
+          backgroundColor: 'transparent',
+          tension: 0.3, borderWidth: 2, borderDash: [5,4],
+          pointRadius: 3, pointBackgroundColor: 'rgb(80,80,80)',
+          spanGaps: true,
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font:{size:10.5}, boxWidth:12, padding:12, color:'#555' } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + '%' : '—'}`
+          }
+        }
+      },
+      scales: {
+        x: { grid:{display:false}, ticks:{font:{size:10}, color:'#888', maxRotation:45} },
+        y: {
+          type: 'linear', position: 'left',
+          grid: { color: '#f0f0f0' },
+          ticks: { font:{size:10}, color: 'rgb(255,85,0)', callback: v => v.toFixed(0) + '%' },
+          title: { display: true, text: 'Spread %', font:{size:9.5}, color: 'rgb(255,85,0)' }
+        },
+        y2: {
+          type: 'linear', position: 'right',
+          grid: { drawOnChartArea: false },
+          ticks: { font:{size:10}, color:'#555', callback: v => v.toFixed(0) + '%' },
+          title: { display: true, text: 'PPC GM %', font:{size:9.5}, color:'#555' }
+        }
+      }
+    }
+  });
+}
+
+// ─── TABLE ────────────────────────────────────────────────────────────────────
+function renderTable(series) {
+  // Show all rows, newest first
+  const tbody = document.getElementById('table-body');
+  const rows  = [...series].reverse();
+  const fmtN  = (v, dec=1) => v != null ? v.toFixed(dec) : '<span class="td-na">—</span>';
+  const fmtPct = (v, dec=1) => v != null ? (v*100).toFixed(dec) + '%' : '<span class="td-na">—</span>';
+  tbody.innerHTML = rows.map(r => {
+    const spreadClass = r.spread != null ? 'td-spread' : 'td-na';
+    const gmClass     = r.gm     != null ? 'td-gm'     : 'td-na';
+    return `<tr>
+      <td>${r.quarter}</td>
+      <td>${fmtN(r.bw)}</td>
+      <td>${fmtN(r.breast)}</td>
+      <td>${fmtN(r.leg_qtrs)}</td>
+      <td>${fmtN(r.wings)}</td>
+      <td>${fmtN(r.tenders)}</td>
+      <td>${fmtN(r.sbm,0)}</td>
+      <td>${fmtN(r.corn,2)}</td>
+      <td>${fmtN(r.fc,2)}</td>
+      <td class="${spreadClass}">${fmtPct(r.spread)}</td>
+      <td class="${gmClass}">${fmtPct(r.gm)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── CORR BADGE ──────────────────────────────────────────────────────────────
+function updateCorrBadge(series) {
+  const valid = series.filter(r => r.dSpread != null && r.dGm != null);
+  const corr  = pearson(valid.map(r => r.dSpread), valid.map(r => r.dGm));
+  const badge = document.getElementById('corr-badge');
+  if (corr.r != null) {
+    badge.innerHTML = `r = <strong>${corr.r.toFixed(3)}</strong> &nbsp; R² = <strong>${corr.r2.toFixed(3)}</strong> &nbsp; N = <strong>${corr.n}</strong>`;
+  }
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+loadDB();
+</script>
+</body>
+</html>
