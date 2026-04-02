@@ -231,7 +231,7 @@ tr:hover td{background:#FFF8F5;}
       <!-- FIX #7: "BW" → "Wholesale" -->
       <div class="slider-row">
         <label>Wholesale</label>
-        <input type="range" id="sl-bw" min="0" max="100" step="5" value="33"
+        <input type="range" id="sl-bw" min="0" max="100" step="1" value="33"
                oninput="updateSlider(this,'bw-val','parts-pct')">
         <span class="sl-val" id="bw-val">33%</span>
       </div>
@@ -392,8 +392,8 @@ function initSliders() {
     const el = document.getElementById(`sl-${id}`);
     if (el) updateSliderBg(el);
   });
-  document.getElementById('parts-pct').textContent =
-    (100 - parseInt(document.getElementById('sl-bw').value)) + '%';
+  document.getElementById('bw-val').textContent = DEFAULTS.bw + '%';
+  document.getElementById('parts-pct').textContent = (100 - DEFAULTS.bw) + '%';
 }
 
 function updateSlider(el, valId, autoId) {
