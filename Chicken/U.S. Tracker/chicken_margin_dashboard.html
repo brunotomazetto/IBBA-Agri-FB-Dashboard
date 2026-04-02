@@ -625,7 +625,10 @@ function computeSeries() {
 
 function filterByView(series) {
   if (currentView === 'all') return series;
-  const last = series.filter(r => r.gm != null || r.spread != null).slice(-1)[0];
+  // Anchor the window on the last quarter that has a reported GM —
+  // this ensures "Last 3 Years" / "Last 12 Months" always refer to
+  // a period with meaningful correlation data (not just spread-only rows).
+  const last = series.filter(r => r.gm != null).slice(-1)[0];
   if (!last) return series;
   const lastY = Math.floor(last.year_q / 10);
   const lastQ = last.year_q % 10;
