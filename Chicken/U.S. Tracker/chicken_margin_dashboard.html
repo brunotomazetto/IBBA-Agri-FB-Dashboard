@@ -54,18 +54,18 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .main-wrap{display:flex;flex-direction:column;}
 
 /* ── CHARTS ROW — FIX #2: taller charts ── */
-.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;
-  padding:12px 16px 8px;flex-shrink:0;}
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;
+  padding:10px 8px 6px;flex-shrink:0;}
 .chart-card{background:var(--white);border:1px solid var(--border);border-radius:8px;
-  padding:14px 16px 10px;display:flex;flex-direction:column;}
+  padding:12px 14px 8px;display:flex;flex-direction:column;}
 .chart-card-header{display:flex;justify-content:space-between;align-items:flex-start;
-  margin-bottom:10px;}
+  margin-bottom:8px;}
 .chart-title{font-size:12.5px;font-weight:700;color:var(--black);}
 /* FIX #3: R² stat placed in chart card header (right side) */
 .chart-stat{font-size:11px;color:var(--gray-mid);text-align:right;}
 .chart-stat strong{color:var(--orange);}
-/* FIX #2: taller chart area */
-.chart-wrap{flex:1;min-height:0;position:relative;height:220px;}
+/* taller + wider chart area */
+.chart-wrap{flex:1;min-height:0;position:relative;height:245px;}
 
 /* ── BOTTOM ROW — FIX #4: no overflow:hidden ── */
 .bottom-row{display:grid;grid-template-columns:236px 1fr;gap:0;
