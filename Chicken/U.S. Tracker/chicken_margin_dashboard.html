@@ -118,22 +118,21 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
   background:none;color:var(--gray-mid);transition:all .15s;}
 .reset-btn:hover{border-color:var(--orange);color:var(--orange);}
 
-/* ── TABLE PANEL — FIX #4: fixed height with scroll, page scrolls around it ── */
-.table-panel{display:flex;flex-direction:column;min-height:300px;}
+/* ── TABLE PANEL — no internal scroll; page scroll only ── */
+.table-panel{display:flex;flex-direction:column;}
 .table-tabs{display:flex;align-items:center;padding:8px 16px 0;
   border-bottom:1px solid var(--border);background:var(--white);flex-shrink:0;gap:4px;}
 .tab-btn{padding:5px 14px;font-size:12px;border:1px solid var(--border);
   border-radius:4px 4px 0 0;cursor:pointer;font-family:var(--font);
   background:none;color:var(--gray-mid);transition:all .12s;}
 .tab-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
-.table-wrap{overflow:auto;max-height:460px;}
-.table-wrap::-webkit-scrollbar{width:5px;height:5px;}
-.table-wrap::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px;}
+/* no max-height, no overflow:auto — table expands fully, page scrolls */
+.table-wrap{overflow:visible;}
 table{width:100%;border-collapse:collapse;font-size:11.5px;}
 thead tr{background:#FAFAFA;border-bottom:2px solid var(--border);}
 th{padding:7px 9px;text-align:right;font-weight:700;font-size:10.5px;
   color:var(--gray-mid);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;
-  position:sticky;top:0;background:#FAFAFA;z-index:1;}
+  background:#FAFAFA;}
 th:first-child{text-align:left;}
 td{padding:5px 9px;text-align:right;border-bottom:1px solid #F5F5F5;
   color:var(--gray-dark);white-space:nowrap;}
@@ -210,7 +209,7 @@ tr:hover td{background:#FFF8F5;}
     <div class="chart-card">
       <div class="chart-card-header">
         <div class="chart-title">Spread Proxy % vs. PPC Gross Mg - U.S. Segment</div>
-        <div class="chart-stat" id="chart2-stat">Solid = Spread &nbsp;·&nbsp; Dashed = Gross Margin</div>
+        <div class="chart-stat" id="chart2-stat">r = <strong>—</strong> &nbsp; R² = <strong>—</strong> &nbsp; N = <strong>—</strong></div>
       </div>
       <div class="chart-wrap"><canvas id="levelChart"></canvas></div>
     </div>
@@ -582,31 +581,26 @@ function pearson(xs, ys) {
 function render() {
   const series  = computeSeries();
   const visible = filterByView(series);
-  // FIX R² BUG: pass full series so correlation is always over all available data
-  renderDeltaChart(visible, series);
+  // R² uses the VIEW-FILTERED window (changes when you switch All / 3Y / 12M)
+  renderDeltaChart(visible);
   renderLevelChart(visible);
-  renderTable(series);  // table always shows all (newest first)
+  renderTable(series);  // table always shows all quarters (newest first)
 }
 
 // ─── CHART 1: QoQ Delta ──────────────────────────────────────────────────────
-// FIX R² BUG: allSeries used for correlation; visible for chart display
-function renderDeltaChart(data, allSeries) {
+function renderDeltaChart(data) {
   const valid   = data.filter(r => r.dSpread != null && r.dGm != null);
   const labels  = valid.map(r => r.quarter);
   const spread  = valid.map(r => +(r.dSpread * 100).toFixed(3));
   const gm      = valid.map(r => +(r.dGm     * 100).toFixed(3));
 
-  // FIX: Compute correlation over ALL data with valid pairs (not view-filtered)
-  const allValid  = (allSeries || data).filter(r => r.dSpread != null && r.dGm != null);
-  const corrAll   = pearson(
-    allValid.map(r => r.dSpread),
-    allValid.map(r => r.dGm)
-  );
-  const rStr  = corrAll.r  != null ? corrAll.r.toFixed(3)  : '—';
-  const r2Str = corrAll.r2 != null ? corrAll.r2.toFixed(3) : '—';
-  // FIX #3: stat is in the chart card header (not controls bar)
+  // Correlation over VIEW-FILTERED window — changes with view selector
+  const corr  = pearson(valid.map(r => r.dSpread), valid.map(r => r.dGm));
+  const rStr  = corr.r  != null ? corr.r.toFixed(3)  : '—';
+  const r2Str = corr.r2 != null ? corr.r2.toFixed(3) : '—';
+  const nStr  = corr.n  >= 1    ? corr.n              : '—';
   document.getElementById('chart1-stat').innerHTML =
-    `r = <strong>${rStr}</strong> &nbsp; R² = <strong>${r2Str}</strong> &nbsp; N = <strong>${corrAll.n}</strong>`;
+    `r = <strong>${rStr}</strong> &nbsp; R² = <strong>${r2Str}</strong> &nbsp; N = <strong>${nStr}</strong>`;
 
   const ctx = document.getElementById('deltaChart').getContext('2d');
   if (charts.delta) charts.delta.destroy();
@@ -650,6 +644,15 @@ function renderLevelChart(data) {
   const labels  = valid.map(r => r.quarter);
   const spreadL = valid.map(r => r.spread != null ? +(r.spread * 100).toFixed(2) : null);
   const gmL     = valid.map(r => r.gm     != null ? +(r.gm     * 100).toFixed(2) : null);
+
+  // Levels correlation (spread% vs GM%) — view-filtered, changes with selector
+  const bothValid = valid.filter(r => r.spread != null && r.gm != null);
+  const corrLev   = pearson(bothValid.map(r => r.spread), bothValid.map(r => r.gm));
+  const rLStr  = corrLev.r  != null ? corrLev.r.toFixed(3)  : '—';
+  const r2LStr = corrLev.r2 != null ? corrLev.r2.toFixed(3) : '—';
+  const nLStr  = corrLev.n  >= 1    ? corrLev.n              : '—';
+  document.getElementById('chart2-stat').innerHTML =
+    `r = <strong>${rLStr}</strong> &nbsp; R² = <strong>${r2LStr}</strong> &nbsp; N = <strong>${nLStr}</strong>`;
 
   const ctx = document.getElementById('levelChart').getContext('2d');
   if (charts.level) charts.level.destroy();
