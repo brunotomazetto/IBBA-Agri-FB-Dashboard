@@ -1,541 +1,748 @@
-import hashlib
-import io
-import logging
-import os
-import re
-import sqlite3
-import time
-from datetime import datetime
+#!/usr/bin/env python3
+"""
+extractor_imea.py — IBBA Agri Monitor
+======================================
+Execução mensal via GitHub Actions.
 
-import openpyxl
+Fluxo:
+  1. Autentica no portal IMEA
+  2. Extrai custos agrícolas (SOJA, MILHO, ALGODÃO – MT) via API IMEA
+  3. Extrai produtividade CONAB via API CONAB (safra/levantamento mensal)
+  4. Extrai preços ao produtor CONAB via API CONAB
+  5. Calcula P&L e margens (tudo em R$/ha)
+  6. Atualiza dash_data.json e imea_margin_dashboard.html
+
+═══════════════════════════════════════════════════════════════
+FONTES POR TIPO DE DADO
+═══════════════════════════════════════════════════════════════
+
+  CUSTOS    → Portal IMEA (API autenticada)
+              grupo CUSTO, indicador_id IS NOT NULL → portal mensal
+              indicador_id IS NULL, safra_tipo='mensal' → IBBA projeção
+              indicador_id IS NULL, safra_tipo='anual'  → IBBA histórico
+
+  PREÇO     → API CONAB portaldeinformacoes.conab.gov.br
+              Soja:    "SOJA EM GRÃOS (60 kg)"           ao produtor MT
+              Milho:   "MILHO EM GRÃOS (60 kg)"          ao produtor MT
+              Algodão: "ALGODÃO EM PLUMA TIPO BÁSICO..." ao produtor MT
+              Unidade armazenada: R$/kg → ×bag_kg = R$/bag
+
+  PRODUTIV. → API CONAB portaldeinformacoes.conab.gov.br (tabela conab_safra)
+              Soja:    produto='SOJA'            uf='MT'            → sc/ha (t/ha ÷ 60)
+              Milho:   produto='MILHO' safra='2ª SAFRA' uf='MT'    → sc/ha (t/ha ÷ 60)
+              Algodão: produto='ALGODAO EM PLUMA' uf='MT'          → @/ha lint (t/ha ÷ 15)
+              Fonte mensal: levantamentos 1→12 por safra; lev=99 = Série Histórica (final)
+              Script busca lev mais recente disponível para safra corrente.
+
+═══════════════════════════════════════════════════════════════
+REGRAS DE NEGÓCIO
+═══════════════════════════════════════════════════════════════
+
+UNIDADES (tudo em R$/ha no dashboard):
+  Receita = prod(bag/ha) × preço(R$/bag) = R$/ha
+  Custos IMEA já em R$/ha
+  Toggle bag/ha: val ÷ spot(R$/bag) → bag/ha ou @/ha conforme cmdty
+
+SAFRA LABEL (mensal):
+  SOJA 2022 IBBA    : sem shift (header correto)
+  SOJA portal       : shift -1  (portal guarda 1 ano à frente)
+  MILHO/ALGODÃO     : sem shift
+  IBBA mensal       : sem shift
+
+SEEDS = Sementes + Semente de Cobertura (todas as culturas)
+
+ANNUAL SNAPS (hardcoded — melhor data de custo e preço/yield por safra):
+  IBBA histórico: custo publicado 1 ano após fechamento
+    SOJA y1/y2    → preço/yield em Set/y2
+    MILHO y1/y2   → preço/yield em Dez/y1
+    ALGODÃO y1/y2 → preço/yield em Dez/y1
+"""
+
+import os, json, sqlite3, re, logging, time
+from datetime import datetime, date
+from pathlib import Path
+
 import requests
 
-# ── Configurações ──────────────────────────────────────────────────────────────
-DB_PATH = os.path.join(os.path.dirname(__file__), "imea.db")
-
-# API pública IMEA (custos — Excel mensal)
-API_ARQUIVO = "https://api1.imea.com.br/api/arquivo"
-TIPO_CUSTO  = "696277432068079616"
-
-# CONAB (preços mensais por UF — gratuito, sem login)
-URL_PRECO_CONAB = "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/PrecosMensalUF.txt"
-
-CULTURAS_IMEA = {
-    "SOJA":    "4",
-    "MILHO":   "3",
-    "ALGODAO": "1",
-}
-
-# Produtos CONAB por cultura (nome exato no arquivo, nível MT)
-PRODUTOS_CONAB = {
-    "SOJA":    ["SOJA EM GRAO", "SOJA"],
-    "MILHO":   ["MILHO EM GRAO", "MILHO"],
-    "ALGODAO": ["ALGODAO EM PLUMA", "ALGODAO"],
-}
-
-HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://imea.com.br/"}
-
-MESES_PT = {
-    "janeiro":1,"fevereiro":2,"março":3,"abril":4,"maio":5,"junho":6,
-    "julho":7,"agosto":8,"setembro":9,"outubro":10,"novembro":11,"dezembro":12,
-    "jan":1,"fev":2,"mar":3,"abr":4,"mai":5,"jun":6,
-    "jul":7,"ago":8,"set":9,"out":10,"nov":11,"dez":12,
-}
-
-NOME_PARA_INDICADOR = {
-    "a. custeio":                    "Custeio",
-    "coe (a + b + ... + f + g)":    "Custo Operacional Efetivo",
-    "cot (coe + h + i)":            "Custo Operacional Total",
-    "ct (cot + j)":                 "Custo Total",
-    "1. sementes":                   "Sementes",
-    "2. fertilizantes e corretivos": "Fertilizantes e Corretivos",
-    "3. defensivos":                 "Defensivos",
-    "4. operações mecanizadas":      "Operações Mecanizadas",
-    "5. serviços terceirizados":     "Serviços Terceirizados",
-    "6. mão de obra":                "Mão de Obra",
-    "b. manutenção":                 "Manutenção",
-    "c. impostos e taxas":           "Impostos e Taxas",
-    "d. financeiras":                "Financeiras",
-    "e. pós-produção":               "Pós-Produção",
-    "f. outros custos":              "Outros Custos",
-    "g. arrendamento":               "Arrendamento",
-    "h. depreciações":               "Depreciações",
-    "i. mão-de-obra familiar":       "Mão-de-obra Familiar",
-    "j. custo de oportunidade":      "Custo de Oportunidade",
-    "custeio":                       "Custeio",
-    "operações mecanizadas":         "Operações Mecanizadas",
-}
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 log = logging.getLogger(__name__)
 
-# ── Inicializa banco ───────────────────────────────────────────────────────────
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-conn = sqlite3.connect(DB_PATH)
+# ── Caminhos ──────────────────────────────────────────────────────────────────
+DB_PATH   = Path(__file__).parent / "imea.db"
+DASH_PATH = Path(__file__).parent / "imea_margin_dashboard.html"
+JSON_PATH = Path(__file__).parent / "dash_data.json"
 
-conn.executescript("""
+# ── Credenciais IMEA ──────────────────────────────────────────────────────────
+IMEA_API  = "https://api1.imea.com.br"
+IMEA_USER = os.getenv("IMEA_USER", "ryu.matsuyama@itaubba.com")
+IMEA_PASS = os.getenv("IMEA_PASS", "falabrod")
+
+# ── APIs CONAB ────────────────────────────────────────────────────────────────
+CONAB_PRECO_API = "https://portaldeinformacoes.conab.gov.br/index.php/api"
+CONAB_SAFRA_API = "https://portaldeinformacoes.conab.gov.br/index.php/api"
+
+# ── IDs portal IMEA ───────────────────────────────────────────────────────────
+GRUPO_CUSTO = "1121328740175912960"
+
+# ── Config por cultura ────────────────────────────────────────────────────────
+CULTURAS = {
+    "SOJA": {
+        "cadeia_id":       4,
+        "conab_preco":     "SOJA EM GRÃOS   (60 kg)",
+        "conab_nivel":     "PRODUTOR",
+        "conab_produto":   "SOJA",          # para tabela conab_safra
+        "conab_safra":     None,            # qualquer (UNICA)
+        "bag_kg":          60,
+        "portal_shift":    -1,              # portal 1 ano à frente
+    },
+    "MILHO": {
+        "cadeia_id":       3,
+        "conab_preco":     "MILHO EM GRÃOS   (60 kg)",
+        "conab_nivel":     "PRODUTOR",
+        "conab_produto":   "MILHO",
+        "conab_safra":     "2ª SAFRA",       # safrinha MT
+        "bag_kg":          60,
+        "portal_shift":    0,
+    },
+    "ALGODAO": {
+        "cadeia_id":       1,
+        "conab_preco":     "ALGODÃO EM PLUMA TIPO BÁSICO - SLM 41-4 BRANCO  (15 kg)",
+        "conab_nivel":     "PRODUTOR",
+        "conab_produto":   "ALGODAO EM PLUMA",
+        "conab_safra":     None,
+        "bag_kg":          15,              # 1 arroba = 15 kg
+        "portal_shift":    0,
+    },
+}
+
+CURRENT_YEAR = date.today().year
+
+# ── Annual snaps (custo_date, label, tipo) ────────────────────────────────────
+# tipo='anual' → IBBA histórico: preço/yield buscado em data real fechamento safra
+# tipo=None    → portal/IBBA mensal
+ANNUAL_SNAPS = {
+    "SOJA": [
+        ("2020-09", "2019/20",  "anual"),
+        ("2021-09", "2020/21",  "anual"),
+        ("2022-09", "2021/22",  "anual"),
+        ("2023-09", "2022/23",  None),
+        ("2024-09", "2023/24",  None),
+        ("2025-09", "2024/25",  None),
+        ("2025-09", "2025/26",  None),
+        ("2026-02", "2026/27e", None),
+    ],
+    "MILHO": [
+        ("2021-12", "2020/21",  "anual"),
+        ("2022-12", "2021/22",  "anual"),
+        ("2023-12", "2022/23",  "anual"),
+        ("2023-12", "2023/24",  None),
+        ("2024-12", "2024/25",  None),
+        ("2025-12", "2025/26",  None),
+        ("2026-02", "2026/27e", None),
+    ],
+    "ALGODAO": [
+        ("2022-12", "2022/23",  "anual"),
+        ("2023-12", "2023/24",  "anual"),
+        ("2024-12", "2024/25",  "anual"),
+        ("2025-12", "2025/26",  None),
+        ("2026-02", "2026/27e", None),
+    ],
+}
+
+# ── Custo helpers ─────────────────────────────────────────────────────────────
+OTHER_C = ["Funrural","Fethab I","Fethab II","ITR","Outros Impostos e Taxas"]
+OTHER_D = ["Financiamentos","Seguro da Produção","Seguro Máq. Equip. Utilit."]
+OTHER_E = ["Classificação e Beneficiamento","Armazenagem","Transporte da Produção"]
+OTHER_F = ["Assistência Técnica","Combustível Utilitários","Despesas Gerais"]
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# BANCO DE DADOS
+# ════════════════════════════════════════════════════════════════════════════════
+def get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def ensure_schema(conn):
+    conn.executescript("""
     CREATE TABLE IF NOT EXISTS historico (
-        id               INTEGER PRIMARY KEY AUTOINCREMENT,
-        cultura          TEXT    NOT NULL,
-        cadeia_id        TEXT,
-        indicador_id     TEXT,
-        indicador_nome   TEXT,
-        safra            TEXT,
-        safra_id         TEXT,
-        safra_tipo       TEXT,
-        data_referencia  TEXT,
-        ano              INTEGER,
-        mes              INTEGER,
-        valor            REAL,
-        unidade          TEXT,
-        estado           TEXT,
-        grupo            TEXT,
-        updated_at       TEXT,
-        UNIQUE(indicador_id, safra_id, data_referencia, estado)
-    );
-    CREATE TABLE IF NOT EXISTS arquivos_processados (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        imea_id     TEXT    UNIQUE,
-        cultura     TEXT,
-        nome        TEXT,
-        hash_md5    TEXT    UNIQUE,
-        coletado_em TEXT
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        cultura         TEXT,
+        cadeia_id       INTEGER,
+        indicador_id    TEXT,
+        indicador_nome  TEXT,
+        safra           TEXT,
+        safra_id        TEXT,
+        safra_tipo      TEXT,
+        data_referencia TEXT,
+        ano             INTEGER,
+        mes             INTEGER,
+        valor           REAL,
+        unidade         TEXT,
+        estado          TEXT,
+        grupo           TEXT,
+        updated_at      TEXT
     );
     CREATE TABLE IF NOT EXISTS preco_conab (
-        id               INTEGER PRIMARY KEY AUTOINCREMENT,
-        cultura          TEXT    NOT NULL,
-        produto_conab    TEXT,
-        uf               TEXT,
-        ano              INTEGER,
-        mes              INTEGER,
-        data_referencia  TEXT,
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        cultura               TEXT,
+        produto_conab         TEXT,
         nivel_comercializacao TEXT,
-        valor_kg         REAL,
-        updated_at       TEXT,
-        UNIQUE(produto_conab, uf, ano, mes, nivel_comercializacao)
+        data_referencia       TEXT,
+        valor_kg              REAL,
+        updated_at            TEXT,
+        UNIQUE(cultura, produto_conab, nivel_comercializacao, data_referencia)
     );
-    CREATE INDEX IF NOT EXISTS idx_hist_cultura  ON historico(cultura);
-    CREATE INDEX IF NOT EXISTS idx_hist_grupo    ON historico(grupo);
-    CREATE INDEX IF NOT EXISTS idx_preco_cultura ON preco_conab(cultura);
-""")
-conn.commit()
-
-# ── Utilitários ────────────────────────────────────────────────────────────────
-def md5(content: bytes) -> str:
-    return hashlib.md5(content).hexdigest()
-
-def hash_existe(h: str) -> bool:
-    return conn.execute(
-        "SELECT 1 FROM arquivos_processados WHERE hash_md5=?", (h,)
-    ).fetchone() is not None
-
-def normaliza(nome: str) -> str:
-    return re.sub(r"\*+$", "", str(nome).strip()).strip().lower()
-
-def extrai_mes(nome: str) -> int | None:
-    n = normaliza(nome)
-    for k, v in MESES_PT.items():
-        if k in n:
-            return v
-    return None
-
-def parse_float(val) -> float | None:
-    try:
-        return float(str(val).replace(",", "."))
-    except (TypeError, ValueError):
-        return None
-
-# ── PARTE 1: Custos + Produtividade via Excel IMEA ─────────────────────────────
-def parse_excel(content: bytes, cultura: str) -> list[dict]:
-    wb   = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
-    rows = []
-
-    for sheet_name in wb.sheetnames:
-        if sheet_name.lower() == "indice" or not sheet_name.upper().endswith("_MT"):
-            continue
-
-        ws = wb[sheet_name]
-        safra_row = ano_row = mes_row = None
-
-        for r in range(1, 15):
-            c0 = normaliza(ws.cell(r, 1).value or "")
-            if c0 == "safra":               safra_row = r
-            elif c0 == "ano":               ano_row   = r
-            elif c0 in ("mês", "mes"):      mes_row   = r
-
-        if not mes_row:
-            continue
-
-        colunas = {}
-        for c in range(2, ws.max_column + 1):
-            safra    = str(ws.cell(safra_row, c).value or "").strip() if safra_row else ""
-            ano      = str(ws.cell(ano_row,   c).value or "").strip() if ano_row   else ""
-            mes_nome = str(ws.cell(mes_row,   c).value or "").strip()
-            mes_num  = extrai_mes(mes_nome)
-            if not mes_num or not safra:
-                continue
-            try:
-                ano_int = int(float(ano))
-            except:
-                continue
-            colunas[c] = {"safra": safra, "ano": ano_int, "mes": mes_num,
-                          "data_ref": f"{ano_int}-{mes_num:02d}-15"}
-
-        for r in range(mes_row + 1, ws.max_row + 1):
-            nome_raw = str(ws.cell(r, 1).value or "").strip()
-            if not nome_raw:
-                continue
-
-            nome_lower = normaliza(nome_raw)
-
-            # Produtividade Modal — capturar separado como PRODUTIVIDADE
-            if nome_lower.startswith("produtividade modal"):
-                for c, ci in colunas.items():
-                    val = parse_float(ws.cell(r, c).value)
-                    if val is None:
-                        continue
-                    rows.append({
-                        "cultura":        cultura,
-                        "cadeia_id":      CULTURAS_IMEA[cultura],
-                        "indicador_id":   None,
-                        "indicador_nome": "Produtividade Modal",
-                        "safra":          ci["safra"],
-                        "safra_id":       None,
-                        "safra_tipo":     None,
-                        "data_referencia": ci["data_ref"],
-                        "ano":            ci["ano"],
-                        "mes":            ci["mes"],
-                        "valor":          val,
-                        "unidade":        "sc/ha",
-                        "estado":         "MT",
-                        "grupo":          "PRODUTIVIDADE",
-                        "updated_at":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    })
-                continue
-
-            # Ignorar rodapés
-            if nome_lower.startswith(("fonte","nota","unidade","*","dólar","dolar","produtividade")):
-                continue
-
-            # Resolver nome do indicador (custos)
-            ind_nome = NOME_PARA_INDICADOR.get(nome_lower)
-            if not ind_nome:
-                nc = re.sub(r"^[\w]\.\s+", "", nome_raw).strip()
-                nc = re.sub(r"\*+$", "", nc).strip()
-                nc = re.sub(r"\s*\(.*?\)\s*$", "", nc).strip()
-                ind_nome = nc
-
-            for c, ci in colunas.items():
-                val = parse_float(ws.cell(r, c).value)
-                if val is None:
-                    continue
-                rows.append({
-                    "cultura":        cultura,
-                    "cadeia_id":      CULTURAS_IMEA[cultura],
-                    "indicador_id":   None,
-                    "indicador_nome": ind_nome,
-                    "safra":          ci["safra"],
-                    "safra_id":       None,
-                    "safra_tipo":     None,
-                    "data_referencia": ci["data_ref"],
-                    "ano":            ci["ano"],
-                    "mes":            ci["mes"],
-                    "valor":          val,
-                    "unidade":        "R$/ha",
-                    "estado":         "MT",
-                    "grupo":          "CUSTO",
-                    "updated_at":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                })
-    return rows
-
-
-def upsert_historico(rows: list[dict]) -> int:
-    if not rows:
-        return 0
-    conn.executemany(
-        """INSERT OR IGNORE INTO historico
-           (cultura, cadeia_id, indicador_id, indicador_nome, safra, safra_id,
-            safra_tipo, data_referencia, ano, mes, valor, unidade, estado,
-            grupo, updated_at)
-           VALUES (:cultura,:cadeia_id,:indicador_id,:indicador_nome,:safra,:safra_id,
-                   :safra_tipo,:data_referencia,:ano,:mes,:valor,:unidade,:estado,
-                   :grupo,:updated_at)""",
-        rows,
-    )
+    CREATE TABLE IF NOT EXISTS conab_safra (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        produto            TEXT,
+        cultura            TEXT,
+        uf                 TEXT,
+        ano_agricola       TEXT,
+        safra              TEXT,
+        id_levantamento    INTEGER,
+        dsc_levantamento   TEXT,
+        produtividade_t_ha REAL,
+        prod_bag_ha        REAL,
+        bag_kg             INTEGER,
+        updated_at         TEXT,
+        UNIQUE(produto, uf, ano_agricola, safra, id_levantamento)
+    );
+    CREATE INDEX IF NOT EXISTS idx_hist_cultura_grupo
+        ON historico(cultura, grupo, data_referencia);
+    CREATE INDEX IF NOT EXISTS idx_hist_ind
+        ON historico(cultura, indicador_id, data_referencia);
+    CREATE INDEX IF NOT EXISTS idx_preco_cultura
+        ON preco_conab(cultura, data_referencia);
+    CREATE INDEX IF NOT EXISTS idx_conab_safra_lookup
+        ON conab_safra(cultura, uf, ano_agricola, id_levantamento);
+    """)
     conn.commit()
-    return len(rows)
 
 
-def lista_relatorios(cadeia_id: str) -> list[dict]:
-    todos, page = [], 1
-    while True:
-        url = f"{API_ARQUIVO}?cadeia={cadeia_id}&tipo={TIPO_CUSTO}&page={page}&pageSize=100&nome=&sort=1"
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            log.error(f"  Erro API: {e}")
-            break
-        todos.extend(data.get("Result", []))
-        if page >= data.get("PageCount", 1):
-            break
-        page += 1
-        time.sleep(0.3)
-    return todos
+# ════════════════════════════════════════════════════════════════════════════════
+# FETCH — PORTAL IMEA (custos)
+# ════════════════════════════════════════════════════════════════════════════════
+def imea_token():
+    r = requests.post(
+        f"{IMEA_API}/token",
+        data={"username": IMEA_USER, "password": IMEA_PASS, "grant_type": "password"},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()["access_token"]
 
 
-def processa_custos():
-    log.info("\n=== CUSTOS + PRODUTIVIDADE (Excel IMEA) ===")
-    for cultura, cadeia_id in CULTURAS_IMEA.items():
-        log.info(f"\n[{cultura}]")
-        relatorios = lista_relatorios(cadeia_id)
-        log.info(f"  {len(relatorios)} relatório(s)")
-
-        for rel in relatorios:
-            imea_id = rel.get("Id", "")
-            nome    = rel.get("Nome", "")
-            url_s3  = rel.get("Path", "")
-            if not url_s3:
-                continue
-            log.info(f"  → {nome}")
-            try:
-                content = requests.get(url_s3, headers=HEADERS, timeout=60).content
-            except Exception as e:
-                log.error(f"    Download: {e}")
-                continue
-
-            h = md5(content)
-            if hash_existe(h):
-                log.info(f"    Já processado — pulando.")
-                continue
-
-            try:
-                rows = parse_excel(content, cultura)
-            except Exception as e:
-                log.error(f"    Parse: {e}", exc_info=True)
-                continue
-
-            custos = [r for r in rows if r["grupo"] == "CUSTO"]
-            produt = [r for r in rows if r["grupo"] == "PRODUTIVIDADE"]
-            ins_c  = upsert_historico(custos)
-            ins_p  = upsert_historico(produt)
-
-            conn.execute(
-                "INSERT OR IGNORE INTO arquivos_processados (imea_id,cultura,nome,hash_md5,coletado_em) VALUES (?,?,?,?,?)",
-                (imea_id, cultura, nome, h, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-            )
-            conn.commit()
-            log.info(f"    {ins_c} custos + {ins_p} produtividades inseridos")
-            time.sleep(0.5)
-
-        if not relatorios:
-            log.info(f"  Nenhum relatório novo.")
+def imea_get(token, path, **params):
+    r = requests.get(
+        f"{IMEA_API}{path}",
+        headers={"Authorization": f"Bearer {token}"},
+        params=params, timeout=60,
+    )
+    r.raise_for_status()
+    return r.json()
 
 
-# ── PARTE 2: Preços mensais via CONAB ─────────────────────────────────────────
-def processa_precos_conab():
-    log.info("\n=== PREÇOS MENSAIS (CONAB) ===")
+def fetch_imea_custo(conn, token, cultura, cadeia_id, now_str):
+    """Extrai custos mensais do portal IMEA. Insere apenas registros novos."""
+    log.info(f"  [{cultura}] Buscando CUSTO no portal IMEA")
     try:
-        resp = requests.get(URL_PRECO_CONAB, timeout=120, verify=False)
-        resp.raise_for_status()
-        content = resp.content.decode("latin1")
+        data = imea_get(token, f"/grupo/{GRUPO_CUSTO}/cadeia/{cadeia_id}/indicadores")
     except Exception as e:
-        log.error(f"  Erro download CONAB: {e}")
-        return
+        log.warning(f"  [{cultura}] CUSTO falhou: {e}")
+        return 0
 
-    linhas = content.splitlines()
-    if not linhas:
-        return
+    inserted = 0
+    for ind in data:
+        ind_id   = str(ind.get("id", ""))
+        ind_nome = ind.get("nome", "")
+        for pt in (ind.get("series") or []):
+            safra      = pt.get("safra")
+            safra_id   = str(pt.get("safraId", ""))
+            safra_tipo = pt.get("safraTipo")
+            data_ref   = (pt.get("dataReferencia") or "")[:10]
+            valor      = pt.get("valor")
+            if valor is None or not data_ref:
+                continue
+            if conn.execute(
+                "SELECT 1 FROM historico WHERE cultura=? AND indicador_id=? AND data_referencia=?",
+                (cultura, ind_id, data_ref)
+            ).fetchone():
+                continue
+            conn.execute(
+                """INSERT INTO historico
+                   (cultura,cadeia_id,indicador_id,indicador_nome,safra,safra_id,safra_tipo,
+                    data_referencia,ano,mes,valor,unidade,estado,grupo,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,'R$/ha','MT','CUSTO',?)""",
+                (cultura, cadeia_id, ind_id, ind_nome, safra, safra_id, safra_tipo,
+                 data_ref, int(data_ref[:4]), int(data_ref[5:7]), valor, now_str),
+            )
+            inserted += 1
+    conn.commit()
+    log.info(f"  [{cultura}] CUSTO: {inserted} novas linhas")
+    return inserted
 
-    cabecalho = [c.strip().lower() for c in linhas[0].split(";")]
-    log.info(f"  Colunas: {cabecalho}")
 
-    # Mapear todos os nomes de produto CONAB que queremos
-    produtos_alvo = {}
-    for cultura, nomes in PRODUTOS_CONAB.items():
-        for nome in nomes:
-            produtos_alvo[nome.upper().strip()] = cultura
+# ════════════════════════════════════════════════════════════════════════════════
+# FETCH — CONAB PREÇOS
+# ════════════════════════════════════════════════════════════════════════════════
+def fetch_conab_preco(conn, cultura, produto_conab, nivel, now_str):
+    """Extrai série histórica de preços ao produtor MT da API CONAB (R$/kg)."""
+    log.info(f"  [{cultura}] Buscando preço CONAB")
+    try:
+        r = requests.get(
+            f"{CONAB_PRECO_API}/produto/serie-historica",
+            params={"produto": produto_conab, "nivel": nivel, "uf": "MT"},
+            timeout=60,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        log.warning(f"  [{cultura}] Preço CONAB falhou: {e}")
+        return 0
 
-    registros = []
-    for linha in linhas[1:]:
-        cols = [c.strip() for c in linha.split(";")]
-        if len(cols) < len(cabecalho):
+    inserted = 0
+    for pt in data.get("data", []):
+        data_ref = (pt.get("data") or "")[:10]
+        valor_kg = pt.get("valor")
+        if not data_ref or valor_kg is None:
             continue
+        try:
+            conn.execute(
+                """INSERT OR IGNORE INTO preco_conab
+                   (cultura,produto_conab,nivel_comercializacao,data_referencia,valor_kg,updated_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (cultura, produto_conab, nivel, data_ref, valor_kg, now_str),
+            )
+            if conn.execute("SELECT changes()").fetchone()[0]:
+                inserted += 1
+        except Exception:
+            pass
+    conn.commit()
+    log.info(f"  [{cultura}] Preço CONAB: {inserted} novas linhas")
+    return inserted
 
-        row = dict(zip(cabecalho, cols))
-        produto = row.get("produto", "").strip().upper()
-        uf      = row.get("uf", "").strip().upper()
 
-        # Filtrar: só MT e produtos alvo
+# ════════════════════════════════════════════════════════════════════════════════
+# FETCH — CONAB PRODUTIVIDADE (levantamentos safra)
+# ════════════════════════════════════════════════════════════════════════════════
+def fetch_conab_safra(conn, cultura, produto_conab, safra_filter, bag_kg, now_str):
+    """
+    Extrai levantamentos de produtividade da API CONAB para MT.
+    Armazena em conab_safra com prod_bag_ha já convertido.
+    SOJA/MILHO: bag_kg=60 (sc/ha) | ALGODÃO: bag_kg=15 (@/ha lint)
+    MILHO: filtra safra='2ª SAFRA' (safrinha MT)
+    """
+    log.info(f"  [{cultura}] Buscando produtividade CONAB safra")
+    try:
+        r = requests.get(
+            f"{CONAB_SAFRA_API}/serie-historica-volume-producao-safra",
+            params={"produto": produto_conab, "uf": "MT"},
+            timeout=60,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        log.warning(f"  [{cultura}] Produtividade CONAB falhou: {e}")
+        return 0
+
+    inserted = 0
+    for pt in (data.get("data") or data if isinstance(data, list) else []):
+        ano_ag   = pt.get("ano_agricola") or pt.get("anoAgricola") or ""
+        safra    = pt.get("safra") or ""
+        id_lev   = pt.get("id_levantamento") or pt.get("idLevantamento") or 0
+        dsc_lev  = pt.get("dsc_levantamento") or pt.get("dscLevantamento") or ""
+        prod_t   = pt.get("produtividade_t_ha") or pt.get("produtividadeHa") or 0
+        uf       = pt.get("uf") or "MT"
+
+        if not ano_ag or not prod_t or float(prod_t) <= 0:
+            continue
+        if safra_filter and safra != safra_filter:
+            continue
         if uf != "MT":
             continue
 
-        cultura = None
-        for nome_alvo, cult in produtos_alvo.items():
-            if nome_alvo in produto:
-                cultura = cult
-                break
-        if not cultura:
-            continue
-
+        prod_bag = round(float(prod_t) * 1000 / bag_kg, 4)
         try:
-            ano = int(row.get("ano", 0))
-            mes = int(row.get("mes", 0))
-            val = float(row.get("valor_produto_kg", "0").replace(",", "."))
-        except (ValueError, TypeError):
-            continue
-
-        if ano < 2020 or mes < 1 or mes > 12 or val <= 0:
-            continue
-
-        nivel = row.get("dsc_nivel_comercializacao", "").strip()
-        registros.append((
-            cultura,
-            produto,
-            uf,
-            ano,
-            mes,
-            f"{ano}-{mes:02d}-15",
-            nivel,
-            val,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ))
-
-    if registros:
-        conn.executemany(
-            """INSERT OR REPLACE INTO preco_conab
-               (cultura, produto_conab, uf, ano, mes, data_referencia,
-                nivel_comercializacao, valor_kg, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            registros,
-        )
-        conn.commit()
-        log.info(f"  {len(registros)} preços inseridos/atualizados (MT)")
-
-        # Resumo por cultura
-        for row in conn.execute("""
-            SELECT cultura, COUNT(*) as n, MIN(data_referencia), MAX(data_referencia)
-            FROM preco_conab GROUP BY cultura ORDER BY cultura
-        """):
-            log.info(f"  {row[0]}: {row[1]} registros | {row[2]} → {row[3]}")
-    else:
-        log.info("  Nenhum preço encontrado para MT")
+            conn.execute(
+                """INSERT OR IGNORE INTO conab_safra
+                   (produto,cultura,uf,ano_agricola,safra,id_levantamento,dsc_levantamento,
+                    produtividade_t_ha,prod_bag_ha,bag_kg,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (produto_conab, cultura, uf, ano_ag, safra, int(id_lev), dsc_lev,
+                 float(prod_t), prod_bag, bag_kg, now_str),
+            )
+            if conn.execute("SELECT changes()").fetchone()[0]:
+                inserted += 1
+        except Exception:
+            pass
+    conn.commit()
+    log.info(f"  [{cultura}] Produtividade CONAB: {inserted} novas linhas")
+    return inserted
 
 
-# ── PARTE 3: Produtividade via CONAB safra ────────────────────────────────────
-URL_LEVANTAMENTO_CONAB = "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/LevantamentoGraos.txt"
-
-# Levantamento → (mês, delta_ano)
-# Soja/Algodão: safra out-set  → Lev1=out(ano1), Lev4=jan(ano2)...
-# Milho 2ª safra: safra jan-dez → Lev1=jan(ano2), Lev12=dez(ano2)
-LEV_SOJA_ALGODAO = {
-    1:(10,0), 2:(11,0), 3:(12,0), 4:(1,1),  5:(2,1),  6:(3,1),
-    7:(4,1),  8:(5,1),  9:(6,1),  10:(7,1), 11:(8,1), 12:(9,1),
-}
-LEV_MILHO = {
-    1:(1,1), 2:(2,1),  3:(3,1),  4:(4,1),  5:(5,1),  6:(6,1),
-    7:(7,1), 8:(8,1),  9:(9,1),  10:(10,1),11:(11,1),12:(12,1),
-}
-CONAB_PRODUTO_CULTURA = {
-    "SOJA":             ("SOJA",    LEV_SOJA_ALGODAO),
-    "MILHO":            ("MILHO",   LEV_MILHO),
-    "ALGODAO EM PLUMA": ("ALGODAO", LEV_SOJA_ALGODAO),
-}
+# ════════════════════════════════════════════════════════════════════════════════
+# SAFRA LABEL
+# ════════════════════════════════════════════════════════════════════════════════
+def norm_y(y1):
+    suf = "e" if y1 >= CURRENT_YEAR else ""
+    return f"{y1}/{str(y1+1)[2:]}{suf}"
 
 
-def processa_produtividade_conab():
-    log.info("\n=== PRODUTIVIDADE (CONAB Levantamento Grãos) ===")
+def parse_shift(raw, shift=0):
+    if not raw: return None
+    s = str(raw).replace("e","").replace("E","").strip()
+    parts = s.split("/")
     try:
-        resp = requests.get(URL_LEVANTAMENTO_CONAB, timeout=120, verify=False)
-        resp.raise_for_status()
-        content = resp.content.decode("latin1")
-    except Exception as e:
-        log.error(f"  Erro download CONAB levantamento: {e}")
-        return
+        y1 = int(parts[0]) if len(parts[0])==4 else 2000+int(parts[0])
+        return norm_y(y1 + shift)
+    except: return None
 
-    linhas = content.splitlines()
-    if not linhas:
-        return
 
-    cabecalho = [c.strip().lower() for c in linhas[0].split(";")]
-    registros = []
+def safra_label_monthly(conn, cultura, ym):
+    cfg   = CULTURAS[cultura]
+    shift = cfg["portal_shift"]
+    if cultura == "SOJA" and ym[:4] == "2022":
+        r = conn.execute(
+            "SELECT safra FROM historico WHERE cultura='SOJA' AND grupo='CUSTO' "
+            "AND strftime('%Y-%m',data_referencia)=? AND safra_tipo='mensal' "
+            "AND safra IS NOT NULL LIMIT 1", (ym,)).fetchone()
+        return parse_shift(r[0], 0) if r else None
+    r = conn.execute(
+        "SELECT safra FROM historico WHERE cultura=? AND grupo='CUSTO' "
+        "AND strftime('%Y-%m',data_referencia)=? AND safra IS NOT NULL "
+        "AND indicador_id IS NOT NULL LIMIT 1", (cultura, ym)).fetchone()
+    if r and r[0]: return parse_shift(r[0], shift)
+    r = conn.execute(
+        "SELECT safra FROM historico WHERE cultura=? AND grupo='CUSTO' "
+        "AND strftime('%Y-%m',data_referencia)=? AND safra IS NOT NULL "
+        "AND indicador_id IS NULL AND safra_tipo='mensal' LIMIT 1", (cultura, ym)).fetchone()
+    return parse_shift(r[0], 0) if r and r[0] else None
 
-    for linha in linhas[1:]:
-        cols = [c.strip() for c in linha.split(";")]
-        if len(cols) < len(cabecalho):
-            continue
-        row = dict(zip(cabecalho, cols))
 
-        if row.get("uf", "").strip().upper() != "MT":
-            continue
-
-        produto = row.get("produto", "").strip().upper()
-        if produto not in CONAB_PRODUTO_CULTURA:
-            continue
-
+def safra_inicio(conn, cultura, ym, safra_lbl=None):
+    lbl = safra_lbl or safra_label_monthly(conn, cultura, ym)
+    if lbl:
         try:
-            lev = int(row.get("id_levantamento", 0))
-        except:
-            continue
-        if lev not in range(1, 13):
-            continue
+            y1 = int(lbl.replace("e","").split("/")[0])
+            return f"{y1}-10-01" if cultura == "SOJA" else f"{y1}-01-01"
+        except: pass
+    ano = int(ym[:4])
+    return f"{ano-1}-10-01" if cultura == "SOJA" else f"{ano}-01-01"
 
-        cultura, lev_map = CONAB_PRODUTO_CULTURA[produto]
-        mes, delta = lev_map[lev]
 
-        ano_agr = row.get("ano_agricola", "").strip()
-        try:
-            ano1 = int(ano_agr[:4])
-            ano  = ano1 + delta
-        except:
-            continue
+def get_price_ym(safra_lbl, cultura, cost_ym):
+    """Para IBBA anuais históricos: data real de fechamento da safra."""
+    if not safra_lbl: return cost_ym
+    try:
+        y1 = int(safra_lbl.replace("e","").split("/")[0])
+        return f"{y1+1}-09" if cultura == "SOJA" else f"{y1}-12"
+    except: return cost_ym
 
-        try:
-            prod_t_ha = float(row.get("produtividade_mil_ha_mil_t", "0").replace(",", "."))
-        except:
-            continue
-        if prod_t_ha <= 0:
-            continue
 
-        prod_sc_ha = round(prod_t_ha * 1000 / 60, 4)
-        data_ref   = f"{ano}-{mes:02d}-15"
+# ════════════════════════════════════════════════════════════════════════════════
+# PRODUTIVIDADE (conab_safra)
+# ════════════════════════════════════════════════════════════════════════════════
+def get_prod(conn, cultura, ym, safra_lbl=None):
+    """
+    Retorna produtividade em bag/ha da tabela conab_safra.
+      SOJA/MILHO : sc/ha  (bag_kg=60)
+      ALGODÃO    : @/ha lint (bag_kg=15)
 
-        registros.append((
-            cultura, None,
-            f"conab_prod_{cultura.lower()}_{lev}",
-            "Produtividade CONAB",
-            ano_agr, None, None,
-            data_ref, ano, mes,
-            prod_sc_ha, "sc/ha", "MT",
-            "PRODUTIVIDADE",
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ))
+    Lógica: determina safra pelo label, busca levantamento mais recente.
+    Prefere lev=99 (Série Histórica final) quando disponível.
+    Fallback: safra mais recente disponível (para projeções futuras).
+    """
+    lbl = safra_lbl or safra_label_monthly(conn, cultura, ym)
+    if not lbl: return None
+    ano_ag = lbl.replace("e","").strip()
+    r = conn.execute(
+        "SELECT prod_bag_ha FROM conab_safra "
+        "WHERE cultura=? AND uf='MT' AND ano_agricola=? "
+        "ORDER BY id_levantamento DESC LIMIT 1",
+        (cultura, ano_ag)).fetchone()
+    if r: return round(r[0], 1)
+    # Fallback: última safra disponível
+    r = conn.execute(
+        "SELECT prod_bag_ha FROM conab_safra WHERE cultura=? AND uf='MT' "
+        "ORDER BY ano_agricola DESC, id_levantamento DESC LIMIT 1", (cultura,)).fetchone()
+    return round(r[0], 1) if r else None
 
-    if registros:
-        conn.executemany("""
-            INSERT OR REPLACE INTO historico
-            (cultura, cadeia_id, indicador_id, indicador_nome, safra, safra_id,
-             safra_tipo, data_referencia, ano, mes, valor, unidade, estado,
-             grupo, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, registros)
-        conn.commit()
-        log.info(f"  {len(registros)} registros inseridos/atualizados")
-        for row in conn.execute("""
-            SELECT cultura, COUNT(*), MIN(data_referencia), MAX(data_referencia)
-            FROM historico WHERE grupo='PRODUTIVIDADE' AND indicador_nome='Produtividade CONAB'
-            GROUP BY cultura ORDER BY cultura
-        """):
-            log.info(f"  {row[0]}: {row[1]} | {row[2]} → {row[3]}")
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PREÇO (preco_conab)
+# ════════════════════════════════════════════════════════════════════════════════
+def get_price_spot(conn, cultura, ym):
+    """R$/bag: soja/milho ×60kg, algodão ×15kg (@)."""
+    cfg = CULTURAS[cultura]
+    r = conn.execute(
+        "SELECT valor_kg FROM preco_conab WHERE cultura=? AND produto_conab=? "
+        "AND nivel_comercializacao=? AND strftime('%Y-%m',data_referencia)=?",
+        (cultura, cfg["conab_preco"], cfg["conab_nivel"], ym)).fetchone()
+    return round(r[0] * cfg["bag_kg"], 2) if r else None
+
+
+def get_price_avg(conn, cultura, ym, inicio):
+    """Preço médio safra (crop avg) em R$/bag."""
+    cfg = CULTURAS[cultura]
+    r = conn.execute(
+        "SELECT AVG(valor_kg) FROM preco_conab WHERE cultura=? AND produto_conab=? "
+        "AND nivel_comercializacao=? AND strftime('%Y-%m',data_referencia)<=? "
+        "AND data_referencia>=?",
+        (cultura, cfg["conab_preco"], cfg["conab_nivel"], ym, inicio)).fetchone()
+    return round(r[0] * cfg["bag_kg"], 2) if r and r[0] else None
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# QUERIES DE CUSTO
+# ════════════════════════════════════════════════════════════════════════════════
+def qm(conn, c, ind, ym):
+    """Mensal: portal > IBBA mensal > qualquer."""
+    for sql in [
+        "SELECT valor FROM historico WHERE cultura=? AND indicador_nome=? AND strftime('%Y-%m',data_referencia)=? AND grupo='CUSTO' AND indicador_id IS NOT NULL LIMIT 1",
+        "SELECT valor FROM historico WHERE cultura=? AND indicador_nome=? AND strftime('%Y-%m',data_referencia)=? AND grupo='CUSTO' AND safra_tipo='mensal' LIMIT 1",
+        "SELECT valor FROM historico WHERE cultura=? AND indicador_nome=? AND strftime('%Y-%m',data_referencia)=? AND grupo='CUSTO' LIMIT 1",
+    ]:
+        r = conn.execute(sql, (c, ind, ym)).fetchone()
+        if r and r[0]: return r[0]
+    return None
+
+
+def qa(conn, c, ind, ym):
+    """Anual (safra_tipo='anual')."""
+    r = conn.execute(
+        "SELECT valor FROM historico WHERE cultura=? AND indicador_nome=? "
+        "AND strftime('%Y-%m',data_referencia)=? AND grupo='CUSTO' "
+        "AND safra_tipo='anual' LIMIT 1", (c, ind, ym)).fetchone()
+    return r[0] if r and r[0] else None
+
+
+def get_seeds(conn, c, ym, anual=False):
+    """Seeds = Sementes + Semente de Cobertura."""
+    q = qa if anual else qm
+    for n in ["Sementes","Semente de Soja","Semente de milho","Semente de Milho","Semente de Algodão"]:
+        v = q(conn, c, n, ym)
+        if v is not None:
+            return round(v + (q(conn, c, "Semente de Cobertura", ym) or 0), 2)
+    return None
+
+
+def get_ferts(conn, c, ym, anual=False):
+    q = qa if anual else qm
+    v = q(conn, c, "Fertilizantes e Corretivos", ym)
+    if v: return v
+    return sum(q(conn, c, n, ym) or 0 for n in
+               ["Macronutriente","Micronutriente","Corretivo de Solo"]) or None
+
+
+def get_pests(conn, c, ym, anual=False):
+    q = qa if anual else qm
+    v = q(conn, c, "Defensivos", ym)
+    if v: return v
+    return sum(q(conn, c, n, ym) or 0 for n in
+               ["Fungicida","Herbicida","Inseticida","Adjuvante/Outros"]) or None
+
+
+def get_other(conn, c, ym, anual=False):
+    q = qa if anual else qm
+    man = q(conn, c, "Manutenção", ym) or 0
+    tax = (q(conn, c, "Impostos e Taxas", ym) or q(conn, c, "Impostos e Taxas ", ym) or
+           sum(q(conn, c, n, ym) or 0 for n in OTHER_C)) or 0
+    fin = q(conn, c, "Financeiras", ym) or sum(q(conn, c, n, ym) or 0 for n in OTHER_D) or 0
+    pos = q(conn, c, "Pós-Produção", ym) or sum(q(conn, c, n, ym) or 0 for n in OTHER_E) or 0
+    oth = q(conn, c, "Outros Custos", ym) or sum(q(conn, c, n, ym) or 0 for n in OTHER_F) or 0
+    mec = (q(conn, c, "OPERAÇÕES MECANIZADAS", ym) or
+           q(conn, c, "Operações Mecanizadas", ym)) or 0
+    return (man + tax + fin + pos + oth + mec) or None
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# BUILD P&L RECORD (tudo em R$/ha)
+# ════════════════════════════════════════════════════════════════════════════════
+def build_rec(conn, cultura, ym, s_label, anual=False):
+    """
+    Constrói registro P&L completo.
+    anual=True → custos de cost_ym (IBBA), preço/yield de price_ym (fechamento real).
+    """
+    price_ym = get_price_ym(s_label, cultura, ym) if anual else ym
+    inicio   = safra_inicio(conn, cultura, price_ym, s_label)
+    prod     = get_prod(conn, cultura, price_ym, s_label)
+    spot     = get_price_spot(conn, cultura, price_ym)
+    std      = get_price_avg(conn, cultura, price_ym, inicio) or spot
+
+    rb_spot = round(spot * prod, 2) if spot and prod else None
+    rb_std  = round(std  * prod, 2) if std  and prod else None
+
+    qf = qa if anual else qm
+    coe_v = qf(conn, cultura, "Custo Operacional Efetivo", ym)
+    if not coe_v:
+        cot = qf(conn, cultura, "Custo Operacional Total", ym)
+        d2  = qf(conn, cultura, "Depreciações", ym)
+        m2  = qf(conn, cultura, "Mão de Obra", ym)
+        p2  = (qf(conn, cultura, "Pró-Labore", ym) or
+               qf(conn, cultura, "Mão-de-obra Familiar", ym))
+        coe_v = (cot - d2 - m2 - p2) if (cot and d2 and m2 and p2) else cot
+
+    arr   = qf(conn, cultura, "Arrendamento", ym)
+    dep   = qf(conn, cultura, "Depreciações", ym)
+    mo    = qf(conn, cultura, "Mão de Obra", ym)
+    pl    = (qf(conn, cultura, "Pró-Labore", ym) or
+             qf(conn, cultura, "Mão-de-obra Familiar", ym))
+    sem   = get_seeds(conn, cultura, ym, anual)
+    fer   = get_ferts(conn, cultura, ym, anual)
+    pes   = get_pests(conn, cultura, ym, anual)
+    othr  = get_other(conn, cultura, ym, anual)
+    labor = round((mo or 0) + (pl or 0), 2) if (mo or pl) else None
+    coe_s = (coe_v - arr) if coe_v and arr else coe_v
+
+    named   = (sem or 0) + (fer or 0) + (pes or 0) + (labor or 0) + (othr or 0)
+    gp_ex   = (rb_std - named) if rb_std and named else None
+    gp_inc  = (gp_ex  - arr)   if gp_ex is not None and arr else gp_ex
+    gm_ex_p = gp_ex  / rb_std  if gp_ex  is not None and rb_std else None
+    gm_in_p = gp_inc / rb_std  if gp_inc is not None and rb_std else None
+
+    if anual:
+        n = conn.execute(
+            "SELECT COUNT(DISTINCT indicador_nome) FROM historico "
+            "WHERE cultura=? AND grupo='CUSTO' AND strftime('%Y-%m',data_referencia)=? "
+            "AND safra_tipo='anual'", (cultura, ym)).fetchone()[0]
     else:
-        log.info("  Nenhum dado encontrado para MT")
+        n = conn.execute(
+            "SELECT COUNT(DISTINCT indicador_nome) FROM historico "
+            "WHERE cultura=? AND grupo='CUSTO' AND strftime('%Y-%m',data_referencia)=? "
+            "AND (safra_tipo='mensal' OR indicador_id IS NOT NULL)", (cultura, ym)).fetchone()[0]
+
+    def r(v):  return round(v, 2) if v is not None else None
+    def r4(v): return round(v, 4) if v is not None else None
+    return {
+        "d": ym, "safra": s_label,
+        "spot": spot, "std": std,   # R$/bag — usado pelo toggle bag/ha
+        "prod": prod,               # bag/ha (sc/ha soja/milho, @/ha algodão)
+        "rb_spot": rb_spot, "rb_std": rb_std,  # R$/ha
+        "sem": r(sem), "fer": r(fer), "pes": r(pes), "labor": labor,
+        "other": r(othr), "coe_s": r(coe_s), "arr": r(arr), "dep": r(dep),
+        "gp_ex": r(gp_ex), "gp_inc": r(gp_inc),
+        "gm_ex_pct": r4(gm_ex_p), "gm_inc_pct": r4(gm_in_p),
+        "ok": n >= 30,
+    }
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
-processa_custos()
-processa_precos_conab()
-processa_produtividade_conab()
+# ════════════════════════════════════════════════════════════════════════════════
+# DATASET BUILDER
+# ════════════════════════════════════════════════════════════════════════════════
+def build_dataset(conn):
+    output = {}
+    for cultura in ["SOJA", "MILHO", "ALGODAO"]:
+        start = "2022-01-01" if cultura == "SOJA" else "2023-01-01"
+        m_yms = [r[0] for r in conn.execute("""
+            SELECT DISTINCT strftime('%Y-%m',data_referencia) FROM historico
+            WHERE grupo='CUSTO' AND cultura=?
+              AND data_referencia BETWEEN ? AND date('now','+60 days')
+              AND (safra_tipo='mensal' OR indicador_id IS NOT NULL)
+            ORDER BY 1""", (cultura, start)).fetchall()]
+        monthly = [
+            build_rec(conn, cultura, ym, safra_label_monthly(conn, cultura, ym) or ym)
+            for ym in m_yms
+        ]
+        annual, seen = [], set()
+        for ym, lbl, tipo in ANNUAL_SNAPS[cultura]:
+            if lbl in seen: continue
+            seen.add(lbl)
+            annual.append(build_rec(conn, cultura, ym, lbl, anual=(tipo == "anual")))
+        annual.sort(key=lambda x: x["safra"])
+        output[cultura] = {"monthly": monthly, "annual": annual}
+    return output
 
-conn.close()
-print("\nConcluído.")
+
+# ════════════════════════════════════════════════════════════════════════════════
+# DASHBOARD UPDATER
+# ════════════════════════════════════════════════════════════════════════════════
+def update_dashboard(data):
+    if not DASH_PATH.exists():
+        log.warning(f"Dashboard não encontrado: {DASH_PATH}")
+        return
+    html = DASH_PATH.read_text(encoding="utf-8")
+    new_html = re.sub(
+        r"const RAW=\{.*?\};",
+        f"const RAW={json.dumps(data)};",
+        html, flags=re.DOTALL,
+    )
+    DASH_PATH.write_text(new_html, encoding="utf-8")
+    log.info(f"Dashboard atualizado ({len(new_html):,} chars)")
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ════════════════════════════════════════════════════════════════════════════════
+def main():
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log.info("=" * 60)
+    log.info("IMEA Extractor — iniciando")
+    log.info("=" * 60)
+
+    conn = get_conn()
+    ensure_schema(conn)
+
+    # ── 1. Autenticar IMEA ────────────────────────────────────────────────────
+    log.info("Autenticando no portal IMEA...")
+    token = None
+    try:
+        token = imea_token()
+        log.info("Token IMEA obtido")
+    except Exception as e:
+        log.error(f"Autenticação IMEA falhou: {e}")
+
+    # ── 2. Custos IMEA ────────────────────────────────────────────────────────
+    if token:
+        for cultura, cfg in CULTURAS.items():
+            log.info(f"--- CUSTO {cultura} ---")
+            fetch_imea_custo(conn, token, cultura, cfg["cadeia_id"], now_str)
+
+    # ── 3. Preços CONAB ───────────────────────────────────────────────────────
+    log.info("--- Preços CONAB ---")
+    for cultura, cfg in CULTURAS.items():
+        fetch_conab_preco(conn, cultura, cfg["conab_preco"], cfg["conab_nivel"], now_str)
+        time.sleep(0.5)
+
+    # ── 4. Produtividade CONAB ────────────────────────────────────────────────
+    log.info("--- Produtividade CONAB ---")
+    for cultura, cfg in CULTURAS.items():
+        fetch_conab_safra(
+            conn, cultura,
+            cfg["conab_produto"], cfg["conab_safra"], cfg["bag_kg"],
+            now_str
+        )
+        time.sleep(0.5)
+
+    # ── 5. Build dataset + dashboard ─────────────────────────────────────────
+    log.info("Construindo dataset P&L...")
+    data = build_dataset(conn)
+    JSON_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info(f"JSON salvo: {JSON_PATH}")
+    update_dashboard(data)
+
+    conn.close()
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    log.info("=" * 60)
+    for c in ["SOJA", "MILHO", "ALGODAO"]:
+        m    = len(data[c]["monthly"])
+        a    = len(data[c]["annual"])
+        last = data[c]["monthly"][-1]["d"] if data[c]["monthly"] else "—"
+        gm   = data[c]["monthly"][-1].get("gm_ex_pct")
+        gm_s = f"{gm*100:.1f}%" if gm is not None else "—"
+        ok   = sum(1 for r in data[c]["monthly"] if r["ok"])
+        log.info(f"  {c:8}: {m:3} meses ({ok} ok) | {a} safras anuais | "
+                 f"último={last} | GM={gm_s}")
+    log.info("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
