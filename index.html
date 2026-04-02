@@ -6,6 +6,7 @@
 <title>Itaú BBA — Agribusiness, Food & Beverage Research</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -229,6 +230,27 @@ hr.sep{border:none;border-top:1px solid var(--border);margin:18px 0;}
   font-size:13px;z-index:400;opacity:0;transform:translateY(10px);transition:opacity .25s,transform .25s;
   pointer-events:none;border:1px solid #2E2E2E;}
 .toast.show{opacity:1;transform:translateY(0);}
+/* ANALYTICS */
+.analytics-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px;}
+.analytics-kpi{background:white;border:1px solid var(--border);border-radius:8px;padding:18px 20px;}
+.analytics-kpi-val{font-size:28px;font-weight:700;color:var(--black);line-height:1;}
+.analytics-kpi-label{font-size:12px;color:var(--gray-mid);margin-top:6px;}
+.analytics-kpi-sub{font-size:11px;color:var(--orange);font-weight:600;margin-top:4px;}
+.analytics-chart-card{background:white;border:1px solid var(--border);border-radius:8px;padding:18px 20px;margin-bottom:16px;}
+.analytics-chart-title{font-size:13px;font-weight:700;color:var(--black);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;}
+.analytics-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+.analytics-table th{background:var(--gray-light);padding:8px 12px;text-align:left;font-size:11px;font-weight:700;
+  color:var(--gray-mid);text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--border);}
+.analytics-table td{padding:9px 12px;border-bottom:1px solid var(--border);color:var(--gray-dark);}
+.analytics-table tr:last-child td{border-bottom:none;}
+.analytics-table tr:hover td{background:#FAFAFA;}
+.analytics-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;}
+.analytics-period{display:flex;gap:6px;}
+.analytics-period button{padding:5px 12px;border:1px solid var(--border);border-radius:5px;font-size:11px;
+  background:white;cursor:pointer;color:var(--gray-mid);font-family:var(--font);transition:all .15s;}
+.analytics-period button.active{background:var(--orange);border-color:var(--orange);color:white;font-weight:600;}
+.analytics-empty{text-align:center;padding:32px 16px;color:var(--gray-mid);font-size:13px;}
+@media(max-width:860px){.analytics-grid{grid-template-columns:1fr 1fr;}}
 @media(max-width:860px){.sidebar{display:none;}.content-area{padding:20px 16px 32px;}}
 </style>
 </head>
@@ -317,6 +339,7 @@ const STATE = {
   activeDash: null,
   searchQuery: '',
   usersExpanded: false,
+  analyticsPeriod: 30,
   // Loaded from Supabase:
   portalUsers: [],
   dashboards: [],
@@ -428,6 +451,8 @@ async function doLogin(){
   STATE.authSession = data.session;
   btn.disabled=false; btn.textContent='Sign In';
   await loadUserAndData(email);
+  // Log login event (fire and forget — don't block login)
+  logEvent('login', null);
 }
 
 async function doLogout(){
@@ -458,7 +483,13 @@ function navigateSector(sid){ STATE.activeSector=sid; STATE.activeDash=null; STA
 function navigateSubsector(sid){ STATE.activeSubsector=sid; STATE.activeDash=null; STATE.searchQuery=''; renderSubNav(); renderContent(); }
 function navigateSettings(){ STATE.activeSector='settings'; STATE.activeDash=null; STATE.activeSettingsTab=STATE.currentUser?.is_admin?'admin-panel':'my-account'; renderAll(); }
 function switchSettingsTab(tab){ STATE.activeSettingsTab=tab; renderContent(); }
-function openDashView(id){ const d=STATE.dashboards.find(x=>x.id===id); if(!d||d.coming_soon) return; STATE.activeDash=d; renderContent(); }
+function openDashView(id){
+  const d=STATE.dashboards.find(x=>x.id===id);
+  if(!d||d.coming_soon) return;
+  STATE.activeDash=d;
+  logEvent('dash_open', d);
+  renderContent();
+}
 function closeDashView(){ STATE.activeDash=null; renderContent(); }
 function handleSearch(q){ STATE.searchQuery=q; renderContent(); }
 
@@ -515,8 +546,6 @@ const DASH_MODULES = {
   1: 'Agri Monitor/conab/producao_dashboard.html',
   2: 'Agri Monitor/imea/imea_margin_dashboard.html',
   3: 'Agri Monitor/secex/dashboard_secex.html',
-  5: 'Beef/U.S. Tracker/beef_margin_dashboard.html',
-  7: 'Chicken/U.S. Tracker/chicken_margin_dashboard.html',
 };
 
 function renderContent(){
@@ -626,12 +655,14 @@ function buildSettings(){
   const tabs=isAdmin?[
     { id:'admin-panel',  label:'&#128101; Users &amp; Team'   },
     { id:'content-mgmt', label:'&#128202; Content &amp; Tabs' },
+    { id:'analytics',    label:'&#128200; Analytics'          },
     { id:'my-account',   label:'&#128273; My Account'         },
   ]:[{ id:'my-account', label:'&#128273; My Account' }];
   const tabBar=tabs.map(t=>`<div class="settings-tab ${STATE.activeSettingsTab===t.id?'active':''}" onclick="switchSettingsTab('${t.id}')">${t.label}</div>`).join('');
   let pane='';
   if(STATE.activeSettingsTab==='admin-panel')  pane=buildPaneUsersTeam();
   if(STATE.activeSettingsTab==='content-mgmt') pane=buildPaneContent();
+  if(STATE.activeSettingsTab==='analytics')     pane=buildPaneAnalytics();
   if(STATE.activeSettingsTab==='my-account')   pane=buildPaneMyAccount();
   return `
     <div class="greeting"><h1>${isAdmin?'Settings &mdash; Administration Panel':'My Account'}</h1><p>${todayStr()}</p></div>
@@ -1095,6 +1126,202 @@ function downloadIBBA(rows, columns, sheetName, baseName){
   const fileName = `IBBA | ${baseName||'Data'}.xlsx`;
   XLSX.writeFile(wb, fileName, { bookType:'xlsx', type:'binary', cellStyles:true });
   showToast(`Downloaded: ${fileName}`);
+}
+
+/* ══ LOG EVENT ══ */
+async function logEvent(type, dash){
+  try {
+    if(!STATE.currentUser) return;
+    await sb.from('access_logs').insert({
+      user_id:    STATE.currentUser.id,
+      user_email: STATE.currentUser.email,
+      user_name:  STATE.currentUser.display_name,
+      event_type: type,
+      dash_id:    dash?.id    || null,
+      dash_title: dash?.title || null,
+      sector:     dash?.sector    || null,
+      subsector:  dash?.subsector || null,
+    });
+  } catch(e){ /* silent fail — never block the user */ }
+}
+
+/* ══ ANALYTICS PANE ══ */
+async function buildPaneAnalytics(){
+  const days  = STATE.analyticsPeriod;
+  const since = new Date(Date.now() - days*24*60*60*1000).toISOString();
+
+  const { data: logs } = await sb.from('access_logs')
+    .select('*').gte('created_at', since).order('created_at', {ascending:false});
+
+  if(!logs || !logs.length){
+    return '<div class="admin-panel"><div class="analytics-empty">&#128202; No activity data yet for the selected period.<br><span style="font-size:12px;color:#bbb;">Data is collected automatically as users log in and open dashboards.</span></div></div>';
+  }
+
+  const logins    = logs.filter(l=>l.event_type==='login');
+  const dashOpens = logs.filter(l=>l.event_type==='dash_open');
+
+  // Unique active users
+  const activeUsers = new Set(logins.map(l=>l.user_email)).size;
+
+  // Logins by user
+  const loginsByUser = {};
+  logins.forEach(l=>{ loginsByUser[l.user_email]=(loginsByUser[l.user_email]||0)+1; });
+
+  // Dash opens by title
+  const opensByDash = {};
+  dashOpens.forEach(l=>{ opensByDash[l.dash_title]=(opensByDash[l.dash_title]||0)+1; });
+
+  // Logins by day (last N days)
+  const byDay = {};
+  for(let i=days-1;i>=0;i--){
+    const d=new Date(Date.now()-i*864e5);
+    byDay[d.toLocaleDateString('en-US',{month:'short',day:'numeric'})]=0;
+  }
+  logins.forEach(l=>{
+    const day=new Date(l.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    if(byDay[day]!==undefined) byDay[day]++;
+  });
+
+  // Top users table
+  const topUsers = Object.entries(loginsByUser)
+    .sort((a,b)=>b[1]-a[1]).slice(0,10);
+
+  // Top dashboards table
+  const topDashes = Object.entries(opensByDash)
+    .sort((a,b)=>b[1]-a[1]).slice(0,10);
+
+  // Recent activity (last 20 events)
+  const recent = logs.slice(0,20);
+
+  const periodBtns = [7,30,90].map(d=>
+    `<button class="${STATE.analyticsPeriod===d?'active':''}" onclick="STATE.analyticsPeriod=${d};renderContent();">${d}d</button>`
+  ).join('');
+
+  const topUserRows = topUsers.map(([email,count],i)=>{
+    const u=STATE.portalUsers.find(x=>x.email===email);
+    const name=u?.display_name||email;
+    return `<tr><td style="color:var(--gray-mid);width:28px;">${i+1}</td><td><strong>${esc(name)}</strong><br><span style="font-size:11px;color:var(--gray-mid);">${esc(email)}</span></td><td style="text-align:right;font-weight:700;color:var(--orange);">${count}</td></tr>`;
+  }).join('');
+
+  const topDashRows = topDashes.map(([title,count],i)=>{
+    return `<tr><td style="color:var(--gray-mid);width:28px;">${i+1}</td><td>${esc(title)}</td><td style="text-align:right;font-weight:700;color:var(--orange);">${count}</td></tr>`;
+  }).join('');
+
+  const recentRows = recent.map(l=>{
+    const icon = l.event_type==='login'?'&#128275;':'&#128200;';
+    const label= l.event_type==='login'?'Login':`Opened: ${esc(l.dash_title||'')}`;
+    const time = new Date(l.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    return `<tr><td>${icon}</td><td>${esc(l.user_name||l.user_email)}</td><td>${label}</td><td style="color:var(--gray-mid);white-space:nowrap;">${time}</td></tr>`;
+  }).join('');
+
+  const chartLabels = JSON.stringify(Object.keys(byDay));
+  const chartData   = JSON.stringify(Object.values(byDay));
+
+  return `<div class="admin-panel">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+      <div><h2 style="font-size:16px;font-weight:700;color:var(--black);">Portal Analytics</h2>
+        <p style="font-size:12px;color:var(--gray-mid);margin-top:3px;">Last ${days} days</p></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <div class="analytics-period">${periodBtns}</div>
+        <button class="btn-outline" onclick="exportAnalyticsExcel(${days})" title="Export analytics to Excel">&#8659; Export</button>
+      </div>
+    </div>
+
+    <div class="analytics-grid">
+      <div class="analytics-kpi">
+        <div class="analytics-kpi-val">${logins.length}</div>
+        <div class="analytics-kpi-label">Total Logins</div>
+        <div class="analytics-kpi-sub">last ${days} days</div>
+      </div>
+      <div class="analytics-kpi">
+        <div class="analytics-kpi-val">${activeUsers}</div>
+        <div class="analytics-kpi-label">Active Users</div>
+        <div class="analytics-kpi-sub">unique accounts</div>
+      </div>
+      <div class="analytics-kpi">
+        <div class="analytics-kpi-val">${dashOpens.length}</div>
+        <div class="analytics-kpi-label">Dashboard Opens</div>
+        <div class="analytics-kpi-sub">last ${days} days</div>
+      </div>
+    </div>
+
+    <div class="analytics-chart-card">
+      <div class="analytics-chart-title">Daily Logins</div>
+      <canvas id="loginChart" height="80"></canvas>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+      <div class="analytics-chart-card" style="margin:0;">
+        <div class="analytics-chart-title">
+          Top Users <span style="font-size:11px;color:var(--gray-mid);font-weight:400;">by logins</span>
+        </div>
+        ${topUserRows ? `<table class="analytics-table"><thead><tr><th>#</th><th>User</th><th style="text-align:right;">Logins</th></tr></thead><tbody>${topUserRows}</tbody></table>` : '<div class="analytics-empty">No login data</div>'}
+      </div>
+      <div class="analytics-chart-card" style="margin:0;">
+        <div class="analytics-chart-title">
+          Top Dashboards <span style="font-size:11px;color:var(--gray-mid);font-weight:400;">by opens</span>
+        </div>
+        ${topDashRows ? `<table class="analytics-table"><thead><tr><th>#</th><th>Dashboard</th><th style="text-align:right;">Opens</th></tr></thead><tbody>${topDashRows}</tbody></table>` : '<div class="analytics-empty">No dashboard opens yet</div>'}
+      </div>
+    </div>
+
+    <div class="analytics-chart-card">
+      <div class="analytics-chart-title">Recent Activity</div>
+      ${recentRows ? `<table class="analytics-table"><thead><tr><th></th><th>User</th><th>Event</th><th>Time</th></tr></thead><tbody>${recentRows}</tbody></table>` : '<div class="analytics-empty">No activity yet</div>'}
+    </div>
+  </div>
+  <script>
+  (function(){
+    const ctx=document.getElementById('loginChart');
+    if(!ctx||!window.Chart) return;
+    if(ctx._chartInstance) ctx._chartInstance.destroy();
+    ctx._chartInstance=new Chart(ctx,{
+      type:'bar',
+      data:{
+        labels:${chartLabels},
+        datasets:[{
+          label:'Logins',
+          data:${chartData},
+          backgroundColor:'rgba(255,85,0,.18)',
+          borderColor:'#FF5500',
+          borderWidth:2,
+          borderRadius:4,
+        }]
+      },
+      options:{
+        responsive:true,
+        plugins:{legend:{display:false}},
+        scales:{
+          x:{grid:{display:false},ticks:{font:{size:10},color:'#888'}},
+          y:{grid:{color:'#F0F0F0'},ticks:{font:{size:10},color:'#888'},beginAtZero:true,precision:0}
+        }
+      }
+    });
+  })();
+  <\/script>`;
+}
+
+/* ══ ANALYTICS EXPORT ══ */
+async function exportAnalyticsExcel(days){
+  if(!window.XLSX){ showToast('Excel library not loaded.'); return; }
+  const since=new Date(Date.now()-days*864e5).toISOString();
+  const {data:logs}=await sb.from('access_logs').select('*').gte('created_at',since).order('created_at',{ascending:false});
+  if(!logs||!logs.length){ showToast('No data to export.'); return; }
+  const rows=logs.map(l=>({
+    'Time':       new Date(l.created_at).toLocaleString('en-US'),
+    'User Name':  l.user_name||'',
+    'Email':      l.user_email||'',
+    'Event':      l.event_type==='login'?'Login':'Dashboard Open',
+    'Dashboard':  l.dash_title||'',
+    'Sector':     l.sector||'',
+    'Subsector':  l.subsector||'',
+  }));
+  const cols=[
+    {key:'Time',label:'Time'},{key:'User Name',label:'User Name'},
+    {key:'Email',label:'Email'},{key:'Event',label:'Event'},
+    {key:'Dashboard',label:'Dashboard'},{key:'Sector',label:'Sector'},{key:'Subsector',label:'Subsector'},
+  ];
+  downloadIBBA(rows,cols,'Activity Log',`Portal Analytics — Last ${days}d`);
 }
 
 /* ══ START ══ */
