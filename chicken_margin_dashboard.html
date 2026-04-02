@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>U.S. Chicken Spread Tracker — Itaú BBA</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --orange:#FF5500;--black:#1A1A1A;--gray-dark:#333;--gray-mid:#888;
+  --gray-light:#F4F4F4;--border:#E5E5E5;--white:#fff;
+  --green:#27AE60;--red:#C0392B;--blue:#2980B9;
+  --font:'Segoe UI',Helvetica,Arial,sans-serif;
+}
+/* FIX #4 — full page scrollable, no overflow:hidden on root */
+html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-dark);
+  min-height:100%;overflow-y:auto;font-size:13px;}
+
+/* ── TOP BAR ── */
+.top-bar{background:var(--white);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;height:48px;flex-shrink:0;gap:14px;}
+.back-btn{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--gray-mid);
+  cursor:pointer;padding:5px 10px;border-radius:4px;border:1px solid var(--border);
+  background:none;transition:all .15s;white-space:nowrap;}
+.back-btn:hover{color:var(--gray-dark);border-color:#ccc;}
+.back-btn svg{width:14px;height:14px;}
+.top-bar-divider{width:1px;height:22px;background:var(--border);}
+.top-title{font-size:15px;font-weight:700;color:var(--black);}
+.top-sub{font-size:11.5px;color:var(--gray-mid);}
+.top-latest{margin-left:auto;font-size:11px;color:var(--gray-mid);
+  background:#F9F9F9;border:1px solid var(--border);border-radius:4px;
+  padding:4px 10px;white-space:nowrap;}
+.top-latest strong{color:var(--orange);}
+
+/* ── ORANGE RULE ── */
+.orange-rule{height:3px;background:var(--orange);flex-shrink:0;}
+
+/* ── VIEW CONTROLS — FIX #1: view buttons pushed to RIGHT ── */
+.controls-bar{background:var(--white);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:flex-end;
+  padding:0 20px;height:40px;gap:16px;flex-shrink:0;}
+.view-label{font-size:11px;font-weight:700;color:var(--gray-mid);
+  text-transform:uppercase;letter-spacing:.5px;}
+.view-btns{display:flex;gap:4px;}
+.view-btn{padding:4px 12px;font-size:12px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:none;color:var(--gray-mid);
+  font-family:var(--font);transition:all .15s;}
+.view-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
+.view-btn:hover:not(.active){border-color:#ccc;color:var(--gray-dark);}
+
+/* ── MAIN LAYOUT — FIX #4: no forced height, page scrolls ── */
+.main-wrap{display:flex;flex-direction:column;}
+
+/* ── CHARTS ROW — FIX #2: taller charts ── */
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;
+  padding:12px 16px 8px;flex-shrink:0;}
+.chart-card{background:var(--white);border:1px solid var(--border);border-radius:8px;
+  padding:14px 16px 10px;display:flex;flex-direction:column;}
+.chart-card-header{display:flex;justify-content:space-between;align-items:flex-start;
+  margin-bottom:10px;}
+.chart-title{font-size:12.5px;font-weight:700;color:var(--black);}
+/* FIX #3: R² stat placed in chart card header (right side) */
+.chart-stat{font-size:11px;color:var(--gray-mid);text-align:right;}
+.chart-stat strong{color:var(--orange);}
+/* FIX #2: taller chart area */
+.chart-wrap{flex:1;min-height:0;position:relative;height:220px;}
+
+/* ── BOTTOM ROW — FIX #4: no overflow:hidden ── */
+.bottom-row{display:grid;grid-template-columns:236px 1fr;gap:0;
+  border-top:1px solid var(--border);}
+
+/* ── WEIGHT PANEL ── */
+.weight-panel{background:var(--white);border-right:1px solid var(--border);
+  overflow-y:auto;padding:14px 14px 24px;flex-shrink:0;}
+.weight-panel::-webkit-scrollbar{width:4px;}
+.weight-panel::-webkit-scrollbar-thumb{background:#e0e0e0;border-radius:2px;}
+.panel-title{font-size:13px;font-weight:700;color:var(--black);
+  margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--orange);}
+.wp-section{font-size:10px;font-weight:700;color:var(--orange);
+  text-transform:uppercase;letter-spacing:.7px;margin:12px 0 7px;}
+.wp-section:first-of-type{margin-top:2px;}
+
+/* slider rows */
+.slider-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+.slider-row label{font-size:11.5px;color:var(--gray-dark);flex:0 0 90px;white-space:nowrap;}
+.slider-row input[type=range]{flex:1;min-width:0;
+  -webkit-appearance:none;height:4px;border-radius:2px;
+  background:linear-gradient(to right,var(--orange) 0%,var(--orange) var(--pct,50%),#ddd var(--pct,50%),#ddd 100%);
+  cursor:pointer;outline:none;}
+.slider-row input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+  background:var(--orange);border:2px solid white;
+  box-shadow:0 1px 4px rgba(0,0,0,.25);cursor:pointer;}
+.slider-row .sl-val{font-size:11.5px;font-weight:700;color:var(--orange);
+  flex:0 0 32px;text-align:right;}
+.auto-row{display:flex;justify-content:space-between;align-items:center;
+  margin-bottom:7px;padding:3px 0;}
+.auto-row span:first-child{font-size:11.5px;color:var(--gray-mid);}
+.auto-row .auto-val{font-size:11.5px;font-weight:600;color:var(--gray-mid);}
+.total-check{font-size:11px;margin:5px 0 3px;text-align:right;}
+.total-check.ok{color:var(--green);}
+.total-check.err{color:var(--red);}
+
+/* cost lag radio */
+.lag-row{display:flex;gap:5px;margin-bottom:4px;}
+.lag-btn{flex:1;padding:5px 4px;border:1.5px solid var(--border);border-radius:4px;
+  font-size:11px;font-family:var(--font);cursor:pointer;
+  background:none;color:var(--gray-mid);transition:all .15s;text-align:center;}
+.lag-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
+.lag-desc{font-size:10.5px;color:var(--gray-mid);margin-bottom:8px;line-height:1.4;}
+
+/* reset button */
+.reset-btn{width:100%;padding:7px;margin-top:14px;
+  border:1.5px solid var(--border);border-radius:5px;
+  font-size:12px;font-family:var(--font);cursor:pointer;
+  background:none;color:var(--gray-mid);transition:all .15s;}
+.reset-btn:hover{border-color:var(--orange);color:var(--orange);}
+
+/* ── TABLE PANEL — no internal scroll; page scroll only ── */
+.table-panel{display:flex;flex-direction:column;}
+.table-tabs{display:flex;align-items:center;justify-content:space-between;
+  padding:8px 16px 8px;border-bottom:1px solid var(--border);
+  background:var(--white);flex-shrink:0;}
+.table-section-title{font-size:13px;font-weight:700;color:var(--black);}
+.table-tab-btns{display:flex;gap:4px;}
+.tab-btn{padding:4px 14px;font-size:12px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:none;color:var(--gray-mid);
+  font-family:var(--font);transition:all .15s;}
+.tab-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
+.tab-btn:hover:not(.active){border-color:#ccc;color:var(--gray-dark);}
+/* no max-height, no overflow:auto — table expands fully, page scrolls */
+.table-wrap{overflow:visible;}
+table{width:100%;border-collapse:collapse;font-size:11.5px;}
+thead tr{background:#FAFAFA;border-bottom:2px solid var(--border);}
+th{padding:7px 9px;text-align:right;font-weight:700;font-size:10.5px;
+  color:var(--gray-mid);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;
+  background:#FAFAFA;}
+th:first-child{text-align:left;}
+td{padding:5px 9px;text-align:right;border-bottom:1px solid #F5F5F5;
+  color:var(--gray-dark);white-space:nowrap;}
+td:first-child{text-align:left;font-weight:600;color:var(--black);}
+tr:hover td{background:#FFF8F5;}
+.td-spread{font-weight:700;color:var(--orange);}
+.td-gm{font-weight:700;color:var(--black);}
+.td-na{color:#ccc;font-size:10.5px;}
+.td-pos{color:var(--green);font-weight:600;}
+.td-neg{color:var(--red);font-weight:600;}
+
+/* ── LOADING OVERLAY ── */
+#loading{position:fixed;inset:0;background:rgba(255,255,255,.92);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:999;}
+.spinner{width:36px;height:36px;border:3px solid #eee;
+  border-top-color:var(--orange);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+#loading p{font-size:13px;color:var(--gray-mid);}
+
+/* ── NOTE BAR ── */
+.note-bar{background:#FFFBF8;border-top:1px solid #FFD9C8;
+  padding:5px 20px;font-size:10.5px;color:var(--gray-mid);flex-shrink:0;display:none;}
+.note-bar em{color:var(--orange);}
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <p>Loading chicken.db…</p>
+</div>
+
+<!-- TOP BAR -->
+<div class="top-bar">
+  <button class="back-btn" onclick="goBack()">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M10 3L5 8l5 5"/>
+    </svg>
+    Back
+  </button>
+  <div class="top-bar-divider"></div>
+  <div>
+    <div class="top-title">U.S. Chicken Spread Tracker</div>
+    <div class="top-sub">Quarterly spread model vs. reported gross margins — PPC Pilgrim's Pride (U.S. Operations)</div>
+  </div>
+  <div class="top-latest">Latest: <strong id="latest-q">—</strong></div>
+</div>
+<div class="orange-rule"></div>
+
+<!-- VIEW CONTROLS — FIX #1: buttons on the RIGHT -->
+<div class="controls-bar">
+  <span class="view-label">VIEW:</span>
+  <div class="view-btns">
+    <button class="view-btn" data-view="all" onclick="setView('all')">All</button>
+    <button class="view-btn active" data-view="3y"  onclick="setView('3y')">Last 3 Years</button>
+    <button class="view-btn" data-view="1y"  onclick="setView('1y')">Last 12 Months</button>
+  </div>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="main-wrap">
+
+  <!-- CHARTS ROW -->
+  <div class="charts-row">
+    <!-- LEFT: QoQ Delta chart — FIX #3: R²/r/N in header (full-series) -->
+    <div class="chart-card">
+      <div class="chart-card-header">
+        <div class="chart-title">QoQ ΔSpread vs. ΔPPC U.S. Gross Margin — by Quarter</div>
+        <div class="chart-stat" id="chart1-stat">r = <strong>—</strong> &nbsp; R² = <strong>—</strong> &nbsp; N = <strong>—</strong></div>
+      </div>
+      <div class="chart-wrap"><canvas id="deltaChart"></canvas></div>
+    </div>
+    <!-- RIGHT: Level chart — FIX #3: R²/r/N in header -->
+    <div class="chart-card">
+      <div class="chart-card-header">
+        <div class="chart-title">Spread Proxy % vs. PPC Gross Mg - U.S. Segment</div>
+        <div class="chart-stat" id="chart2-stat">r = <strong>—</strong> &nbsp; R² = <strong>—</strong> &nbsp; N = <strong>—</strong></div>
+      </div>
+      <div class="chart-wrap"><canvas id="levelChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- BOTTOM ROW -->
+  <div class="bottom-row">
+
+    <!-- WEIGHT PARAMETERS — FIX #6: Revenue Mix → Parts Weights → Cost Lag -->
+    <div class="weight-panel">
+      <div class="panel-title">Weight Parameters</div>
+
+      <!-- Revenue Mix -->
+      <div class="wp-section">Revenue Mix</div>
+      <!-- FIX #7: "BW" → "Wholesale" -->
+      <div class="slider-row">
+        <label>Wholesale</label>
+        <input type="range" id="sl-bw" min="0" max="100" step="5" value="33"
+               oninput="updateSlider(this,'bw-val','parts-pct')">
+        <span class="sl-val" id="bw-val">33%</span>
+      </div>
+      <div class="auto-row">
+        <span>Parts Composite</span>
+        <span class="auto-val" id="parts-pct">67%</span>
+      </div>
+
+      <!-- FIX #6: Parts Weights BEFORE Cost Lag -->
+      <div class="wp-section">Parts Weights</div>
+      <div class="slider-row">
+        <label>Breast B/S</label>
+        <input type="range" id="sl-breast" min="0" max="100" step="1" value="40"
+               oninput="updatePartsSlider('breast')">
+        <span class="sl-val" id="breast-val">40%</span>
+      </div>
+      <div class="slider-row">
+        <label>Leg Qtrs</label>
+        <input type="range" id="sl-leg" min="0" max="100" step="1" value="34"
+               oninput="updatePartsSlider('leg')">
+        <span class="sl-val" id="leg-val">34%</span>
+      </div>
+      <div class="slider-row">
+        <label>Wings</label>
+        <input type="range" id="sl-wings" min="0" max="100" step="1" value="17"
+               oninput="updatePartsSlider('wings')">
+        <span class="sl-val" id="wings-val">17%</span>
+      </div>
+      <div class="slider-row">
+        <label>Tenderloins</label>
+        <input type="range" id="sl-tenders" min="0" max="100" step="1" value="9"
+               oninput="updatePartsSlider('tenders')">
+        <span class="sl-val" id="tenders-val">9%</span>
+      </div>
+      <div class="total-check ok" id="parts-total-check">✓ Total = 100%</div>
+
+      <!-- FIX #6: Cost Lag AFTER Parts Weights -->
+      <!-- FIX #7: "FC" → "Feed Cost" -->
+      <div class="wp-section">Feed Cost Lag</div>
+      <div class="lag-row">
+        <button class="lag-btn" data-lag="spot" onclick="setLag('spot')">Spot</button>
+        <button class="lag-btn active" data-lag="0q5" onclick="setLag('0q5')">0.5Q</button>
+        <button class="lag-btn" data-lag="1q5" onclick="setLag('1q5')">1.5Q</button>
+      </div>
+      <div class="lag-desc" id="lag-desc">Feed Cost = 50% current quarter + 50% prior quarter</div>
+
+      <button class="reset-btn" onclick="resetDefaults()">↺ Reset to default</button>
+    </div>
+
+    <!-- TABLE PANEL -->
+    <div class="table-panel">
+      <div class="table-tabs">
+        <span class="table-section-title">Spread Analysis</span>
+        <div class="table-tab-btns">
+          <button class="tab-btn active" id="tab-quarterly" onclick="setTab('quarterly')">Quarterly</button>
+          <button class="tab-btn"        id="tab-monthly"   onclick="setTab('monthly')">Monthly</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead id="table-head">
+            <tr>
+              <th style="text-align:left;">Period</th>
+              <th>Wholesale<br><span style="font-weight:400;font-size:9.5px;">(cts/lb)</span></th>
+              <th>Breast<br><span style="font-weight:400;font-size:9.5px;">(cts/lb)</span></th>
+              <th>Leg Qtrs<br><span style="font-weight:400;font-size:9.5px;">(cts/lb)</span></th>
+              <th>Wings<br><span style="font-weight:400;font-size:9.5px;">(cts/lb)</span></th>
+              <th>Tenders<br><span style="font-weight:400;font-size:9.5px;">(cts/lb)</span></th>
+              <th>Soybean Meal<br><span style="font-weight:400;font-size:9.5px;">($/t)</span></th>
+              <th>Corn<br><span style="font-weight:400;font-size:9.5px;">($/bu)</span></th>
+              <th id="th-fc">Feed Cost<br><span style="font-weight:400;font-size:9.5px;">(selected lag)</span></th>
+              <th>Spread%</th>
+              <th>PPC Gross Mg<br><span style="font-weight:400;font-size:9.5px;">U.S. Segment</span></th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- bottom-row -->
+
+  <div class="note-bar" id="note-bar">
+    * Sliders adjust Revenue Mix and Parts Weights only — PPC data is as reported.
+    Feed cost: <em>FC = 2.9802×Corn($/bu) + 0.03851×Soybean Meal($/ton)</em>. Best model: Wholesale 33% + Parts 67%, Feed Cost lag 0.5Q, R²=0.817.
+  </div>
+
+</div><!-- main-wrap -->
+
+<script>
+// ─── GLOBALS ──────────────────────────────────────────────────────────────────
+let DB_ROWS     = [];      // raw quarterly rows from SQLite
+let charts      = {};      // Chart.js instances
+let currentView = '3y';   // 'all' | '3y' | '1y'
+let currentLag  = '0q5';  // 'spot' | '0q5' | '1q5'
+let currentTab  = 'quarterly'; // 'quarterly' | 'monthly'
+const DEFAULTS  = { bw:33, breast:40, leg:34, wings:17, tenders:9, lag:'0q5' };
+
+// ─── MONTHLY DATA (embedded from USDA AMS / ERS Excel files) ─────────────────
+// Fields: period, year_m, bw, breast, leg_qtrs, wings, tenders, sbm, corn, fc_spot
+// Monthly BW from USDA ERS Broiler Composite; parts/costs from AMS weekly averages.
+// PPC GM% is quarterly only — shown at quarter-end months (Mar/Jun/Sep/Dec) via DB_ROWS.
+
+const MONTHLY_ROWS = [{"period":"Jan-17","year_m":201701,"bw":77.33,"breast":101.34,"leg_qtrs":31.81,"wings":192.83,"tenders":134.3,"sbm":null,"corn":null,"fc_spot":null},{"period":"Feb-17","year_m":201702,"bw":77.6,"breast":108.74,"leg_qtrs":33.71,"wings":187.53,"tenders":164.96,"sbm":null,"corn":null,"fc_spot":null},{"period":"Mar-17","year_m":201703,"bw":83.4,"breast":124.45,"leg_qtrs":38.14,"wings":180.49,"tenders":181.53,"sbm":null,"corn":null,"fc_spot":null},{"period":"Apr-17","year_m":201704,"bw":88.8,"breast":129.63,"leg_qtrs":39.45,"wings":188.25,"tenders":180.0,"sbm":null,"corn":null,"fc_spot":null},{"period":"May-17","year_m":201705,"bw":94.48,"breast":152.09,"leg_qtrs":41.13,"wings":195.95,"tenders":187.53,"sbm":null,"corn":null,"fc_spot":null},{"period":"Jun-17","year_m":201706,"bw":98.23,"breast":163.55,"leg_qtrs":41.42,"wings":203.59,"tenders":204.97,"sbm":null,"corn":null,"fc_spot":null},{"period":"Jul-17","year_m":201707,"bw":99.14,"breast":157.55,"leg_qtrs":44.2,"wings":204.26,"tenders":208.15,"sbm":null,"corn":null,"fc_spot":null},{"period":"Aug-17","year_m":201708,"bw":94.68,"breast":145.75,"leg_qtrs":44.54,"wings":208.03,"tenders":204.02,"sbm":null,"corn":null,"fc_spot":null},{"period":"Sep-17","year_m":201709,"bw":86.03,"breast":133.73,"leg_qtrs":42.13,"wings":212.64,"tenders":171.09,"sbm":null,"corn":null,"fc_spot":null},{"period":"Oct-17","year_m":201710,"bw":78.95,"breast":115.16,"leg_qtrs":39.99,"wings":201.73,"tenders":137.84,"sbm":309.8,"corn":3.135,"fc_spot":21.274},{"period":"Nov-17","year_m":201711,"bw":76.54,"breast":107.32,"leg_qtrs":38.43,"wings":181.24,"tenders":130.24,"sbm":307.8,"corn":3.14,"fc_spot":21.212},{"period":"Dec-17","year_m":201712,"bw":79.25,"breast":104.58,"leg_qtrs":36.76,"wings":168.71,"tenders":128.8,"sbm":309.5,"corn":3.218,"fc_spot":21.508},{"period":"Jan-18","year_m":201801,"bw":79.37,"breast":106.47,"leg_qtrs":37.34,"wings":169.54,"tenders":144.62,"sbm":314.6,"corn":3.275,"fc_spot":21.876},{"period":"Feb-18","year_m":201802,"bw":80.87,"breast":106.04,"leg_qtrs":39.67,"wings":166.63,"tenders":176.89,"sbm":354.9,"corn":3.422,"fc_spot":23.865},{"period":"Mar-18","year_m":201803,"bw":83.34,"breast":125.62,"leg_qtrs":39.92,"wings":149.55,"tenders":168.36,"sbm":372.7,"corn":3.538,"fc_spot":24.895},{"period":"Apr-18","year_m":201804,"bw":85.1,"breast":135.81,"leg_qtrs":41.03,"wings":143.99,"tenders":165.48,"sbm":375.1,"corn":3.538,"fc_spot":24.989},{"period":"May-18","year_m":201805,"bw":87.03,"breast":127.94,"leg_qtrs":40.97,"wings":139.97,"tenders":169.36,"sbm":386.8,"corn":3.737,"fc_spot":26.032},{"period":"Jun-18","year_m":201806,"bw":87.68,"breast":119.33,"leg_qtrs":36.84,"wings":137.33,"tenders":165.0,"sbm":349.8,"corn":3.396,"fc_spot":23.591},{"period":"Jul-18","year_m":201807,"bw":85.57,"breast":127.9,"leg_qtrs":34.65,"wings":140.22,"tenders":178.73,"sbm":335.8,"corn":3.23,"fc_spot":22.557},{"period":"Aug-18","year_m":201808,"bw":76.36,"breast":113.51,"leg_qtrs":31.96,"wings":140.23,"tenders":148.01,"sbm":326.5,"corn":3.226,"fc_spot":22.188},{"period":"Sep-18","year_m":201809,"bw":73.17,"breast":96.29,"leg_qtrs":30.95,"wings":148.87,"tenders":123.59,"sbm":305.9,"corn":3.11,"fc_spot":21.051},{"period":"Oct-18","year_m":201810,"bw":71.34,"breast":90.81,"leg_qtrs":29.65,"wings":148.64,"tenders":128.26,"sbm":301.8,"corn":3.288,"fc_spot":21.42},{"period":"Nov-18","year_m":201811,"bw":70.0,"breast":85.53,"leg_qtrs":28.36,"wings":145.73,"tenders":124.14,"sbm":292.6,"corn":3.383,"fc_spot":21.349},{"period":"Dec-18","year_m":201812,"bw":71.26,"breast":90.41,"leg_qtrs":28.77,"wings":150.56,"tenders":126.65,"sbm":296.4,"corn":3.492,"fc_spot":21.822},{"period":"Jan-19","year_m":201901,"bw":77.52,"breast":97.11,"leg_qtrs":31.03,"wings":173.05,"tenders":147.25,"sbm":298.8,"corn":3.545,"fc_spot":22.072},{"period":"Feb-19","year_m":201902,"bw":76.77,"breast":107.09,"leg_qtrs":30.61,"wings":189.43,"tenders":172.28,"sbm":290.1,"corn":3.517,"fc_spot":21.655},{"period":"Mar-19","year_m":201903,"bw":79.53,"breast":115.26,"leg_qtrs":39.67,"wings":183.72,"tenders":177.0,"sbm":291.5,"corn":3.408,"fc_spot":21.383},{"period":"Apr-19","year_m":201904,"bw":81.67,"breast":118.83,"leg_qtrs":42.06,"wings":190.22,"tenders":163.03,"sbm":291.3,"corn":3.373,"fc_spot":21.272},{"period":"May-19","year_m":201905,"bw":82.24,"breast":120.94,"leg_qtrs":44.65,"wings":191.12,"tenders":179.44,"sbm":288.6,"corn":3.634,"fc_spot":21.942},{"period":"Jun-19","year_m":201906,"bw":82.41,"breast":116.55,"leg_qtrs":44.41,"wings":190.51,"tenders":178.89,"sbm":null,"corn":4.213,"fc_spot":null},{"period":"Jul-19","year_m":201907,"bw":82.06,"breast":112.74,"leg_qtrs":45.04,"wings":189.04,"tenders":178.54,"sbm":304.9,"corn":4.36,"fc_spot":24.734},{"period":"Aug-19","year_m":201908,"bw":77.83,"breast":105.95,"leg_qtrs":45.02,"wings":190.5,"tenders":162.55,"sbm":286.1,"corn":3.768,"fc_spot":22.249},{"period":"Sep-19","year_m":201909,"bw":73.46,"breast":94.44,"leg_qtrs":41.22,"wings":187.78,"tenders":157.41,"sbm":287.2,"corn":3.545,"fc_spot":21.624},{"period":"Oct-19","year_m":201910,"bw":69.82,"breast":89.8,"leg_qtrs":36.77,"wings":186.31,"tenders":145.56,"sbm":296.9,"corn":3.792,"fc_spot":22.735},{"period":"Nov-19","year_m":201911,"bw":68.13,"breast":92.19,"leg_qtrs":34.21,"wings":174.14,"tenders":128.59,"sbm":291.2,"corn":3.678,"fc_spot":22.174},{"period":"Dec-19","year_m":201912,"bw":69.69,"breast":96.81,"leg_qtrs":39.58,"wings":169.79,"tenders":127.4,"sbm":289.7,"corn":3.732,"fc_spot":22.28},{"period":"Jan-20","year_m":202001,"bw":71.33,"breast":95.48,"leg_qtrs":40.88,"wings":183.93,"tenders":129.45,"sbm":290.8,"corn":3.816,"fc_spot":22.571},{"period":"Feb-20","year_m":202002,"bw":69.29,"breast":89.95,"leg_qtrs":40.64,"wings":175.99,"tenders":139.58,"sbm":288.6,"corn":3.735,"fc_spot":22.246},{"period":"Mar-20","year_m":202003,"bw":71.21,"breast":116.1,"leg_qtrs":38.0,"wings":168.78,"tenders":148.19,"sbm":310.2,"corn":3.487,"fc_spot":22.339},{"period":"Apr-20","year_m":202004,"bw":63.18,"breast":91.48,"leg_qtrs":34.27,"wings":102.72,"tenders":111.47,"sbm":295.4,"corn":3.073,"fc_spot":20.533},{"period":"May-20","year_m":202005,"bw":68.28,"breast":137.91,"leg_qtrs":33.68,"wings":161.29,"tenders":112.58,"sbm":288.5,"corn":2.998,"fc_spot":20.046},{"period":"Jun-20","year_m":202006,"bw":68.68,"breast":124.06,"leg_qtrs":33.08,"wings":169.64,"tenders":133.41,"sbm":288.0,"corn":3.135,"fc_spot":20.435},{"period":"Jul-20","year_m":202007,"bw":67.1,"breast":117.12,"leg_qtrs":29.64,"wings":194.55,"tenders":148.59,"sbm":291.0,"corn":3.151,"fc_spot":20.599},{"period":"Aug-20","year_m":202008,"bw":65.88,"breast":113.16,"leg_qtrs":28.45,"wings":202.34,"tenders":176.11,"sbm":291.2,"corn":3.143,"fc_spot":20.579},{"period":"Sep-20","year_m":202009,"bw":62.61,"breast":99.73,"leg_qtrs":25.01,"wings":209.9,"tenders":184.94,"sbm":323.9,"corn":3.52,"fc_spot":22.964},{"period":"Oct-20","year_m":202010,"bw":63.18,"breast":91.19,"leg_qtrs":26.39,"wings":220.91,"tenders":155.35,"sbm":371.1,"corn":3.792,"fc_spot":25.594},{"period":"Nov-20","year_m":202011,"bw":66.3,"breast":89.89,"leg_qtrs":26.12,"wings":229.78,"tenders":150.37,"sbm":395.2,"corn":4.03,"fc_spot":27.228},{"period":"Dec-20","year_m":202012,"bw":67.24,"breast":93.34,"leg_qtrs":27.26,"wings":229.67,"tenders":159.79,"sbm":403.5,"corn":4.192,"fc_spot":28.032},{"period":"Jan-21","year_m":202101,"bw":68.38,"breast":109.0,"leg_qtrs":28.6,"wings":245.34,"tenders":165.65,"sbm":446.3,"corn":5.085,"fc_spot":32.341},{"period":"Feb-21","year_m":202102,"bw":72.59,"breast":134.58,"leg_qtrs":35.6,"wings":276.73,"tenders":186.0,"sbm":436.7,"corn":5.355,"fc_spot":32.777},{"period":"Mar-21","year_m":202103,"bw":76.9,"breast":137.03,"leg_qtrs":39.59,"wings":283.52,"tenders":189.87,"sbm":417.1,"corn":5.42,"fc_spot":32.215},{"period":"Apr-21","year_m":202104,"bw":87.51,"breast":174.01,"leg_qtrs":43.85,"wings":292.95,"tenders":199.35,"sbm":418.9,"corn":6.243,"fc_spot":34.736},{"period":"May-21","year_m":202105,"bw":94.74,"breast":215.12,"leg_qtrs":45.26,"wings":322.77,"tenders":243.53,"sbm":427.1,"corn":6.845,"fc_spot":36.849},{"period":"Jun-21","year_m":202106,"bw":93.06,"breast":201.82,"leg_qtrs":45.49,"wings":301.84,"tenders":272.57,"sbm":381.3,"corn":6.644,"fc_spot":34.484},{"period":"Jul-21","year_m":202107,"bw":90.66,"breast":181.23,"leg_qtrs":46.28,"wings":319.13,"tenders":285.44,"sbm":366.4,"corn":6.342,"fc_spot":33.009},{"period":"Aug-21","year_m":202108,"bw":90.17,"breast":189.69,"leg_qtrs":42.81,"wings":314.6,"tenders":296.89,"sbm":366.4,"corn":6.041,"fc_spot":32.114},{"period":"Sep-21","year_m":202109,"bw":89.66,"breast":210.02,"leg_qtrs":42.18,"wings":314.44,"tenders":304.19,"sbm":350.5,"corn":5.135,"fc_spot":28.802},{"period":"Oct-21","year_m":202110,"bw":86.6,"breast":189.78,"leg_qtrs":40.67,"wings":296.25,"tenders":275.76,"sbm":333.8,"corn":5.109,"fc_spot":28.08},{"period":"Nov-21","year_m":202111,"bw":85.17,"breast":182.45,"leg_qtrs":35.88,"wings":282.0,"tenders":251.2,"sbm":368.0,"corn":5.572,"fc_spot":30.78},{"period":"Dec-21","year_m":202112,"bw":88.88,"breast":203.19,"leg_qtrs":36.8,"wings":281.49,"tenders":257.44,"sbm":407.8,"corn":5.777,"fc_spot":32.919},{"period":"Jan-22","year_m":202201,"bw":90.92,"breast":232.37,"leg_qtrs":38.19,"wings":272.72,"tenders":258.98,"sbm":427.7,"corn":6.0,"fc_spot":34.352},{"period":"Feb-22","year_m":202202,"bw":91.45,"breast":266.1,"leg_qtrs":39.12,"wings":258.08,"tenders":272.78,"sbm":463.5,"corn":6.332,"fc_spot":36.72},{"period":"Mar-22","year_m":202203,"bw":100.8,"breast":279.34,"leg_qtrs":39.95,"wings":223.28,"tenders":283.52,"sbm":496.2,"corn":7.315,"fc_spot":40.911},{"period":"Apr-22","year_m":202204,"bw":113.09,"breast":301.43,"leg_qtrs":45.16,"wings":208.68,"tenders":293.72,"sbm":473.5,"corn":7.575,"fc_spot":40.808},{"period":"May-22","year_m":202205,"bw":125.76,"breast":354.45,"leg_qtrs":53.23,"wings":188.81,"tenders":330.42,"sbm":438.7,"corn":7.798,"fc_spot":40.131},{"period":"Jun-22","year_m":202206,"bw":128.95,"breast":333.51,"leg_qtrs":59.36,"wings":180.94,"tenders":351.32,"sbm":452.5,"corn":7.643,"fc_spot":40.203},{"period":"Jul-22","year_m":202207,"bw":123.1,"breast":280.55,"leg_qtrs":61.55,"wings":164.97,"tenders":352.34,"sbm":499.7,"corn":6.816,"fc_spot":39.556},{"period":"Aug-22","year_m":202208,"bw":114.09,"breast":227.1,"leg_qtrs":58.4,"wings":129.31,"tenders":345.43,"sbm":532.9,"corn":6.68,"fc_spot":40.428},{"period":"Sep-22","year_m":202209,"bw":111.98,"breast":192.58,"leg_qtrs":44.03,"wings":116.99,"tenders":285.09,"sbm":496.6,"corn":6.656,"fc_spot":38.961},{"period":"Oct-22","year_m":202210,"bw":103.9,"breast":117.7,"leg_qtrs":36.98,"wings":109.19,"tenders":161.08,"sbm":437.9,"corn":6.61,"fc_spot":36.564},{"period":"Nov-22","year_m":202211,"bw":89.62,"breast":98.69,"leg_qtrs":33.96,"wings":100.53,"tenders":108.53,"sbm":423.7,"corn":6.463,"fc_spot":35.576},{"period":"Dec-22","year_m":202212,"bw":84.33,"breast":95.97,"leg_qtrs":35.59,"wings":89.74,"tenders":103.87,"sbm":457.5,"corn":6.448,"fc_spot":36.834},{"period":"Jan-23","year_m":202301,"bw":83.84,"breast":100.62,"leg_qtrs":34.5,"wings":91.24,"tenders":106.16,"sbm":487.6,"corn":6.613,"fc_spot":38.486},{"period":"Feb-23","year_m":202302,"bw":88.47,"breast":122.97,"leg_qtrs":37.24,"wings":110.29,"tenders":116.5,"sbm":515.6,"corn":6.628,"fc_spot":39.608},{"period":"Mar-23","year_m":202303,"bw":93.87,"breast":136.46,"leg_qtrs":41.98,"wings":108.19,"tenders":130.3,"sbm":491.1,"corn":6.35,"fc_spot":37.838},{"period":"Apr-23","year_m":202304,"bw":97.22,"breast":131.33,"leg_qtrs":46.59,"wings":102.34,"tenders":159.73,"sbm":462.9,"corn":6.365,"fc_spot":36.797},{"period":"May-23","year_m":202305,"bw":96.74,"breast":136.38,"leg_qtrs":47.81,"wings":88.97,"tenders":189.61,"sbm":426.1,"corn":6.06,"fc_spot":34.469},{"period":"Jun-23","year_m":202306,"bw":94.76,"breast":132.73,"leg_qtrs":49.55,"wings":88.71,"tenders":196.22,"sbm":420.5,"corn":6.106,"fc_spot":34.392},{"period":"Jul-23","year_m":202307,"bw":91.62,"breast":116.27,"leg_qtrs":49.57,"wings":101.45,"tenders":194.21,"sbm":449.4,"corn":5.44,"fc_spot":33.521},{"period":"Aug-23","year_m":202308,"bw":92.84,"breast":135.48,"leg_qtrs":42.68,"wings":123.65,"tenders":204.22,"sbm":443.9,"corn":5.065,"fc_spot":32.19},{"period":"Sep-23","year_m":202309,"bw":96.04,"breast":164.17,"leg_qtrs":41.45,"wings":153.86,"tenders":233.76,"sbm":414.8,"corn":4.526,"fc_spot":29.463},{"period":"Oct-23","year_m":202310,"bw":93.9,"breast":145.34,"leg_qtrs":41.13,"wings":168.24,"tenders":199.76,"sbm":420.4,"corn":4.59,"fc_spot":29.867},{"period":"Nov-23","year_m":202311,"bw":92.37,"breast":112.1,"leg_qtrs":41.02,"wings":160.67,"tenders":130.52,"sbm":469.9,"corn":4.4,"fc_spot":31.209},{"period":"Dec-23","year_m":202312,"bw":94.6,"breast":98.6,"leg_qtrs":41.35,"wings":158.92,"tenders":122.22,"sbm":442.4,"corn":4.43,"fc_spot":30.238},{"period":"Jan-24","year_m":202401,"bw":96.52,"breast":115.24,"leg_qtrs":42.3,"wings":169.65,"tenders":134.21,"sbm":383.4,"corn":4.23,"fc_spot":27.372},{"period":"Feb-24","year_m":202402,"bw":99.57,"breast":122.56,"leg_qtrs":44.96,"wings":188.16,"tenders":153.97,"sbm":369.4,"corn":3.995,"fc_spot":26.13},{"period":"Mar-24","year_m":202403,"bw":106.64,"breast":142.32,"leg_qtrs":47.11,"wings":214.07,"tenders":177.86,"sbm":361.1,"corn":4.064,"fc_spot":26.018},{"period":"Apr-24","year_m":202404,"bw":107.08,"breast":170.37,"leg_qtrs":49.66,"wings":228.39,"tenders":204.85,"sbm":362.5,"corn":4.11,"fc_spot":26.209},{"period":"May-24","year_m":202405,"bw":112.99,"breast":181.98,"leg_qtrs":50.8,"wings":231.06,"tenders":229.04,"sbm":394.2,"corn":4.292,"fc_spot":27.973},{"period":"Jun-24","year_m":202406,"bw":116.26,"breast":172.16,"leg_qtrs":52.66,"wings":252.72,"tenders":252.22,"sbm":393.3,"corn":4.103,"fc_spot":27.372},{"period":"Jul-24","year_m":202407,"bw":117.48,"breast":175.45,"leg_qtrs":52.2,"wings":262.71,"tenders":251.44,"sbm":384.1,"corn":3.795,"fc_spot":26.102},{"period":"Aug-24","year_m":202408,"bw":115.1,"breast":187.32,"leg_qtrs":52.02,"wings":243.35,"tenders":251.88,"sbm":360.0,"corn":3.518,"fc_spot":24.349},{"period":"Sep-24","year_m":202409,"bw":114.01,"breast":191.17,"leg_qtrs":52.64,"wings":231.94,"tenders":246.22,"sbm":362.6,"corn":3.705,"fc_spot":25.006},{"period":"Oct-24","year_m":202410,"bw":110.09,"breast":155.54,"leg_qtrs":51.78,"wings":207.83,"tenders":196.7,"sbm":357.5,"corn":3.753,"fc_spot":24.95},{"period":"Nov-24","year_m":202411,"bw":121.29,"breast":148.05,"leg_qtrs":51.65,"wings":189.52,"tenders":167.55,"sbm":319.6,"corn":3.954,"fc_spot":24.092},{"period":"Dec-24","year_m":202412,"bw":110.68,"breast":147.75,"leg_qtrs":51.66,"wings":188.84,"tenders":167.05,"sbm":298.3,"corn":4.192,"fc_spot":23.983},{"period":"Jan-25","year_m":202501,"bw":110.97,"breast":147.92,"leg_qtrs":51.5,"wings":190.51,"tenders":171.25,"sbm":308.3,"corn":4.478,"fc_spot":25.217},{"period":"Feb-25","year_m":202502,"bw":121.65,"breast":172.78,"leg_qtrs":51.46,"wings":186.85,"tenders":169.91,"sbm":296.1,"corn":4.553,"fc_spot":24.968},{"period":"Mar-25","year_m":202503,"bw":107.69,"breast":223.48,"leg_qtrs":51.65,"wings":151.35,"tenders":179.57,"sbm":295.0,"corn":4.297,"fc_spot":24.167},{"period":"Apr-25","year_m":202504,"bw":117.01,"breast":266.06,"leg_qtrs":53.63,"wings":138.89,"tenders":204.19,"sbm":290.9,"corn":4.53,"fc_spot":24.704},{"period":"May-25","year_m":202505,"bw":117.01,"breast":276.26,"leg_qtrs":54.47,"wings":117.09,"tenders":238.14,"sbm":291.3,"corn":4.322,"fc_spot":24.097},{"period":"Jun-25","year_m":202506,"bw":117.76,"breast":246.15,"leg_qtrs":54.77,"wings":125.51,"tenders":260.85,"sbm":279.0,"corn":4.15,"fc_spot":23.113},{"period":"Jul-25","year_m":202507,"bw":116.76,"breast":190.25,"leg_qtrs":54.85,"wings":158.4,"tenders":265.87,"sbm":259.4,"corn":3.968,"fc_spot":21.815},{"period":"Aug-25","year_m":202508,"bw":113.13,"breast":198.83,"leg_qtrs":55.44,"wings":172.5,"tenders":255.85,"sbm":282.2,"corn":3.72,"fc_spot":21.955},{"period":"Sep-25","year_m":202509,"bw":105.74,"breast":153.78,"leg_qtrs":54.92,"wings":149.88,"tenders":203.78,"sbm":306.5,"corn":3.888,"fc_spot":23.389},{"period":"Oct-25","year_m":202510,"bw":83.79,"breast":114.12,"leg_qtrs":49.12,"wings":110.24,"tenders":144.45,"sbm":294.0,"corn":3.92,"fc_spot":23.003},{"period":"Nov-25","year_m":202511,"bw":80.23,"breast":114.4,"leg_qtrs":45.39,"wings":102.11,"tenders":139.01,"sbm":325.4,"corn":4.043,"fc_spot":24.581},{"period":"Dec-25","year_m":202512,"bw":82.32,"breast":115.81,"leg_qtrs":47.89,"wings":98.03,"tenders":139.62,"sbm":307.5,"corn":4.178,"fc_spot":24.293},{"period":"Jan-26","year_m":202601,"bw":null,"breast":126.41,"leg_qtrs":48.2,"wings":106.37,"tenders":143.65,"sbm":300.8,"corn":4.118,"fc_spot":23.857},{"period":"Feb-26","year_m":202602,"bw":null,"breast":145.1,"leg_qtrs":50.36,"wings":119.63,"tenders":152.11,"sbm":312.4,"corn":4.15,"fc_spot":24.4},{"period":"Mar-26","year_m":202603,"bw":null,"breast":152.53,"leg_qtrs":51.63,"wings":99.81,"tenders":155.06,"sbm":325.7,"corn":4.395,"fc_spot":25.642}];
+
+// ─── NAVIGATION ──────────────────────────────────────────────────────────────
+function goBack() {
+  if (window.parent && window.parent !== window) {
+    window.parent.postMessage({ action: 'closeDash' }, '*');
+  } else {
+    window.history.back();
+  }
+}
+
+// ─── LOAD DATABASE ───────────────────────────────────────────────────────────
+async function loadDB() {
+  const loadEl = document.getElementById('loading');
+  try {
+    const SQL = await initSqlJs({
+      locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}`
+    });
+    const resp = await fetch('chicken.db?v=20260402');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: chicken.db not found`);
+    const buf  = await resp.arrayBuffer();
+    const db   = new SQL.Database(new Uint8Array(buf));
+    const stmt = db.exec(`
+      SELECT quarter, year_q, bw, breast, leg_qtrs, wings, tenders,
+             sbm, corn, fc_spot, fc_0q5, fc_1q5, ppc_us_gm, ppc_cnl_gm
+      FROM quarterly ORDER BY year_q ASC
+    `);
+    if (!stmt.length) throw new Error("Empty database");
+    const cols = stmt[0].columns;
+    DB_ROWS = stmt[0].values.map(r => {
+      const obj = {};
+      cols.forEach((c, i) => { obj[c] = r[i]; });
+      return obj;
+    });
+    db.close();
+    loadEl.style.display = 'none';
+    document.getElementById('note-bar').style.display = 'block';
+    // latest quarter
+    const latestQ = DB_ROWS.filter(r => r.ppc_us_gm !== null).slice(-1)[0];
+    if (latestQ) document.getElementById('latest-q').textContent = latestQ.quarter;
+    // init sliders
+    initSliders();
+    render();
+  } catch(e) {
+    loadEl.innerHTML = `<div style="text-align:center;padding:40px">
+      <div style="font-size:14px;color:#c00;margin-bottom:8px;">⚠ Failed to load chicken.db</div>
+      <div style="font-size:12px;color:#888;">${e.message}</div>
+    </div>`;
+  }
+}
+
+// ─── SLIDER HELPERS ──────────────────────────────────────────────────────────
+function initSliders() {
+  ['bw','breast','leg','wings','tenders'].forEach(id => {
+    const el = document.getElementById(`sl-${id}`);
+    if (el) updateSliderBg(el);
+  });
+  document.getElementById('parts-pct').textContent =
+    (100 - parseInt(document.getElementById('sl-bw').value)) + '%';
+}
+
+function updateSlider(el, valId, autoId) {
+  const v = parseInt(el.value);
+  document.getElementById(valId).textContent = v + '%';
+  if (autoId) document.getElementById(autoId).textContent = (100 - v) + '%';
+  updateSliderBg(el);
+  render();
+}
+
+function updateSliderBg(el) {
+  const pct = ((el.value - el.min) / (el.max - el.min)) * 100;
+  el.style.setProperty('--pct', pct + '%');
+}
+
+// FIX #5 — Parts weights auto-sum to 100%
+// When changedId slider is moved, proportionally redistribute the other three.
+function updatePartsSlider(changedId) {
+  const ids    = ['breast','leg','wings','tenders'];
+  const others = ids.filter(id => id !== changedId);
+
+  const changedVal = parseInt(document.getElementById(`sl-${changedId}`).value);
+  // Clamp so others can't go negative
+  const safeVal = Math.min(changedVal, 100);
+  document.getElementById(`sl-${changedId}`).value = safeVal;
+
+  const remaining = 100 - safeVal;
+
+  // Current values of the other three (for proportional redistribution)
+  const otherVals = others.map(id => parseInt(document.getElementById(`sl-${id}`).value));
+  const otherSum  = otherVals.reduce((s, v) => s + v, 0);
+
+  let newVals;
+  if (otherSum === 0) {
+    // Distribute evenly
+    const each = Math.floor(remaining / others.length);
+    newVals = others.map((_, i) =>
+      i === others.length - 1 ? remaining - each * (others.length - 1) : each
+    );
+  } else {
+    // Proportional redistribution
+    newVals = otherVals.map(v => Math.round((v / otherSum) * remaining));
+    // Correct rounding drift on the last slider
+    const diff = remaining - newVals.reduce((s, v) => s + v, 0);
+    newVals[newVals.length - 1] = Math.max(0, newVals[newVals.length - 1] + diff);
+  }
+
+  // Apply redistributed values
+  others.forEach((id, i) => {
+    const el = document.getElementById(`sl-${id}`);
+    el.value = newVals[i];
+    document.getElementById(`${id}-val`).textContent = newVals[i] + '%';
+    updateSliderBg(el);
+  });
+
+  // Update changed slider display
+  document.getElementById(`${changedId}-val`).textContent = safeVal + '%';
+  updateSliderBg(document.getElementById(`sl-${changedId}`));
+
+  // Verify total (should always be 100 after the math above)
+  const total = ids.reduce((s, id) =>
+    s + parseInt(document.getElementById(`sl-${id}`).value), 0);
+  const chk = document.getElementById('parts-total-check');
+  if (total === 100) { chk.textContent = '✓ Total = 100%'; chk.className = 'total-check ok'; }
+  else               { chk.textContent = `⚠ Total = ${total}% (must = 100%)`; chk.className = 'total-check err'; }
+
+  render();
+}
+
+function setLag(lag) {
+  currentLag = lag;
+  document.querySelectorAll('.lag-btn').forEach(b => b.classList.toggle('active', b.dataset.lag === lag));
+  const descs = {
+    'spot': 'Feed Cost = current quarter average (no lag)',
+    '0q5':  'Feed Cost = 50% current quarter + 50% prior quarter',
+    '1q5':  'Feed Cost = 50% prior quarter + 50% two-quarters-ago',
+  };
+  document.getElementById('lag-desc').textContent = descs[lag];
+  render();
+}
+
+// ─── TAB SWITCHING ────────────────────────────────────────────────────────────
+function setTab(tab) {
+  currentTab = tab;
+  document.getElementById('tab-quarterly').classList.toggle('active', tab === 'quarterly');
+  document.getElementById('tab-monthly').classList.toggle('active',   tab === 'monthly');
+  const thFc = document.getElementById('th-fc');
+  if (tab === 'monthly') {
+    thFc.innerHTML = 'Feed Cost<br><span style="font-weight:400;font-size:9.5px;">(spot)</span>';
+  } else {
+    thFc.innerHTML = 'Feed Cost<br><span style="font-weight:400;font-size:9.5px;">(selected lag)</span>';
+  }
+  render();
+}
+
+// ─── MONTHLY SERIES ───────────────────────────────────────────────────────────
+function computeSpreadMonthly(row, w) {
+  const { bwPct, partsPct, parts } = w;
+  if (row.breast == null || row.leg_qtrs == null) return null;
+  const pc = parts.breast * row.breast + parts.leg  * row.leg_qtrs
+           + parts.wings  * row.wings  + parts.tenders * row.tenders;
+  const rev = (bwPct > 0 && row.bw != null) ? bwPct * row.bw + partsPct * pc : pc;
+  const fc  = row.fc_spot;
+  if (!rev || !fc || rev <= 0) return null;
+  return (rev - fc) / rev;
+}
+
+function buildGmMap() {
+  const map = {};
+  for (const row of DB_ROWS) {
+    const gm = row.ppc_us_gm != null ? row.ppc_us_gm : row.ppc_cnl_gm;
+    if (gm != null) {
+      const yr = Math.floor(row.year_q / 10);
+      const q  = row.year_q % 10;
+      map[yr * 100 + q * 3] = gm;
+    }
+  }
+  return map;
+}
+
+function computeMonthlySeries() {
+  const w = getWeights(), gmMap = buildGmMap();
+  return MONTHLY_ROWS.map((row, i) => {
+    const spread  = computeSpreadMonthly(row, w);
+    const gm      = gmMap[row.year_m] != null ? gmMap[row.year_m] : null;
+    const prev    = i > 0 ? MONTHLY_ROWS[i - 1] : null;
+    const ps      = prev ? computeSpreadMonthly(prev, w) : null;
+    const dSpread = (spread != null && ps != null) ? (spread - ps) : null;
+    let dGm = null;
+    if (gm != null) {
+      for (let j = i - 1; j >= 0; j--) {
+        const pg = gmMap[MONTHLY_ROWS[j].year_m];
+        if (pg != null) { dGm = gm - pg; break; }
+      }
+    }
+    return { ...row, spread, gm, dSpread, dGm, fc: row.fc_spot };
+  });
+}
+
+function filterMonthlyByView(series) {
+  if (currentView === 'all') return series;
+  const last = series.filter(r => r.spread != null).slice(-1)[0];
+  if (!last) return series;
+  const lastY = Math.floor(last.year_m / 100);
+  const lastM = last.year_m % 100;
+  const cut = currentView === '3y' ? (lastY-3)*100+lastM : (lastY-1)*100+lastM;
+  return series.filter(r => r.year_m >= cut);
+}
+
+function setView(v) {
+  currentView = v;
+  document.querySelectorAll('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+  render();
+}
+
+function resetDefaults() {
+  document.getElementById('sl-bw').value = DEFAULTS.bw;
+  document.getElementById('bw-val').textContent = DEFAULTS.bw + '%';
+  document.getElementById('parts-pct').textContent = (100 - DEFAULTS.bw) + '%';
+  ['breast','leg','wings','tenders'].forEach(id => {
+    document.getElementById(`sl-${id}`).value = DEFAULTS[id];
+    document.getElementById(`${id}-val`).textContent = DEFAULTS[id] + '%';
+  });
+  initSliders();
+  setLag(DEFAULTS.lag);
+  const chk = document.getElementById('parts-total-check');
+  chk.textContent = '✓ Total = 100%'; chk.className = 'total-check ok';
+  render();
+}
+
+// ─── WEIGHTS ─────────────────────────────────────────────────────────────────
+function getWeights() {
+  const bwPct = parseInt(document.getElementById('sl-bw').value) / 100;
+  const raw = {
+    breast:  parseInt(document.getElementById('sl-breast').value),
+    leg:     parseInt(document.getElementById('sl-leg').value),
+    wings:   parseInt(document.getElementById('sl-wings').value),
+    tenders: parseInt(document.getElementById('sl-tenders').value),
+  };
+  const total = raw.breast + raw.leg + raw.wings + raw.tenders;
+  // Normalize parts weights
+  const norm = total > 0 ? {
+    breast:  raw.breast  / total,
+    leg:     raw.leg     / total,
+    wings:   raw.wings   / total,
+    tenders: raw.tenders / total,
+  } : { breast:.40, leg:.34, wings:.17, tenders:.09 };
+  return { bwPct, partsPct: 1 - bwPct, parts: norm, lag: currentLag };
+}
+
+// ─── COMPUTE SERIES ──────────────────────────────────────────────────────────
+function fcValue(row) {
+  const key = { spot:'fc_spot', '0q5':'fc_0q5', '1q5':'fc_1q5' }[currentLag] || 'fc_0q5';
+  return row[key];
+}
+
+function computeSpread(row, w) {
+  const { bwPct, partsPct, parts } = w;
+  if (row.breast == null || row.leg_qtrs == null) return null;
+  const partsComp = parts.breast * row.breast + parts.leg  * row.leg_qtrs
+                  + parts.wings  * row.wings  + parts.tenders * row.tenders;
+  let rev;
+  if (bwPct > 0 && row.bw != null) {
+    rev = bwPct * row.bw + partsPct * partsComp;
+  } else {
+    rev = partsComp;
+  }
+  const fc = fcValue(row);
+  if (!rev || !fc || rev <= 0) return null;
+  return (rev - fc) / rev;
+}
+
+function computeSeries() {
+  const w     = getWeights();
+  const ppcGm = r => r.ppc_us_gm ?? r.ppc_cnl_gm;
+
+  return DB_ROWS.map((row, i) => {
+    const spread    = computeSpread(row, w);
+    const gm        = ppcGm(row);
+    const prevRow   = i > 0 ? DB_ROWS[i - 1] : null;
+    const prevSpread = prevRow ? computeSpread(prevRow, w) : null;
+    const prevGm    = prevRow ? ppcGm(prevRow) : null;
+    const dSpread   = (spread != null && prevSpread != null) ? (spread - prevSpread) : null;
+    const dGm       = (gm != null && prevGm != null)         ? (gm - prevGm)         : null;
+    const fc        = fcValue(row);
+    return { ...row, spread, gm, dSpread, dGm, fc };
+  });
+}
+
+function filterByView(series) {
+  if (currentView === 'all') return series;
+  // Anchor the window on the last quarter that has a reported GM —
+  // this ensures "Last 3 Years" / "Last 12 Months" always refer to
+  // a period with meaningful correlation data (not just spread-only rows).
+  const last = series.filter(r => r.gm != null).slice(-1)[0];
+  if (!last) return series;
+  const lastY = Math.floor(last.year_q / 10);
+  const lastQ = last.year_q % 10;
+  if (currentView === '3y') {
+    const cutY = lastY - 3;
+    return series.filter(r => r.year_q >= cutY * 10 + lastQ);
+  }
+  if (currentView === '1y') {
+    const cutY = lastY - 1;
+    return series.filter(r => r.year_q >= cutY * 10 + lastQ);
+  }
+  return series;
+}
+
+// ─── PEARSON CORRELATION ─────────────────────────────────────────────────────
+function pearson(xs, ys) {
+  const pairs = xs.map((x, i) => [x, ys[i]]).filter(([a, b]) => a != null && b != null);
+  const n = pairs.length;
+  if (n < 4) return { r: null, r2: null, n };
+  const mx = pairs.reduce((s, [a]) => s + a, 0) / n;
+  const my = pairs.reduce((s, [, b]) => s + b, 0) / n;
+  let num = 0, dx = 0, dy = 0;
+  for (const [a, b] of pairs) {
+    num += (a - mx) * (b - my);
+    dx  += (a - mx) ** 2;
+    dy  += (b - my) ** 2;
+  }
+  const r = Math.sqrt(dx * dy) > 0 ? num / Math.sqrt(dx * dy) : null;
+  return { r, r2: r != null ? r * r : null, n };
+}
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+function render() {
+  // Charts are ALWAYS quarterly — only the table switches with the tab
+  const qSeries  = computeSeries();
+  const qVisible = filterByView(qSeries);
+  renderDeltaChart(qVisible);
+  renderLevelChart(qVisible);
+
+  // Table switches based on selected tab
+  if (currentTab === 'monthly') {
+    renderMonthlyTable(computeMonthlySeries());
+  } else {
+    renderTable(qSeries);
+  }
+}
+
+// ─── CHART 1: QoQ Delta ──────────────────────────────────────────────────────
+function renderDeltaChart(data) {
+  const valid   = data.filter(r => r.dSpread != null && r.dGm != null);
+  const labels  = valid.map(r => r.quarter);
+  const spread  = valid.map(r => +(r.dSpread * 100).toFixed(3));
+  const gm      = valid.map(r => +(r.dGm     * 100).toFixed(3));
+
+  // Correlation over VIEW-FILTERED window — changes with view selector
+  const corr  = pearson(valid.map(r => r.dSpread), valid.map(r => r.dGm));
+  const rStr  = corr.r  != null ? corr.r.toFixed(3)  : '—';
+  const r2Str = corr.r2 != null ? corr.r2.toFixed(3) : '—';
+  const nStr  = corr.n  >= 1    ? corr.n              : '—';
+  document.getElementById('chart1-stat').innerHTML =
+    `r = <strong>${rStr}</strong> &nbsp; R² = <strong>${r2Str}</strong> &nbsp; N = <strong>${nStr}</strong>`;
+
+  const ctx = document.getElementById('deltaChart').getContext('2d');
+  if (charts.delta) charts.delta.destroy();
+  charts.delta = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'ΔSpread', data: spread, backgroundColor: 'rgba(255,85,0,0.82)',
+          borderRadius: 3, borderSkipped: false },
+        { label: 'ΔGross Mgn', data: gm, backgroundColor: 'rgba(150,150,150,0.6)',
+          borderRadius: 3, borderSkipped: false },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font:{size:10.5}, boxWidth:10, padding:12, color:'#555' } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y >= 0 ? '+' : ''}${ctx.parsed.y.toFixed(2)}pp`
+          }
+        }
+      },
+      scales: {
+        x: { grid:{display:false}, ticks:{font:{size:10}, color:'#888', maxRotation:45} },
+        y: {
+          grid: { color:'#f0f0f0' },
+          ticks: { font:{size:10}, color:'#888',
+            callback: v => (v >= 0 ? '+' : '') + v.toFixed(1) + 'pp' }
+        }
+      }
+    }
+  });
+}
+
+// ─── CHART 2: Level comparison (dual axis) ───────────────────────────────────
+function renderLevelChart(data) {
+  const valid   = data.filter(r => r.spread != null || r.gm != null);
+  const labels  = valid.map(r => r.quarter);
+  const spreadL = valid.map(r => r.spread != null ? +(r.spread * 100).toFixed(2) : null);
+  const gmL     = valid.map(r => r.gm     != null ? +(r.gm     * 100).toFixed(2) : null);
+
+  // Levels correlation (spread% vs GM%) — view-filtered, changes with selector
+  const bothValid = valid.filter(r => r.spread != null && r.gm != null);
+  const corrLev   = pearson(bothValid.map(r => r.spread), bothValid.map(r => r.gm));
+  const rLStr  = corrLev.r  != null ? corrLev.r.toFixed(3)  : '—';
+  const r2LStr = corrLev.r2 != null ? corrLev.r2.toFixed(3) : '—';
+  const nLStr  = corrLev.n  >= 1    ? corrLev.n              : '—';
+  document.getElementById('chart2-stat').innerHTML =
+    `r = <strong>${rLStr}</strong> &nbsp; R² = <strong>${r2LStr}</strong> &nbsp; N = <strong>${nLStr}</strong>`;
+
+  const ctx = document.getElementById('levelChart').getContext('2d');
+  if (charts.level) charts.level.destroy();
+  charts.level = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Spread Proxy %',
+          data: spreadL,
+          yAxisID: 'y',
+          borderColor: 'rgb(255,85,0)',
+          backgroundColor: 'rgba(255,85,0,0.07)',
+          tension: 0.3, borderWidth: 2.5,
+          pointRadius: 3, pointBackgroundColor: 'rgb(255,85,0)',
+          fill: true,
+          spanGaps: true,
+        },
+        {
+          label: 'PPC Gross Mg - U.S. Segment',
+          data: gmL,
+          yAxisID: 'y2',
+          borderColor: 'rgb(80,80,80)',
+          backgroundColor: 'transparent',
+          tension: 0.3, borderWidth: 2, borderDash: [5,4],
+          pointRadius: 3, pointBackgroundColor: 'rgb(80,80,80)',
+          spanGaps: true,
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font:{size:10.5}, boxWidth:12, padding:12, color:'#555' } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + '%' : '—'}`
+          }
+        }
+      },
+      scales: {
+        x: { grid:{display:false}, ticks:{font:{size:10}, color:'#888', maxRotation:45} },
+        y: {
+          type: 'linear', position: 'left',
+          grid: { color: '#f0f0f0' },
+          ticks: { font:{size:10}, color: 'rgb(255,85,0)', callback: v => v.toFixed(0) + '%' },
+          title: { display: true, text: 'Spread %', font:{size:9.5}, color: 'rgb(255,85,0)' }
+        },
+        y2: {
+          type: 'linear', position: 'right',
+          grid: { drawOnChartArea: false },
+          ticks: { font:{size:10}, color:'#555', callback: v => v.toFixed(0) + '%' },
+          title: { display: true, text: 'PPC Gross Mg %', font:{size:9.5}, color:'#555' }
+        }
+      }
+    }
+  });
+}
+
+// ─── MONTHLY TABLE ────────────────────────────────────────────────────────────
+function renderMonthlyTable(series) {
+  const tbody = document.getElementById('table-body');
+  const hasData = r => r.bw != null || r.breast != null || r.leg_qtrs != null ||
+                       r.wings != null || r.tenders != null || r.sbm != null ||
+                       r.corn != null || r.fc != null || r.gm != null;
+  const rows  = [...series].reverse().filter(hasData);
+  const fmtN   = (v,d=1) => v != null ? v.toFixed(d) : '<span class="td-na">—</span>';
+  const fmtPct = (v,d=1) => v != null ? (v*100).toFixed(d)+'%' : '<span class="td-na">—</span>';
+  tbody.innerHTML = rows.map(r => {
+    const sc = r.spread != null ? 'td-spread' : 'td-na';
+    const gc = r.gm     != null ? 'td-gm'     : 'td-na';
+    return `<tr>
+      <td>${r.period}</td>
+      <td>${fmtN(r.bw)}</td>
+      <td>${fmtN(r.breast)}</td>
+      <td>${fmtN(r.leg_qtrs)}</td>
+      <td>${fmtN(r.wings)}</td>
+      <td>${fmtN(r.tenders)}</td>
+      <td>${fmtN(r.sbm,0)}</td>
+      <td>${fmtN(r.corn,2)}</td>
+      <td>${fmtN(r.fc,2)}</td>
+      <td class="${sc}">${fmtPct(r.spread)}</td>
+      <td class="${gc}">${fmtPct(r.gm)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── TABLE ────────────────────────────────────────────────────────────────────
+function renderTable(series) {
+  const tbody = document.getElementById('table-body');
+  // Only show rows that have at least one data point (price, cost, or GM)
+  const hasData = r => r.bw != null || r.breast != null || r.leg_qtrs != null ||
+                       r.wings != null || r.tenders != null || r.sbm != null ||
+                       r.corn != null || r.fc != null || r.gm != null;
+  const rows  = [...series].reverse().filter(hasData);
+  const fmtN  = (v, dec=1) => v != null ? v.toFixed(dec) : '<span class="td-na">—</span>';
+  const fmtPct = (v, dec=1) => v != null ? (v*100).toFixed(dec) + '%' : '<span class="td-na">—</span>';
+  tbody.innerHTML = rows.map(r => {
+    const spreadClass = r.spread != null ? 'td-spread' : 'td-na';
+    const gmClass     = r.gm     != null ? 'td-gm'     : 'td-na';
+    return `<tr>
+      <td>${r.quarter}</td>
+      <td>${fmtN(r.bw)}</td>
+      <td>${fmtN(r.breast)}</td>
+      <td>${fmtN(r.leg_qtrs)}</td>
+      <td>${fmtN(r.wings)}</td>
+      <td>${fmtN(r.tenders)}</td>
+      <td>${fmtN(r.sbm,0)}</td>
+      <td>${fmtN(r.corn,2)}</td>
+      <td>${fmtN(r.fc,2)}</td>
+      <td class="${spreadClass}">${fmtPct(r.spread)}</td>
+      <td class="${gmClass}">${fmtPct(r.gm)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+loadDB();
+</script>
+</body>
+</html>
