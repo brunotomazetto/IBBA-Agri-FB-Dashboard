@@ -120,12 +120,16 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 
 /* ── TABLE PANEL — no internal scroll; page scroll only ── */
 .table-panel{display:flex;flex-direction:column;}
-.table-tabs{display:flex;align-items:center;padding:8px 16px 0;
-  border-bottom:1px solid var(--border);background:var(--white);flex-shrink:0;gap:4px;}
-.tab-btn{padding:5px 14px;font-size:12px;border:1px solid var(--border);
-  border-radius:4px 4px 0 0;cursor:pointer;font-family:var(--font);
-  background:none;color:var(--gray-mid);transition:all .12s;}
+.table-tabs{display:flex;align-items:center;justify-content:space-between;
+  padding:8px 16px 8px;border-bottom:1px solid var(--border);
+  background:var(--white);flex-shrink:0;}
+.table-section-title{font-size:13px;font-weight:700;color:var(--black);}
+.table-tab-btns{display:flex;gap:4px;}
+.tab-btn{padding:4px 14px;font-size:12px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:none;color:var(--gray-mid);
+  font-family:var(--font);transition:all .15s;}
 .tab-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
+.tab-btn:hover:not(.active){border-color:#ccc;color:var(--gray-dark);}
 /* no max-height, no overflow:auto — table expands fully, page scrolls */
 .table-wrap{overflow:visible;}
 table{width:100%;border-collapse:collapse;font-size:11.5px;}
@@ -280,8 +284,11 @@ tr:hover td{background:#FFF8F5;}
     <!-- TABLE PANEL -->
     <div class="table-panel">
       <div class="table-tabs">
-        <button class="tab-btn active" id="tab-quarterly" onclick="setTab('quarterly')">Quarterly</button>
-        <button class="tab-btn"        id="tab-monthly"   onclick="setTab('monthly')">Monthly</button>
+        <span class="table-section-title">Spread Analysis</span>
+        <div class="table-tab-btns">
+          <button class="tab-btn active" id="tab-quarterly" onclick="setTab('quarterly')">Quarterly</button>
+          <button class="tab-btn"        id="tab-monthly"   onclick="setTab('monthly')">Monthly</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -652,18 +659,17 @@ function pearson(xs, ys) {
 
 // ─── RENDER ──────────────────────────────────────────────────────────────────
 function render() {
+  // Charts are ALWAYS quarterly — only the table switches with the tab
+  const qSeries  = computeSeries();
+  const qVisible = filterByView(qSeries);
+  renderDeltaChart(qVisible);
+  renderLevelChart(qVisible);
+
+  // Table switches based on selected tab
   if (currentTab === 'monthly') {
-    const series  = computeMonthlySeries();
-    const visible = filterMonthlyByView(series);
-    renderDeltaChart(visible);
-    renderLevelChart(visible);
-    renderMonthlyTable(series);
+    renderMonthlyTable(computeMonthlySeries());
   } else {
-    const series  = computeSeries();
-    const visible = filterByView(series);
-    renderDeltaChart(visible);
-    renderLevelChart(visible);
-    renderTable(series);
+    renderTable(qSeries);
   }
 }
 
