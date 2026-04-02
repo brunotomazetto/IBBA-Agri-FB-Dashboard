@@ -650,6 +650,30 @@ function renderSidebar(){
 }
 
 /* ══ SETTINGS ══ */
+async function renderAnalytics(){
+  const area=document.getElementById('content-area');
+  const isAdmin=STATE.currentUser?.is_admin;
+  const tabs=isAdmin?[
+    { id:'admin-panel',  label:'&#128101; Users &amp; Team'   },
+    { id:'content-mgmt', label:'&#128202; Content &amp; Tabs' },
+    { id:'analytics',    label:'&#128200; Analytics'          },
+    { id:'my-account',   label:'&#128273; My Account'         },
+  ]:[{ id:'my-account', label:'&#128273; My Account' }];
+  const tabBar=tabs.map(t=>`<div class="settings-tab ${STATE.activeSettingsTab===t.id?'active':''}" onclick="switchSettingsTab('${t.id}')">${t.label}</div>`).join('');
+  // Show skeleton while loading
+  area.innerHTML=`
+    <div class="greeting"><h1>Settings &mdash; Administration Panel</h1><p>${todayStr()}</p></div>
+    <div class="settings-tabs-bar">${tabBar}</div>
+    <div style="text-align:center;padding:48px 24px;color:var(--gray-mid);font-size:13px;">
+      <div class="loading-spinner" style="margin:0 auto 14px;width:28px;height:28px;border-width:2px;"></div>
+      Loading analytics...
+    </div>`;
+  const pane = await buildPaneAnalytics();
+  area.innerHTML=`
+    <div class="greeting"><h1>Settings &mdash; Administration Panel</h1><p>${todayStr()}</p></div>
+    <div class="settings-tabs-bar">${tabBar}</div>
+    <div>${pane}</div>`;
+}
 function buildSettings(){
   const isAdmin=STATE.currentUser?.is_admin;
   const tabs=isAdmin?[
@@ -662,7 +686,7 @@ function buildSettings(){
   let pane='';
   if(STATE.activeSettingsTab==='admin-panel')  pane=buildPaneUsersTeam();
   if(STATE.activeSettingsTab==='content-mgmt') pane=buildPaneContent();
-  if(STATE.activeSettingsTab==='analytics')     pane=buildPaneAnalytics();
+  if(STATE.activeSettingsTab==='analytics')     { renderAnalytics(); return; }
   if(STATE.activeSettingsTab==='my-account')   pane=buildPaneMyAccount();
   return `
     <div class="greeting"><h1>${isAdmin?'Settings &mdash; Administration Panel':'My Account'}</h1><p>${todayStr()}</p></div>
