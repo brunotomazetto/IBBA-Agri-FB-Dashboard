@@ -353,7 +353,7 @@ async function loadDB() {
     const SQL = await initSqlJs({
       locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}`
     });
-    const resp = await fetch('chicken.db');
+    const resp = await fetch('chicken.db?v=20260402');
     if (!resp.ok) throw new Error(`HTTP ${resp.status}: chicken.db not found`);
     const buf  = await resp.arrayBuffer();
     const db   = new SQL.Database(new Uint8Array(buf));
