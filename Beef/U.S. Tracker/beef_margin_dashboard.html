@@ -252,17 +252,34 @@ function renderTimeline(){
       label:`${co} Spread`,
       data:rows.map(r=>{const s=calcSpread(r,snap);return s!=null?+(s*100).toFixed(2):null;}),
       borderColor:col, borderWidth:co===company?2.5:1.5,
-      pointRadius:co===company?3:2, tension:.3, fill:false, spanGaps:true, yAxisID:'y',
+      pointRadius:co===company?3:2, pointHoverRadius:5,
+      tension:.3, fill:false, spanGaps:true, yAxisID:'y',
     });
     const gm=r=>co==='MBRF'?r.mbrf_gm:r.jbs_gm;
     datasets.push({
       label:`${co} Gross Mgn%`,
       data:rows.map(r=>{const m=gm(r);return m!=null?+(m*100).toFixed(2):null;}),
       borderColor:col, borderWidth:co===company?1.5:1,
-      borderDash:[6,3], pointRadius:co===company?2:1,
+      borderDash:[6,3], pointRadius:co===company?2:1, pointHoverRadius:5,
       tension:.3, fill:false, spanGaps:true, yAxisID:'y2',
     });
   });
+  // Compute y2 range from active company's GM% values only, so the active
+  // line always fills the axis rather than being squashed by the other company.
+  const activeGmVals=rows.map(r=>{
+    const v=company==='MBRF'?r.mbrf_gm:r.jbs_gm;
+    return v!=null?+(v*100).toFixed(2):null;
+  }).filter(v=>v!=null);
+  let y2min=undefined, y2max=undefined;
+  if(activeGmVals.length){
+    const lo=Math.min(...activeGmVals), hi=Math.max(...activeGmVals);
+    const pad=Math.max((hi-lo)*0.4, 1.5); // at least ±1.5pp padding
+    y2min=+(lo-pad).toFixed(2);
+    y2max=+(hi+pad).toFixed(2);
+  }
+  const y2Axis=axisR('Gross Margin %','%');
+  if(y2min!==undefined){y2Axis.min=y2min; y2Axis.max=y2max;}
+
   mkChart('chartTimeline',{type:'line',data:{labels,datasets},
     options:{
       plugins:{
@@ -273,7 +290,7 @@ function renderTimeline(){
           }))}},
         tooltip:{...TT},
       },
-      scales:{x:axisX(), y:axisL('Spread %','%'), y2:axisR('Gross Margin %','%')},
+      scales:{x:axisX(), y:axisL('Spread %','%'), y2:y2Axis},
     }});
   const other=company==='MBRF'?'JBS':'MBRF';
   const fn=document.getElementById('disc-note');
