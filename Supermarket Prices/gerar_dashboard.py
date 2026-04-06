@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import date
 
 _ROOT    = Path(__file__).resolve().parent
-DB_PATH  = _ROOT / "data/precos.db"
+DB_PATH  = _ROOT / "precos.db"
 OUT_PATH = _ROOT / "supermarket_prices.html"
 
 def carregar_dados():
