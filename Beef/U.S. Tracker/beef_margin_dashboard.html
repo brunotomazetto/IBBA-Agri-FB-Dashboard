@@ -127,7 +127,8 @@ const V4 = {
   JBS:  { choiceP:70,  ksP:0,   neP:100 },
 };
 
-const CORR_WIN = { MBRF:['2Q23','4Q25'], JBS:['1Q24','3Q25'] };
+// Only start dates are hardcoded; end date always auto-extends to the last available quarter.
+const CORR_WIN = { MBRF:'2Q23', JBS:'1Q24' };
 
 // ══ STATE ════════════════════════════════════════════════════════════════════
 let allQtr=[], allWk=[], allMon=[];
@@ -215,8 +216,9 @@ function renderAll(){ renderBars(); renderTimeline(); renderTable(); updateCostB
 function renderBars(){
   const rows=filteredQtr();
   const statEl=document.getElementById('corr-stat');
-  const [qs,qe]=CORR_WIN[company]||['1Q18','9Q99'];
-  const slice=rows.filter(r=>new Date(r.quarter_start)>=qToDate(qs)&&new Date(r.quarter_start)<=qToDate(qe));
+  const qs=CORR_WIN[company]||'1Q18';
+  // End is always the last available quarter — no hardcoded upper bound.
+  const slice=rows.filter(r=>new Date(r.quarter_start)>=qToDate(qs));
   const getM=r=>company==='MBRF'?r.mbrf_gm:r.jbs_gm;
   const labels=[],dsSp=[],dsMg=[];
   for(let i=1;i<slice.length;i++){
