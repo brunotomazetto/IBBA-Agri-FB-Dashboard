@@ -45,6 +45,7 @@ jobs:
         run: |
           python extractor_chicken.py
         env:
+          USDA_API_KEY: ${{ secrets.USDA_API_KEY }}
           # Set to true to force fresh rebuild (ignores cached data)
           FORCE_REBUILD: ${{ github.event.inputs.reason != '' && 'true' || 'false' }}
 
