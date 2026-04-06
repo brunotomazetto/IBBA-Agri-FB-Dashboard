@@ -146,11 +146,19 @@ def all_quarters():
             if (yr == LAST_YEAR and q > LAST_Q): continue
             yield yr, q, quarter_label(yr, q)
 
+# ─── USDA API Key ────────────────────────────────────────────────────────────
+# Set via environment variable USDA_API_KEY (e.g. in GitHub Actions secrets).
+# Without a key the MARS API may return 403 on cloud runners.
+USDA_API_KEY = os.environ.get("USDA_API_KEY", "").strip()
+
 # ─── HTTP helper ─────────────────────────────────────────────────────────────
 def get_json(url: str, params: dict = None) -> dict:
+    p = dict(params or {})
+    if USDA_API_KEY:
+        p["api_key"] = USDA_API_KEY
     for attempt in range(RETRY):
         try:
-            r = requests.get(url, params=params, timeout=TIMEOUT)
+            r = requests.get(url, params=p, timeout=TIMEOUT)
             r.raise_for_status()
             return r.json()
         except Exception as e:
