@@ -258,7 +258,7 @@ border-radius:16px;padding:2.5rem 2rem;width:340px;text-align:center;box-shadow:
 
 
 .erro-login{{color:var(--red);font-size:12px;margin-top:8px;display:none}}
-#app{{display:none;min-height:100vh}}
+#app{{display:block;min-height:100vh}}
 header{{background:#0a0a0f;color:#fff;padding:.85rem 1.5rem;display:flex;justify-content:space-between;align-items:center}}
 .header-left{{display:flex;align-items:center;gap:12px}}
 .hdiv{{width:1px;height:24px;background:rgba(255,255,255,.25)}}
