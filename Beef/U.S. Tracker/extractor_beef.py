@@ -4,7 +4,7 @@ extractor_beef.py — U.S. Beef Packer Margin Tracker
 All data fetched from USDA AMS PDFs — no API keys required.
 
 PDF sources (always current week):
-  CT150  (5-Area live steer/heifer): https://www.ams.usda.gov/mnreports/lm_ct150.pdf
+  CT150  (5-Area live steer/heifer): https://www.ams.usda.gov/mnreports/ams_2477.pdf
   Cutout (Choice / Select boxed beef): https://www.ams.usda.gov/mnreports/ams_2461.pdf
   Kansas weekly price:                 https://www.ams.usda.gov/mnreports/ams_2484.pdf
   Nebraska weekly price:               https://www.ams.usda.gov/mnreports/ams_2667.pdf
@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "beef.db")
 
 PDF_URLS = {
-    "ct150":    "https://www.ams.usda.gov/mnreports/lm_ct150.pdf",
+    "ct150":    "https://www.ams.usda.gov/mnreports/ams_2477.pdf",
     "cutout":   "https://www.ams.usda.gov/mnreports/ams_2461.pdf",
     "kansas":   "https://www.ams.usda.gov/mnreports/ams_2484.pdf",
     "nebraska": "https://www.ams.usda.gov/mnreports/ams_2667.pdf",
@@ -141,34 +141,32 @@ def _num(s: str) -> float | None:
         return None
 
 
-# ══ CT150 — lm_ct150.pdf ══════════════════════════════════════════════════════
-# Layout (WEEKLY ACCUMULATED section near end of report):
+# ══ CT150 — ams_2477.pdf (report LM_CT150) ════════════════════════════════════
+# Layout (WEEKLY WEIGHTED AVERAGES section):
 #
-#   WEEKLY ACCUMULATED    Head Count    Avg Weight    Avg Price
-#   Live    Steer          2,877         1,501.60      $245.82
-#   Live    Heifer         2,743         1,365.30      $245.83
+#   WEEKLY WEIGHTED AVERAGES
+#   Live FOB Steer    22,550   1,571   244.96
+#   Live FOB Heifer   14,926   1,413   245.02
 #
-# Also has LIVE FOB "Total all grades" rows per section:
-#   Total all grades    22,550  1,275•1,750  238.00•246.50  1,571  244.96
-#                                                                   ^^^^^^ Wtd Avg Price
+# The last number on each Live FOB line is the weighted avg price ($/cwt).
 
 def fetch_ct150() -> dict:
     """
     Returns dict with keys: week_ending, ct150_steer, ct150_heifer
-    Parses WEEKLY ACCUMULATED section first; falls back to LIVE FOB totals.
+    Parses WEEKLY WEIGHTED AVERAGES section from ams_2477.pdf (LM_CT150).
     """
     text = fetch_pdf_text("ct150")
     week = _parse_date(text)
     result = {"week_ending": week, "ct150_steer": None, "ct150_heifer": None}
 
-    # Primary: WEEKLY ACCUMULATED block
-    # Pattern: Live  Steer  <count>  <avg_weight>  $<avg_price>
+    # Primary: WEEKLY WEIGHTED AVERAGES block
+    # Pattern: Live FOB Steer  <head_count>  <avg_weight>  <avg_price>
     m_steer = re.search(
-        r"WEEKLY\s+ACCUMULATED.*?Live\s+Steer\s+[\d,]+\s+[\d,.]+\s+\$?([\d.]+)",
+        r"WEEKLY\s+WEIGHTED\s+AVERAGES.*?Live\s+FOB\s+Steer\s+[\d,]+\s+[\d,]+\s+([\d.]+)",
         text, re.IGNORECASE | re.DOTALL
     )
     m_heifer = re.search(
-        r"WEEKLY\s+ACCUMULATED.*?Live\s+Heifer\s+[\d,]+\s+[\d,.]+\s+\$?([\d.]+)",
+        r"WEEKLY\s+WEIGHTED\s+AVERAGES.*?Live\s+FOB\s+Heifer\s+[\d,]+\s+[\d,]+\s+([\d.]+)",
         text, re.IGNORECASE | re.DOTALL
     )
     if m_steer:
@@ -176,23 +174,13 @@ def fetch_ct150() -> dict:
     if m_heifer:
         result["ct150_heifer"] = _num(m_heifer.group(1))
 
-    # Fallback: "Total all grades" row under STEERS: LIVE FOB
-    # The Wtd Avg Price is the last number on that line
-    if result["ct150_steer"] is None:
-        m = re.search(
-            r"STEERS:?\s+LIVE\s+FOB.*?Total\s+all\s+grades\s+[\d,]+\s+[\d•,. -]+\s+([\d.]+)",
-            text, re.IGNORECASE | re.DOTALL
-        )
-        if m:
-            result["ct150_steer"] = _num(m.group(1))
-
     if result["ct150_steer"] is not None:
         log.info("CT150: steer=$%.2f, heifer=%s  (week %s)",
                  result["ct150_steer"],
                  f"${result['ct150_heifer']:.2f}" if result["ct150_heifer"] else "n/a",
                  week)
     else:
-        log.warning("CT150: could not parse price from PDF")
+        log.warning("CT150: could not parse price from PDF (ams_2477)")
 
     return result
 
