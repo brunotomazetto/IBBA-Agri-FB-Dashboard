@@ -434,7 +434,8 @@ def fetch_parts() -> dict[str, list[dict]]:
 # ─── Feed costs + BW from USDA PDF / TXT ─────────────────────────────────────
 # URLs (overwritten weekly by USDA):
 AMS_SBM_PDF  = "https://www.ams.usda.gov/mnreports/ams_3511.pdf"
-AMS_CORN_TXT = "https://www.ams.usda.gov/mnreports/gx_gr115.txt"
+AMS_CORN_TXT  = "https://www.ams.usda.gov/mnreports/gx_gr115.txt"   # DISCONTINUED Feb 2022
+AMS_CORN_PDF  = "https://www.ams.usda.gov/mnreports/AMS_3192.pdf"    # current source
 AMS_BW_PDF   = "https://www.ams.usda.gov/mnreports/pytbroilerfryer.pdf"
 
 
@@ -473,72 +474,98 @@ def _first_price(text: str, min_val: float = 1.0, max_val: float = 9999.0) -> "f
     return None
 
 
-def fetch_corn_from_txt() -> "list[dict]":
+def fetch_corn_from_pdf() -> "list[dict]":
     """
-    Corn Central Illinois $/bu from USDA AMS text report gx_gr115.txt.
-    The report is a weekly grain transportation/price bulletin.
+    Corn Central Illinois $/bu from USDA AMS PDF AMS_3192.pdf.
+    (gx_gr115.txt was discontinued in Feb 2022 and redirects to this PDF.)
+    The report covers: Central Illinois spot bids and monthly averages.
+    Corn prices are in $/bushel, typically 3-8 $/bu range.
     """
     import re
     try:
-        resp = requests.get(AMS_CORN_TXT, timeout=TIMEOUT)
-        resp.raise_for_status()
-        text = resp.text
-    except Exception as e:
-        print(f"  ✗ Corn TXT download failed: {e}")
+        import pdfplumber, io
+    except ImportError:
+        print("  ⚠ pdfplumber not installed — skipping Corn PDF")
         return []
 
-    # Always print preview for diagnostics (helps tune patterns)
-    print("  TXT preview (first 800 chars):\n" + text[:800])
+    try:
+        resp = requests.get(AMS_CORN_PDF, timeout=TIMEOUT)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"  ✗ Corn PDF download failed: {e}")
+        return []
+
+    try:
+        with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
+            text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+    except Exception as e:
+        print(f"  ✗ Corn PDF parse error: {e}")
+        return []
+
+    print("  Corn PDF preview (first 800 chars):\n" + text[:800])
 
     dt = _parse_report_date(text)
     if not dt:
-        print("  ⚠ Corn TXT: could not parse date")
+        print("  ⚠ Corn PDF: could not parse date")
         return []
-    print(f"  Corn TXT date: {dt.strftime('%Y-%m-%d')}")
+    print(f"  Corn PDF date: {dt.strftime('%Y-%m-%d')}")
 
     lines = text.splitlines()
     price = None
 
-    # Strategy 1: Illinois corn line — e.g. "Illinois ... Corn ... 4.50"
+    # Extended price finder that handles 3-4 decimal places (e.g. "4.2131")
+    def find_corn_price(s: str) -> "float | None":
+        for n in re.findall(r"\b(\d{1,2}\.\d{1,4})\b", s):
+            v = float(n)
+            if 2.0 <= v <= 15.0:
+                return round(v, 4)
+        return None
+
+    # Strategy 1: "Corn" + "Illinois" on same line
     for line in lines:
-        if re.search(r"[Ii]llinois", line) and re.search(r"[Cc]orn", line):
-            p = _first_price(line, min_val=2.0, max_val=15.0)
+        if re.search(r"[Ii]llinois", line) and re.search(r"\b[Cc]orn\b", line):
+            p = find_corn_price(line)
             if p:
                 price = p
-                print(f"  [TXT Illinois+Corn line] {line.strip()}")
+                print(f"  [Corn PDF Illinois+Corn line] {line.strip()}")
                 break
 
-    # Strategy 2: any Corn line with a $/bu price
+    # Strategy 2: standalone "Corn" line with a $/bu price
+    if price is None:
+        for line in lines:
+            stripped = line.strip()
+            if re.match(r"^[Cc]orn\b", stripped):
+                p = find_corn_price(stripped)
+                if p:
+                    price = p
+                    print(f"  [Corn PDF Corn-start line] {stripped}")
+                    break
+
+    # Strategy 3: any line containing "Corn" with a price in $/bu range
     if price is None:
         for line in lines:
             if re.search(r"\b[Cc]orn\b", line):
-                p = _first_price(line, min_val=2.0, max_val=15.0)
+                p = find_corn_price(line)
                 if p:
                     price = p
-                    print(f"  [TXT Corn line] {line.strip()}")
+                    print(f"  [Corn PDF Corn line] {line.strip()}")
                     break
 
-    # Strategy 3: any line with "Yellow" (common format: "Yellow Corn" or "No. 2 Yellow")
+    # Strategy 4: any line with "Yellow" (e.g. "US 2 Yellow")
     if price is None:
         for line in lines:
             if re.search(r"[Yy]ellow", line):
-                p = _first_price(line, min_val=2.0, max_val=15.0)
+                p = find_corn_price(line)
                 if p:
                     price = p
-                    print(f"  [TXT Yellow line] {line.strip()}")
+                    print(f"  [Corn PDF Yellow line] {line.strip()}")
                     break
 
-    # Strategy 4: any price in 2-15 range in the document
-    if price is None:
-        price = _first_price(text, min_val=2.0, max_val=15.0)
-        if price:
-            print(f"  [TXT fallback price] {price}")
-
     if price:
-        print(f"  Corn TXT {dt.strftime('%Y-%m-%d')}: {price:.2f} $/bu")
+        print(f"  Corn PDF {dt.strftime('%Y-%m-%d')}: {price:.4f} $/bu")
         return [{"date": dt, "value": price}]
-    print("  ⚠ Corn TXT: price not found — printing all non-empty lines:")
-    for line in lines[:50]:
+    print("  ⚠ Corn PDF: price not found — printing non-empty lines:")
+    for line in lines[:60]:
         if line.strip():
             print(f"    {line.strip()}")
     return []
@@ -580,42 +607,74 @@ def fetch_sbm_from_pdf() -> "list[dict]":
     price = None
     lines = text.splitlines()
 
-    # Strategy 1: Illinois + FOB-T anywhere in the document.
-    # This is specific enough to avoid false positives.
-    # Table row format: Region  SaleType  Basis  BasisChg  PriceRange  PriceChg  Average  YrAgo  Freight
-    # We want the Average column = 3rd standalone decimal ≥ 150 on the line.
-    for line in lines:
+    # The ams_3511.pdf has multiple commodity sections:
+    #   Soybean Hulls Pellets | Soybean Meal 46.5-48% | Soybean Oil | ...
+    # Each section can have Illinois + FOB-T rows — we must scope to
+    # "Soybean Meal 46.5-48%" only to avoid false positives from other sections.
+
+    # Step 1: find the Soybean Meal section bounds
+    sbm_start = None
+    sbm_end   = len(lines)
+    NEXT_SECTION = re.compile(
+        r"^(Soybean\s+Oil|Soybean\s+Hull|Canola|DDGS|Distillers?|"
+        r"Corn\s+Gluten|Cottonseed|Sunflower|Wheat|Palm|Peas\b|Lupins?)",
+        re.IGNORECASE)
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if re.search(r"[Ss]oybean\s+[Mm]eal", stripped):
+            sbm_start = i
+        elif sbm_start is not None and NEXT_SECTION.match(stripped):
+            sbm_end = i
+            break
+
+    if sbm_start is None:
+        print("  ⚠ SBM PDF: 'Soybean Meal' section header not found")
+        print("  Printing all lines with 'Soybean' or 'Illinois':")
+        for line in lines:
+            if re.search(r"[Ss]oybean|[Ii]llinois", line):
+                print(f"    {line.strip()}")
+        return []
+
+    sbm_lines = lines[sbm_start:sbm_end]
+    print(f"  SBM section: lines {sbm_start}–{sbm_end-1} ({len(sbm_lines)} lines)")
+
+    # Step 2: find Illinois + FOB-T within the Soybean Meal section
+    for line in sbm_lines:
         if re.search(r"[Ii]llinois", line) and re.search(r"FOB.?T", line):
             print(f"  [SBM PDF Illinois FOB-T line] {line.strip()}")
+            # Table columns: Region | SaleType | Basis | BasisChg | PriceRange |
+            #                PriceChg | Average | YearAgo | Freight
+            # Average is the 3rd standalone 3-digit decimal on the line
             all_prices = [float(n) for n in re.findall(r"\b(\d{3}\.\d{2})\b", line)
-                          if float(n) >= 150]
+                          if float(n) >= 250]
             if len(all_prices) >= 3:
                 price = all_prices[2]   # low, high, Average
             elif len(all_prices) == 2:
-                price = all_prices[1]   # range merged; Average is 2nd
+                price = all_prices[1]
             elif len(all_prices) == 1:
                 price = all_prices[0]
             if price:
                 break
 
-    # Strategy 2: any Illinois line with prices ≥ 150 (no FOB-T requirement)
+    # Step 3: fallback — any Illinois line in the SBM section
     if price is None:
-        for line in lines:
+        for line in sbm_lines:
             if re.search(r"[Ii]llinois", line):
-                print(f"  [SBM PDF Illinois line] {line.strip()}")
+                print(f"  [SBM PDF Illinois fallback line] {line.strip()}")
                 prices = [float(n) for n in re.findall(r"\b(\d{3}\.\d{2})\b", line)
-                          if float(n) >= 150]
+                          if float(n) >= 250]
                 if prices:
-                    price = prices[-1]  # last price tends to be Average or near-Average
+                    price = prices[-1]
                     break
 
     if price:
         print(f"  SBM PDF {dt.strftime('%Y-%m-%d')}: {price:.2f} $/ton")
         return [{"date": dt, "value": price}]
 
-    print("  ⚠ SBM PDF: price not found — printing all relevant lines:")
-    for line in lines:
-        if re.search(r"[Ss]oybean|[Ii]llinois|FOB", line):
+    print("  ⚠ SBM PDF: price not found — printing SBM section lines:")
+    for line in sbm_lines:
+        if line.strip():
             print(f"    {line.strip()}")
     return []
 
@@ -724,12 +783,12 @@ def fetch_sbm() -> list[dict]:
 
 
 def fetch_corn() -> list[dict]:
-    """Corn Central Illinois $/bu — TXT primary, MARS API fallback."""
-    print("  Trying TXT source (gx_gr115.txt) …")
-    rows = fetch_corn_from_txt()
+    """Corn Central Illinois $/bu — PDF primary (AMS_3192.pdf), MARS API fallback."""
+    print("  Trying PDF source (AMS_3192.pdf) …")
+    rows = fetch_corn_from_pdf()
     if rows:
         return rows
-    print("  TXT empty — falling back to MARS API …")
+    print("  PDF empty — falling back to MARS API …")
     url = f"{AMS_BASE}/3192"
     params = {"startDate": "01/01/2017", "endDate": datetime.now().strftime("%m/%d/%Y"),
               "allSections": "true"}
