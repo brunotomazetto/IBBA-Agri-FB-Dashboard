@@ -290,22 +290,8 @@ def fetch_parts_from_pdf() -> dict:
                 all_tables.extend(tbls)
 
         # ── Extract report date ──────────────────────────────────────────────
-        dt = None
-        for pat in [
-            r"[Ww]eek\s+[Oo]f\s+([A-Za-z]+ \d{1,2},?\s*\d{4})",
-            r"[Ff]or\s+[Ww]eek\s+[Ee]nding\s+(\d{1,2}/\d{1,2}/\d{4})",
-            r"(\d{2}/\d{2}/\d{4})",
-        ]:
-            m = re.search(pat, full_text)
-            if m:
-                raw = m.group(1).strip()
-                for fmt in ("%B %d %Y", "%B %d, %Y", "%m/%d/%Y"):
-                    try:
-                        dt = datetime.strptime(raw, fmt); break
-                    except ValueError:
-                        continue
-            if dt:
-                break
+        # Delegate to the shared helper (handles all known USDA date formats)
+        dt = _parse_report_date(full_text)
 
         if not dt:
             print("  ⚠ PDF: could not parse report date")
@@ -456,8 +442,11 @@ def _parse_report_date(text: str) -> "datetime | None":
     """Extract report date from USDA report header text."""
     import re
     for pat in [
+        # "Report For: 3/30/2026 to 4/3/2026" — use END date (week-ending)
+        r"[Rr]eport\s+[Ff]or[:\s]+\d{1,2}/\d{1,2}/\d{4}\s+to\s+(\d{1,2}/\d{1,2}/\d{4})",
         r"[Ww]eek\s+[Oo]f\s+([A-Za-z]+ \d{1,2},?\s*\d{4})",
         r"[Ff]or\s+[Ww]eek\s+[Ee]nding[:\s]+(\d{1,2}/\d{1,2}/\d{4})",
+        r"[Rr]eported\s+for\s+([A-Za-z]+ \d{1,2},?\s*\d{4})",
         r"[Dd]ate[:\s]+(\d{1,2}/\d{1,2}/\d{4})",
         r"\b(\d{1,2}/\d{1,2}/\d{4})\b",
         r"\b([A-Za-z]+ \d{1,2},\s*\d{4})\b",
@@ -465,7 +454,8 @@ def _parse_report_date(text: str) -> "datetime | None":
         m = re.search(pat, text)
         if m:
             raw = m.group(1).strip()
-            for fmt in ("%B %d %Y", "%B %d, %Y", "%m/%d/%Y"):
+            for fmt in ("%B %d %Y", "%B %d, %Y", "%b %d, %Y", "%b %d %Y",
+                        "%B %d%Y", "%m/%d/%Y"):
                 try:
                     return datetime.strptime(raw, fmt)
                 except ValueError:
@@ -486,7 +476,7 @@ def _first_price(text: str, min_val: float = 1.0, max_val: float = 9999.0) -> "f
 def fetch_corn_from_txt() -> "list[dict]":
     """
     Corn Central Illinois $/bu from USDA AMS text report gx_gr115.txt.
-    The report is daily/weekly and contains spot bid prices for Central IL.
+    The report is a weekly grain transportation/price bulletin.
     """
     import re
     try:
@@ -497,37 +487,68 @@ def fetch_corn_from_txt() -> "list[dict]":
         print(f"  ✗ Corn TXT download failed: {e}")
         return []
 
+    # Always print preview for diagnostics (helps tune patterns)
+    print("  TXT preview (first 800 chars):\n" + text[:800])
+
     dt = _parse_report_date(text)
     if not dt:
         print("  ⚠ Corn TXT: could not parse date")
-        print("  TXT preview:\n" + text[:600])
         return []
+    print(f"  Corn TXT date: {dt.strftime('%Y-%m-%d')}")
 
-    # Look for corn price: line containing "Corn" and a $/bu price (2-8 $/bu range)
+    lines = text.splitlines()
     price = None
-    for line in text.splitlines():
-        if re.search(r"\bCorn\b", line, re.IGNORECASE):
+
+    # Strategy 1: Illinois corn line — e.g. "Illinois ... Corn ... 4.50"
+    for line in lines:
+        if re.search(r"[Ii]llinois", line) and re.search(r"[Cc]orn", line):
             p = _first_price(line, min_val=2.0, max_val=15.0)
             if p:
                 price = p
-                print(f"  [TXT line] {line.strip()}")
+                print(f"  [TXT Illinois+Corn line] {line.strip()}")
                 break
 
+    # Strategy 2: any Corn line with a $/bu price
     if price is None:
-        # Fallback: first price in 2-15 range in whole doc
+        for line in lines:
+            if re.search(r"\b[Cc]orn\b", line):
+                p = _first_price(line, min_val=2.0, max_val=15.0)
+                if p:
+                    price = p
+                    print(f"  [TXT Corn line] {line.strip()}")
+                    break
+
+    # Strategy 3: any line with "Yellow" (common format: "Yellow Corn" or "No. 2 Yellow")
+    if price is None:
+        for line in lines:
+            if re.search(r"[Yy]ellow", line):
+                p = _first_price(line, min_val=2.0, max_val=15.0)
+                if p:
+                    price = p
+                    print(f"  [TXT Yellow line] {line.strip()}")
+                    break
+
+    # Strategy 4: any price in 2-15 range in the document
+    if price is None:
         price = _first_price(text, min_val=2.0, max_val=15.0)
+        if price:
+            print(f"  [TXT fallback price] {price}")
 
     if price:
         print(f"  Corn TXT {dt.strftime('%Y-%m-%d')}: {price:.2f} $/bu")
         return [{"date": dt, "value": price}]
-    print("  ⚠ Corn TXT: price not found")
+    print("  ⚠ Corn TXT: price not found — printing all non-empty lines:")
+    for line in lines[:50]:
+        if line.strip():
+            print(f"    {line.strip()}")
     return []
 
 
 def fetch_sbm_from_pdf() -> "list[dict]":
     """
-    SBM Illinois FOB Truck $/ton from USDA AMS PDF ams_3511.pdf.
-    National Grain and Oilseed Processor Feedstuff Report (weekly).
+    SBM Illinois FOB-T $/ton from USDA AMS PDF ams_3511.pdf.
+    Table: Region | Sale Type | Basis | Basis Change | Price Range | Price Change | Average | Year Ago | Freight
+    We want: Illinois row with FOB-T freight → Average column.
     """
     import re
     try:
@@ -556,38 +577,77 @@ def fetch_sbm_from_pdf() -> "list[dict]":
         print("  PDF preview:\n" + text[:600])
         return []
 
-    # Look for "Soybean Meal" + "Illinois" + "FOB Truck" → Wtd Avg price ($/ton, 200-700 range)
     price = None
     lines = text.splitlines()
-    for i, line in enumerate(lines):
+
+    # Strategy: find lines containing "Illinois" + "FOB" within the Soybean Meal section.
+    # Table columns: Region | ... | Price Range (NNN.NN-NNN.NN) | Price Change (UP/DN/UNCH NNN.NN) | Average | ...
+    # The Average is the standalone decimal AFTER the price-change notation.
+    in_sbm_section = False
+    for line in lines:
+        # Enter Soybean Meal section
         if re.search(r"[Ss]oybean\s+[Mm]eal", line):
-            print(f"  [PDF line] {line.strip()}")
-            # Search this line + next 3 lines for Illinois FOB price
-            block = " ".join(lines[i:i+4])
-            if re.search(r"[Ii]llinois|[Ii]L\b|FOB", block):
-                p = _first_price(block, min_val=150.0, max_val=800.0)
-                if p:
-                    price = p
+            in_sbm_section = True
+
+        # Exit if we hit a new commodity section (after SBM)
+        if in_sbm_section and re.search(r"^(Corn|Canola|Distiller|DDGS|Wheat|Cottonseed)", line.strip()):
+            in_sbm_section = False
+
+        if not in_sbm_section:
+            continue
+
+        # Look for Illinois + FOB-T line
+        if re.search(r"[Ii]llinois", line) and re.search(r"FOB-T", line):
+            print(f"  [SBM PDF line] {line.strip()}")
+            # Price range pattern: NNN.NN-NNN.NN (with optional space around dash)
+            # Then price change: (UP|DN|UNCH) ...
+            # Then Average: next standalone NNN.NN
+            #
+            # Extract all standalone decimals ≥ 150 from the line
+            all_prices = [float(n) for n in re.findall(r"\b(\d{3}\.\d{2})\b", line)
+                          if float(n) >= 150]
+            # The price range contributes 2 values (low, high); Average is the 3rd
+            if len(all_prices) >= 3:
+                price = all_prices[2]   # 3rd standalone price = Average column
+            elif len(all_prices) == 2:
+                # Range might be merged; Average is 2nd
+                price = all_prices[1]
+            elif len(all_prices) == 1:
+                price = all_prices[0]
+            if price:
+                break
+
+    # Fallback: any Illinois line in SBM section with a price
+    if price is None:
+        in_sbm_section = False
+        for line in lines:
+            if re.search(r"[Ss]oybean\s+[Mm]eal", line):
+                in_sbm_section = True
+            if in_sbm_section and re.search(r"[Ii]llinois", line):
+                print(f"  [SBM fallback line] {line.strip()}")
+                prices = [float(n) for n in re.findall(r"\b(\d{3}\.\d{2})\b", line)
+                          if float(n) >= 150]
+                if prices:
+                    price = prices[-1]  # last price on line tends to be Average
                     break
-            # No Illinois qualifier found — try price directly on this line
-            if price is None:
-                p = _first_price(line, min_val=150.0, max_val=800.0)
-                if p:
-                    price = p
 
     if price:
         print(f"  SBM PDF {dt.strftime('%Y-%m-%d')}: {price:.2f} $/ton")
         return [{"date": dt, "value": price}]
+
     print("  ⚠ SBM PDF: price not found — printing relevant lines:")
     for line in lines:
-        if re.search(r"[Ss]oybean|[Ss]BM|[Ii]llinois", line):
+        if re.search(r"[Ss]oybean|[Ii]llinois", line):
             print(f"    {line.strip()}")
     return []
 
 
 def fetch_bw_from_pdf() -> "list[dict]":
     """
-    Broiler composite wholesale cts/lb from USDA AMS pytbroilerfryer.pdf.
+    Broiler composite wholesale cts/lb.
+    Primary:  ams_3646.pdf (Weekly Chicken Parts report) — contains
+              'National Composite Whole' row with Wtd Avg in cts/lb.
+    Fallback: pytbroilerfryer.pdf (Daily Broiler/Fryer report).
     """
     import re
     try:
@@ -596,45 +656,68 @@ def fetch_bw_from_pdf() -> "list[dict]":
         print("  ⚠ pdfplumber not installed — skipping BW PDF")
         return []
 
-    try:
-        resp = requests.get(AMS_BW_PDF, timeout=TIMEOUT)
-        resp.raise_for_status()
-    except Exception as e:
-        print(f"  ✗ BW PDF download failed: {e}")
-        return []
+    def _extract_bw(pdf_url: str, label: str) -> "list[dict]":
+        try:
+            resp = requests.get(pdf_url, timeout=TIMEOUT)
+            resp.raise_for_status()
+        except Exception as e:
+            print(f"  ✗ {label} download failed: {e}")
+            return []
+        try:
+            with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
+                text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+        except Exception as e:
+            print(f"  ✗ {label} parse error: {e}")
+            return []
 
-    try:
-        with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
-            text = "\n".join(p.extract_text() or "" for p in pdf.pages)
-    except Exception as e:
-        print(f"  ✗ BW PDF parse error: {e}")
-        return []
+        dt = _parse_report_date(text)
+        if not dt:
+            print(f"  ⚠ {label}: could not parse date")
+            print("  PDF preview:\n" + text[:500])
+            return []
 
-    dt = _parse_report_date(text)
-    if not dt:
-        print("  ⚠ BW PDF: could not parse date")
-        print("  PDF preview:\n" + text[:600])
-        return []
+        price = None
+        lines = text.splitlines()
 
-    # Look for composite price line (cts/lb, 50-200 range)
-    price = None
-    lines = text.splitlines()
-    for line in lines:
-        if re.search(r"[Cc]omposite", line):
-            print(f"  [PDF line] {line.strip()}")
-            p = _first_price(line, min_val=40.0, max_val=250.0)
-            if p:
-                price = p
+        # Strategy 1: "National Composite Whole" line (ams_3646.pdf format)
+        # Format: "National Composite Whole  LOW - HIGH  WTD_AVG  CHANGE  VOL  ..."
+        # Wtd Avg is the 3rd standalone decimal (after low and high)
+        for line in lines:
+            if re.search(r"[Nn]ational\s+[Cc]omposite\s+[Ww]hole", line):
+                print(f"  [{label} BW line] {line.strip()}")
+                nums = [float(n) for n in re.findall(r"\b(\d{2,3}\.\d{2})\b", line)
+                        if 40.0 <= float(n) <= 300.0]
+                if len(nums) >= 3:
+                    price = nums[2]   # low, high, wtd_avg
+                elif len(nums) >= 1:
+                    price = nums[-1]  # best guess
                 break
 
-    if price:
-        print(f"  BW PDF {dt.strftime('%Y-%m-%d')}: {price:.2f} cts/lb")
-        return [{"date": dt, "value": price}]
-    print("  ⚠ BW PDF: price not found — printing all lines:")
-    for line in lines[:40]:
-        if line.strip():
-            print(f"    {line.strip()}")
-    return []
+        # Strategy 2: any "Composite" line with a price in range (pytbroilerfryer format)
+        if price is None:
+            for line in lines:
+                if re.search(r"[Cc]omposite", line):
+                    print(f"  [{label} composite line] {line.strip()}")
+                    p = _first_price(line, min_val=40.0, max_val=250.0)
+                    if p:
+                        price = p
+                        break
+
+        if price:
+            print(f"  {label} BW {dt.strftime('%Y-%m-%d')}: {price:.2f} cts/lb")
+            return [{"date": dt, "value": price}]
+        print(f"  ⚠ {label}: BW price not found")
+        return []
+
+    # Try ams_3646.pdf first (same PDF as chicken parts — always current week)
+    print("  Trying BW from ams_3646.pdf (National Composite Whole) …")
+    rows = _extract_bw(AMS_PARTS_PDF, "ams_3646.pdf")
+    if rows:
+        return rows
+
+    # Fallback: dedicated broiler/fryer report
+    print("  Trying BW from pytbroilerfryer.pdf …")
+    return _extract_bw(AMS_BW_PDF, "pytbroilerfryer.pdf")
 
 
 # ─── Feed costs from USDA AMS ────────────────────────────────────────────────
