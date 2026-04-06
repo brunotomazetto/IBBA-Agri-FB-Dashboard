@@ -22,7 +22,7 @@ OUTPUT
 SCHEMA  — table: quarterly
   quarter    TEXT PRIMARY KEY   e.g. "1Q17"
   year_q     INTEGER            sortable: 20171, 20172 …
-  bw         REAL               Broiler wholesale cts/lb   (quarterly avg)
+  bw         REAL               (retired — kept as NULL for schema compat)
   breast     REAL               Breast B/S cts/lb          (quarterly avg)
   leg_qtrs   REAL               Leg Quarters cts/lb        (quarterly avg)
   wings      REAL               Wings cts/lb               (quarterly avg)
@@ -38,7 +38,7 @@ SCHEMA  — table: quarterly
 
 SCHEMA  — table: weekly
   report_date TEXT PRIMARY KEY  ISO date "YYYY-MM-DD" of the USDA report week
-  bw          REAL              Broiler composite wholesale cts/lb
+  bw          REAL              (retired — always NULL)
   breast      REAL              Breast B/S cts/lb
   leg_qtrs    REAL              Leg Quarters cts/lb
   wings       REAL              Wings cts/lb
@@ -958,13 +958,13 @@ def build_weekly_db(data: dict):
     con.commit()
     n = cur.execute("SELECT COUNT(*) FROM weekly").fetchone()[0]
     latest = cur.execute(
-        "SELECT report_date, bw, breast, sbm, corn FROM weekly ORDER BY report_date DESC LIMIT 3"
+        "SELECT report_date, breast, wings, sbm, corn FROM weekly ORDER BY report_date DESC LIMIT 3"
     ).fetchall()
     print(f"  Weekly table: {n} rows total  (+{inserted} new, {updated} updated)")
-    print(f"  {'Date':<12} {'BW':>7} {'Breast':>8} {'SBM':>8} {'Corn':>7}")
+    print(f"  {'Date':<12} {'Breast':>8} {'Wings':>7} {'SBM':>8} {'Corn':>7}")
     for r in latest:
         def f(v): return f"{v:7.2f}" if v is not None else "    N/A"
-        print(f"  {r[0]:<12} {f(r[1])} {f(r[2]):>8} {f(r[3]):>8} {f(r[4]):>7}")
+        print(f"  {r[0]:<12} {f(r[1]):>8} {f(r[2]):>7} {f(r[3]):>8} {f(r[4]):>7}")
     con.close()
 
 
@@ -1044,7 +1044,6 @@ def build_db(data: dict, baseline: dict = None):
     quarters_list = list(all_quarters())
 
     for yr, q, label in quarters_list:
-        bw_avg     = quarterly_avg(data.get("bw_rows", []),      yr, q)
         breast_avg = quarterly_avg(data.get("breast_rows", []),  yr, q)
         leg_avg    = quarterly_avg(data.get("leg_rows", []),      yr, q)
         wings_avg  = quarterly_avg(data.get("wings_rows", []),   yr, q)
@@ -1053,7 +1052,6 @@ def build_db(data: dict, baseline: dict = None):
         corn_avg   = quarterly_avg(data.get("corn_rows", []),    yr, q)
 
         # ── Fall back to baseline for any NULL market values ──────────────
-        bw_avg      = pick(bw_avg,      label, "bw")
         breast_avg  = pick(breast_avg,  label, "breast")
         leg_avg     = pick(leg_avg,     label, "leg_qtrs")
         wings_avg   = pick(wings_avg,   label, "wings")
@@ -1069,7 +1067,7 @@ def build_db(data: dict, baseline: dict = None):
 
         rows_data[label] = {
             "yr": yr, "q": q,
-            "bw": bw_avg, "breast": breast_avg, "leg_qtrs": leg_avg,
+            "bw": None, "breast": breast_avg, "leg_qtrs": leg_avg,
             "wings": wings_avg, "tenders": tenders_avg,
             "sbm": sbm_avg, "corn": corn_avg,
             "fc_spot": fc,
@@ -1112,16 +1110,16 @@ def build_db(data: dict, baseline: dict = None):
     n = cur.execute("SELECT COUNT(*) FROM quarterly").fetchone()[0]
     # Print summary
     sample = cur.execute("""
-        SELECT quarter, bw, breast, leg_qtrs, sbm, corn, fc_spot, ppc_us_gm
+        SELECT quarter, breast, leg_qtrs, wings, tenders, sbm, corn, fc_spot, ppc_us_gm
         FROM quarterly
         ORDER BY year_q DESC LIMIT 6
     """).fetchall()
     print(f"  {n} rows written. Latest 6:")
-    print(f"  {'Q':<7} {'BW':>7} {'Breast':>7} {'Leg':>7} {'SBM':>8} {'Corn':>7} {'FC':>7} {'PPC_GM':>9}")
+    print(f"  {'Q':<7} {'Breast':>7} {'Leg':>7} {'Wings':>7} {'Tend':>7} {'SBM':>8} {'Corn':>7} {'FC':>7} {'PPC_GM':>9}")
     for row in sample:
         def f(v): return f"{v:7.2f}" if v is not None else "   N/A "
         def fp(v): return f"{v*100:8.2f}%" if v is not None else "     N/A"
-        print(f"  {row[0]:<7} {f(row[1])} {f(row[2])} {f(row[3])} {f(row[4])} {f(row[5])} {f(row[6])} {fp(row[7])}")
+        print(f"  {row[0]:<7} {f(row[1])} {f(row[2])} {f(row[3])} {f(row[4])} {f(row[5])} {f(row[6])} {f(row[7])} {fp(row[8])}")
     con.close()
     print(f"\n✓ chicken.db ready  ({os.path.getsize(DB_PATH)//1024} KB)")
 
@@ -1152,9 +1150,6 @@ def main():
     else:
         print(f"\n[1/2] Excel source not found — fetching from USDA APIs …")
         print("  (Historical gaps will be filled from existing DB baseline)")
-        print("  Fetching broiler wholesale …")
-        bw_rows = fetch_bw_wholesale()
-        print(f"  → {len(bw_rows)} rows")
         print("  Fetching chicken parts (AMS-3646) …")
         parts = fetch_parts()
         for k, v in parts.items():
@@ -1166,7 +1161,7 @@ def main():
         corn_rows = fetch_corn()
         print(f"  → {len(corn_rows)} rows")
         data = {
-            "bw_rows":      bw_rows,
+            "bw_rows":      [],          # BW retired — no longer fetched
             "breast_rows":  parts.get("breast",  []),
             "leg_rows":     parts.get("leg_qtrs", []),
             "wings_rows":   parts.get("wings",    []),
