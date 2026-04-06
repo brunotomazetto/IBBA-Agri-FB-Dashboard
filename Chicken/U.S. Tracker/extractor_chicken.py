@@ -35,6 +35,20 @@ SCHEMA  — table: quarterly
   ppc_us_gm  REAL               PPC U.S. Gross Margin %    (decimal, NULL if N/A)
   ppc_cnl_gm REAL               PPC Consolidated GM %      (decimal, NULL if N/A)
   updated_at TEXT               ISO timestamp of last update
+
+SCHEMA  — table: weekly
+  report_date TEXT PRIMARY KEY  ISO date "YYYY-MM-DD" of the USDA report week
+  bw          REAL              Broiler composite wholesale cts/lb
+  breast      REAL              Breast B/S cts/lb
+  leg_qtrs    REAL              Leg Quarters cts/lb
+  wings       REAL              Wings cts/lb
+  tenders     REAL              Tenderloins cts/lb
+  sbm         REAL              SBM Illinois FOB $/ton
+  corn        REAL              Corn Central IL $/bu
+  updated_at  TEXT              ISO timestamp of last update
+  Note: only stores weeks where at least one value was fetched.
+        Dashboard still uses the quarterly table — this table is for
+        historical raw-data audit / future drill-down features.
 """
 
 import sqlite3, calendar, math, os, sys, json, time
@@ -375,6 +389,102 @@ def load_from_excel(base_dir: str) -> dict:
 
     return data
 
+# ─── Build weekly table ───────────────────────────────────────────────────────
+def build_weekly_db(data: dict):
+    """
+    Upsert raw weekly observations into the `weekly` table.
+    Existing rows are never deleted — only new weeks are inserted,
+    and existing weeks are updated only if a NULL field gets a value.
+    The quarterly table and dashboard are unaffected.
+    """
+    # Merge all date-keyed series into a single dict: date → {field: value}
+    series_map = {
+        "bw":       data.get("bw_rows",      []),
+        "breast":   data.get("breast_rows",  []),
+        "leg_qtrs": data.get("leg_rows",     []),
+        "wings":    data.get("wings_rows",   []),
+        "tenders":  data.get("tenders_rows", []),
+        "sbm":      data.get("sbm_rows",     []),
+        "corn":     data.get("corn_rows",    []),
+    }
+
+    weekly: dict[str, dict] = {}   # "YYYY-MM-DD" → {field: float}
+    for field, rows in series_map.items():
+        for r in rows:
+            key = r["date"].strftime("%Y-%m-%d")
+            weekly.setdefault(key, {})[field] = r["value"]
+
+    if not weekly:
+        print("  (no weekly rows to write)")
+        return
+
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS weekly (
+            report_date TEXT PRIMARY KEY,
+            bw          REAL,
+            breast      REAL,
+            leg_qtrs    REAL,
+            wings       REAL,
+            tenders     REAL,
+            sbm         REAL,
+            corn        REAL,
+            updated_at  TEXT
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_weekly_date ON weekly(report_date)")
+
+    ts = datetime.now().isoformat(timespec="seconds")
+    inserted = updated = 0
+
+    for date_str, vals in sorted(weekly.items()):
+        existing = cur.execute(
+            "SELECT bw, breast, leg_qtrs, wings, tenders, sbm, corn FROM weekly WHERE report_date=?",
+            (date_str,)
+        ).fetchone()
+
+        if existing is None:
+            # New week — insert
+            cur.execute("""
+                INSERT INTO weekly (report_date, bw, breast, leg_qtrs, wings, tenders, sbm, corn, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?)
+            """, (
+                date_str,
+                vals.get("bw"),     vals.get("breast"), vals.get("leg_qtrs"),
+                vals.get("wings"),  vals.get("tenders"),
+                vals.get("sbm"),    vals.get("corn"),
+                ts
+            ))
+            inserted += 1
+        else:
+            # Existing week — only fill NULLs (never overwrite good data with NULL)
+            fields = ["bw", "breast", "leg_qtrs", "wings", "tenders", "sbm", "corn"]
+            updates = {}
+            for i, f in enumerate(fields):
+                if existing[i] is None and vals.get(f) is not None:
+                    updates[f] = vals[f]
+            if updates:
+                set_clause = ", ".join(f"{f}=?" for f in updates)
+                cur.execute(
+                    f"UPDATE weekly SET {set_clause}, updated_at=? WHERE report_date=?",
+                    (*updates.values(), ts, date_str)
+                )
+                updated += 1
+
+    con.commit()
+    n = cur.execute("SELECT COUNT(*) FROM weekly").fetchone()[0]
+    latest = cur.execute(
+        "SELECT report_date, bw, breast, sbm, corn FROM weekly ORDER BY report_date DESC LIMIT 3"
+    ).fetchall()
+    print(f"  Weekly table: {n} rows total  (+{inserted} new, {updated} updated)")
+    print(f"  {'Date':<12} {'BW':>7} {'Breast':>8} {'SBM':>8} {'Corn':>7}")
+    for r in latest:
+        def f(v): return f"{v:7.2f}" if v is not None else "    N/A"
+        print(f"  {r[0]:<12} {f(r[1])} {f(r[2]):>8} {f(r[3]):>8} {f(r[4]):>7}")
+    con.close()
+
+
 # ─── Load existing DB as baseline ─────────────────────────────────────────────
 def load_db_baseline() -> dict:
     """
@@ -582,8 +692,12 @@ def main():
             "corn_rows":    corn_rows,
         }
 
-    # ── Step 2: Build / refresh DB, merging with baseline ────────────────────
-    print(f"\n[2/2] Building database …")
+    # ── Step 2a: Upsert raw weekly data ──────────────────────────────────────
+    print(f"\n[2/3] Storing raw weekly data …")
+    build_weekly_db(data)
+
+    # ── Step 2b: Build / refresh quarterly DB, merging with baseline ─────────
+    print(f"\n[3/3] Building quarterly database …")
     build_db(data, baseline=baseline)
 
 if __name__ == "__main__":
