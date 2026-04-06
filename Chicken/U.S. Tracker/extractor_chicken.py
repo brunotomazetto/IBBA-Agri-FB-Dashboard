@@ -375,9 +375,48 @@ def load_from_excel(base_dir: str) -> dict:
 
     return data
 
+# ─── Load existing DB as baseline ─────────────────────────────────────────────
+def load_db_baseline() -> dict:
+    """
+    Read existing chicken.db into a dict keyed by quarter label.
+    Returns empty dict if DB does not exist or has no table.
+    Used to preserve historical market data when APIs return empty results.
+    """
+    if not os.path.exists(DB_PATH):
+        return {}
+    try:
+        con = sqlite3.connect(DB_PATH)
+        con.row_factory = sqlite3.Row
+        rows = con.execute("""
+            SELECT quarter, bw, breast, leg_qtrs, wings, tenders,
+                   sbm, corn, fc_spot, fc_0q5, fc_1q5,
+                   ppc_us_gm, ppc_cnl_gm
+            FROM quarterly
+        """).fetchall()
+        con.close()
+        baseline = {}
+        for r in rows:
+            baseline[r["quarter"]] = dict(r)
+        print(f"  ✓ Loaded {len(baseline)} rows from existing chicken.db as baseline")
+        return baseline
+    except Exception as e:
+        print(f"  ⚠ Could not read baseline from existing DB: {e}")
+        return {}
+
+
 # ─── Build database ───────────────────────────────────────────────────────────
-def build_db(data: dict):
-    """Populate chicken.db from the data dictionary."""
+def build_db(data: dict, baseline: dict = None):
+    """
+    Populate chicken.db from the data dictionary.
+
+    baseline: dict keyed by quarter label with existing DB values.
+              When a market value is None from new data, the baseline value
+              is preserved.  This ensures historical data from Excel is never
+              overwritten with NULLs when running without Excel (e.g. CI/CD).
+    """
+    if baseline is None:
+        baseline = {}
+
     print(f"\nWriting to {DB_PATH} …")
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
@@ -402,6 +441,12 @@ def build_db(data: dict):
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_year_q ON quarterly(year_q)")
 
+    def pick(new_val, label: str, field: str):
+        """Return new_val if non-None, otherwise fall back to baseline."""
+        if new_val is not None:
+            return new_val
+        return (baseline.get(label) or {}).get(field)
+
     rows_data = {}   # label → dict of raw values (pre-lag)
     quarters_list = list(all_quarters())
 
@@ -414,7 +459,19 @@ def build_db(data: dict):
         sbm_avg    = quarterly_avg(data.get("sbm_rows", []),     yr, q)
         corn_avg   = quarterly_avg(data.get("corn_rows", []),    yr, q)
 
+        # ── Fall back to baseline for any NULL market values ──────────────
+        bw_avg      = pick(bw_avg,      label, "bw")
+        breast_avg  = pick(breast_avg,  label, "breast")
+        leg_avg     = pick(leg_avg,     label, "leg_qtrs")
+        wings_avg   = pick(wings_avg,   label, "wings")
+        tenders_avg = pick(tenders_avg, label, "tenders")
+        sbm_avg     = pick(sbm_avg,     label, "sbm")
+        corn_avg    = pick(corn_avg,    label, "corn")
+
         fc = (2.9802*corn_avg + 0.03851*sbm_avg) if (corn_avg and sbm_avg) else None
+        # Prefer freshly computed fc_spot; fall back to baseline if still None
+        fc = pick(fc, label, "fc_spot")
+
         ppc_us, ppc_cnl = HARD_PPC.get(label, (None, None))
 
         rows_data[label] = {
@@ -436,6 +493,10 @@ def build_db(data: dict):
 
         fc_0q5 = 0.5*fc_cur + 0.5*fc_prev if (fc_cur and fc_prev) else None
         fc_1q5 = 0.5*fc_prev + 0.5*fc_p2  if (fc_prev and fc_p2)  else None
+
+        # Fall back to baseline lag values if still None
+        fc_0q5 = pick(fc_0q5, label, "fc_0q5")
+        fc_1q5 = pick(fc_1q5, label, "fc_1q5")
 
         yr, q = rd["yr"], rd["q"]
         year_q = yr*10 + q
@@ -477,9 +538,16 @@ def main():
     print("U.S. Chicken Spread Tracker — Database Extractor")
     print("="*60)
 
-    # Try Excel files first (preferred for historical depth)
-    script_dir   = os.path.dirname(os.path.abspath(__file__))
-    excel_base   = os.path.join(script_dir, "..", "..", "U.S. Chicken")  # relative to repo structure
+    # ── Step 0: Load existing DB as baseline ─────────────────────────────────
+    # This ensures historical market data is preserved even when Excel files
+    # are absent (e.g. GitHub Actions) and USDA APIs return empty/sparse data.
+    print("\n[0/2] Loading existing DB baseline (if any) …")
+    baseline = load_db_baseline()
+
+    # ── Step 1: Fetch fresh market data ──────────────────────────────────────
+    # Try Excel files first (preferred for historical depth and accuracy).
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    excel_base = os.path.join(script_dir, "..", "..", "U.S. Chicken")  # relative to repo structure
     if not os.path.isdir(excel_base):
         excel_base = os.path.join(os.path.expanduser("~"), "OneDrive",
                                   "Documentos", "Claude", "U.S. Chicken")  # Windows OneDrive fallback
@@ -490,12 +558,13 @@ def main():
         data = load_from_excel(excel_base)
     else:
         print(f"\n[1/2] Excel source not found — fetching from USDA APIs …")
+        print("  (Historical gaps will be filled from existing DB baseline)")
         print("  Fetching broiler wholesale …")
         bw_rows = fetch_bw_wholesale()
         print(f"  → {len(bw_rows)} rows")
         print("  Fetching chicken parts (AMS-3646) …")
         parts = fetch_parts()
-        for k,v in parts.items():
+        for k, v in parts.items():
             print(f"  → {k}: {len(v)} rows")
         print("  Fetching SBM (AMS-3511) …")
         sbm_rows = fetch_sbm()
@@ -506,15 +575,16 @@ def main():
         data = {
             "bw_rows":      bw_rows,
             "breast_rows":  parts.get("breast",  []),
-            "leg_rows":     parts.get("leg_qtrs",[]),
-            "wings_rows":   parts.get("wings",   []),
-            "tenders_rows": parts.get("tenders", []),
+            "leg_rows":     parts.get("leg_qtrs", []),
+            "wings_rows":   parts.get("wings",    []),
+            "tenders_rows": parts.get("tenders",  []),
             "sbm_rows":     sbm_rows,
             "corn_rows":    corn_rows,
         }
 
+    # ── Step 2: Build / refresh DB, merging with baseline ────────────────────
     print(f"\n[2/2] Building database …")
-    build_db(data)
+    build_db(data, baseline=baseline)
 
 if __name__ == "__main__":
     main()
