@@ -17,6 +17,8 @@ jobs:
   update-chicken-db:
     name: Refresh chicken.db
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to git push updated chicken.db back to repo
 
     steps:
       # ── 1. Checkout repository ────────────────────────────────────────────
