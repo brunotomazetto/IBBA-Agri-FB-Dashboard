@@ -122,8 +122,9 @@ GRUPOS_EN = {
 }
 CLUSTERS_DEF = {
     "Cervejas": [
-        {"id":"premium",    "nome":"Premium",    "skus":["Heineken Lata_350ml","Heineken Lata_269ml","Heineken 0.0_350ml","Stella Artois Long Neck_330ml","Corona Extra Long Neck_330ml","Corona Extra Lata_350ml","Spaten Puro Malte Lata_350ml","Spaten Puro Malte Lata_269ml","Budweiser Lata_350ml","Budweiser Lata_269ml"]},
-        {"id":"mainstream", "nome":"Mainstream", "skus":["Skol Lata_350ml","Skol Lata_269ml","Brahma Duplo Malte_350ml","Brahma Duplo Malte_269ml","Amstel Lata_350ml","Amstel Lata_269ml","Itaipava Lata_350ml","Original Lata_350ml","Original Lata_269ml"]},
+        {"id":"heineken",   "nome":"Heineken",   "skus":["Heineken Lata_350ml","Heineken Lata_269ml","Heineken 0.0_350ml","Amstel Lata_350ml","Amstel Lata_269ml"]},
+        {"id":"ambev",      "nome":"Ambev",      "skus":["Skol Lata_350ml","Skol Lata_269ml","Brahma Duplo Malte_350ml","Brahma Duplo Malte_269ml","Antarctica Lata_350ml","Budweiser Lata_350ml","Budweiser Lata_269ml","Stella Artois Long Neck_330ml","Corona Extra Lata_350ml","Corona Extra Long Neck_330ml","Spaten Puro Malte Lata_350ml","Spaten Puro Malte Lata_269ml","Original Lata_350ml","Original Lata_269ml"]},
+        {"id":"petropolis", "nome":"Petrópolis", "skus":["Itaipava Lata_350ml"]},
     ],
     "Carnes, Processados e Preparados": [
         {"id":"beef",       "nome":"Beef",       "skus":["Picanha 1kg Bassi_1kg","Picanha 1kg Friboi_1kg","Picanha 1kg Estância 92_1kg","Fraldinha 1kg Bassi_1kg","Carne Moida 1kg Swift_1kg"]},
@@ -147,11 +148,25 @@ CLUSTER_COLORS = ["#0a0a0f","#0e9f6e","#e02424","#c27803","#7e3af2","#0694a2","#
 def aba_grupo(grupo_nome, cats):
     gid = grupo_nome.replace(" ","_").replace(",","").replace("/","")
     clusters_j = json.dumps(CLUSTERS_DEF.get(grupo_nome, []), ensure_ascii=False)
-    cats_j = json.dumps(cats, ensure_ascii=False)
+    cats_j = json.dumps(cats, ensure_ascii=False).replace('"', "&quot;")
     return f"""
     <div class="page" id="page-grupo-{gid}">
 
-      <!-- BLOCK 1: FILTERS + CHART -->
+      <!-- BLOCK 1: CLUSTERS -->
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Clusters</span>
+          <button class="btn btn-black" onclick="abrirModalNovoCluster('{gid}',{cats_j})">+ New cluster</button>
+        </div>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:.85rem">
+          Average price per cluster · click a SKU tag to remove/include it · toggle clusters on the chart below
+        </p>
+        <div id="cluster-cards-{gid}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.75rem;margin-bottom:1rem"></div>
+        <div class="section-title" style="font-size:12px;margin-bottom:.5rem">Cluster price history</div>
+        <div style="height:260px"><canvas id="chart-cluster-{gid}"></canvas></div>
+      </div>
+
+      <!-- BLOCK 2: FILTERS + CHART -->
       <div class="section">
         <div class="section-head">
           <span class="section-title">{grupo_nome} — Price History</span>
@@ -196,22 +211,6 @@ def aba_grupo(grupo_nome, cats):
           <button class="btn btn-green" style="font-size:11px;padding:5px 10px" onclick="exportarComparacao('{gid}')">⬇ Excel</button>
         </div>
         <div id="tabela-comp-{gid}"></div>
-      </div>
-
-      <!-- BLOCK 2: CLUSTERS -->
-      <div class="section">
-        <div class="section-head">
-          <span class="section-title">Clusters</span>
-          <button class="btn btn-black" onclick="abrirModalNovoCluster('{gid}',{cats_j})">+ New cluster</button>
-        </div>
-        <p style="font-size:11px;color:var(--muted);margin-bottom:.85rem">
-          Average price per cluster · click a SKU tag to remove/include it · toggle clusters on the chart below
-        </p>
-        <!-- Cluster cards -->
-        <div id="cluster-cards-{gid}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.75rem;margin-bottom:1rem"></div>
-        <!-- Cluster historical chart -->
-        <div class="section-title" style="font-size:12px;margin-bottom:.5rem">Cluster price history</div>
-        <div style="height:260px"><canvas id="chart-cluster-{gid}"></canvas></div>
       </div>
 
     </div>"""
@@ -619,17 +618,17 @@ function popularChkProdGrupo(gid,cats){{
   const el=document.getElementById("chk-prod-"+gid); if(!el)return;
   const prods=[...new Map(HIST.filter(r=>cats.includes(r.categoria)).map(r=>[r.nome_produto+"_"+r.embalagem,r.nome_produto+" "+r.embalagem])).entries()].sort((a,b)=>a[1].localeCompare(b[1]));
   el.innerHTML=prods.map(([k,v],i)=>`<label style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;cursor:pointer">
-    <input type="checkbox" value="${{k}}" ${{i<8?"checked":""}} onchange="renderGrupo('${{gid}}')" style="accent-color:var(--accent)"> ${{v}}</label>`).join("");
+    <input type="checkbox" value="${{k}}" ${{i<2?"checked":""}} onchange="renderGrupo('${{gid}}')" style="accent-color:var(--accent)"> ${{v}}</label>`).join("");
 }}
 
 function popularChkSMGrupo(gid){{
   const el=document.getElementById("chk-sm-"+gid); if(!el)return;
   const sms=[...new Set(HIST.map(r=>r.supermercado))].sort();
   el.innerHTML=`<label style="display:flex;align-items:center;gap:6px;padding:3px 0 5px;margin-bottom:3px;border-bottom:1px solid var(--border);font-size:11px;cursor:pointer">
-    <input type="checkbox" value="__avg__" onchange="renderGrupo('${{gid}}')" style="accent-color:var(--blue)">
+    <input type="checkbox" value="__avg__" checked onchange="renderGrupo('${{gid}}')" style="accent-color:var(--blue)">
     <span style="color:var(--blue);font-weight:600">⌀ Average</span></label>`+
   sms.map(sm=>`<label style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;cursor:pointer">
-    <input type="checkbox" value="${{sm}}" checked onchange="renderGrupo('${{gid}}')" style="accent-color:var(--accent)"> ${{sm}}</label>`).join("");
+    <input type="checkbox" value="${{sm}}" onchange="renderGrupo('${{gid}}')" style="accent-color:var(--accent)"> ${{sm}}</label>`).join("");
 }}
 
 function toggleTodos(cid,marcar,gid){{
