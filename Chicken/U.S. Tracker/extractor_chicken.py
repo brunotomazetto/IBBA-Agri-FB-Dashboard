@@ -153,12 +153,12 @@ USDA_API_KEY = os.environ.get("USDA_API_KEY", "").strip()
 
 # ─── HTTP helper ─────────────────────────────────────────────────────────────
 def get_json(url: str, params: dict = None) -> dict:
-    p = dict(params or {})
-    if USDA_API_KEY:
-        p["api_key"] = USDA_API_KEY
+    # USDA MARS API uses HTTP Basic Auth: api_key as username, empty password.
+    # Do NOT send as query param — that returns 403 on cloud runners.
+    auth = (USDA_API_KEY, "") if USDA_API_KEY else None
     for attempt in range(RETRY):
         try:
-            r = requests.get(url, params=p, timeout=TIMEOUT)
+            r = requests.get(url, params=params, auth=auth, timeout=TIMEOUT)
             r.raise_for_status()
             return r.json()
         except Exception as e:
