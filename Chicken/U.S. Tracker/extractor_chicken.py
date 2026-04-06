@@ -580,64 +580,42 @@ def fetch_sbm_from_pdf() -> "list[dict]":
     price = None
     lines = text.splitlines()
 
-    # Strategy: find lines containing "Illinois" + "FOB" within the Soybean Meal section.
-    # Table columns: Region | ... | Price Range (NNN.NN-NNN.NN) | Price Change (UP/DN/UNCH NNN.NN) | Average | ...
-    # The Average is the standalone decimal AFTER the price-change notation.
-    in_sbm_section = False
+    # Strategy 1: Illinois + FOB-T anywhere in the document.
+    # This is specific enough to avoid false positives.
+    # Table row format: Region  SaleType  Basis  BasisChg  PriceRange  PriceChg  Average  YrAgo  Freight
+    # We want the Average column = 3rd standalone decimal ≥ 150 on the line.
     for line in lines:
-        # Enter Soybean Meal section
-        if re.search(r"[Ss]oybean\s+[Mm]eal", line):
-            in_sbm_section = True
-
-        # Exit if we hit a new commodity section (after SBM)
-        if in_sbm_section and re.search(r"^(Corn|Canola|Distiller|DDGS|Wheat|Cottonseed)", line.strip()):
-            in_sbm_section = False
-
-        if not in_sbm_section:
-            continue
-
-        # Look for Illinois + FOB-T line
-        if re.search(r"[Ii]llinois", line) and re.search(r"FOB-T", line):
-            print(f"  [SBM PDF line] {line.strip()}")
-            # Price range pattern: NNN.NN-NNN.NN (with optional space around dash)
-            # Then price change: (UP|DN|UNCH) ...
-            # Then Average: next standalone NNN.NN
-            #
-            # Extract all standalone decimals ≥ 150 from the line
+        if re.search(r"[Ii]llinois", line) and re.search(r"FOB.?T", line):
+            print(f"  [SBM PDF Illinois FOB-T line] {line.strip()}")
             all_prices = [float(n) for n in re.findall(r"\b(\d{3}\.\d{2})\b", line)
                           if float(n) >= 150]
-            # The price range contributes 2 values (low, high); Average is the 3rd
             if len(all_prices) >= 3:
-                price = all_prices[2]   # 3rd standalone price = Average column
+                price = all_prices[2]   # low, high, Average
             elif len(all_prices) == 2:
-                # Range might be merged; Average is 2nd
-                price = all_prices[1]
+                price = all_prices[1]   # range merged; Average is 2nd
             elif len(all_prices) == 1:
                 price = all_prices[0]
             if price:
                 break
 
-    # Fallback: any Illinois line in SBM section with a price
+    # Strategy 2: any Illinois line with prices ≥ 150 (no FOB-T requirement)
     if price is None:
-        in_sbm_section = False
         for line in lines:
-            if re.search(r"[Ss]oybean\s+[Mm]eal", line):
-                in_sbm_section = True
-            if in_sbm_section and re.search(r"[Ii]llinois", line):
-                print(f"  [SBM fallback line] {line.strip()}")
+            if re.search(r"[Ii]llinois", line):
+                print(f"  [SBM PDF Illinois line] {line.strip()}")
                 prices = [float(n) for n in re.findall(r"\b(\d{3}\.\d{2})\b", line)
                           if float(n) >= 150]
                 if prices:
-                    price = prices[-1]  # last price on line tends to be Average
+                    price = prices[-1]  # last price tends to be Average or near-Average
                     break
 
     if price:
         print(f"  SBM PDF {dt.strftime('%Y-%m-%d')}: {price:.2f} $/ton")
         return [{"date": dt, "value": price}]
 
-    print("  ⚠ SBM PDF: price not found — printing relevant lines:")
+    print("  ⚠ SBM PDF: price not found — printing all relevant lines:")
     for line in lines:
-        if re.search(r"[Ss]oybean|[Ii]llinois", line):
+        if re.search(r"[Ss]oybean|[Ii]llinois|FOB", line):
             print(f"    {line.strip()}")
     return []
 
