@@ -7,7 +7,7 @@ import sqlite3, json
 from pathlib import Path
 from datetime import date
 
-_ROOT    = Path(__file__).resolve().parent.parent
+_ROOT    = Path(__file__).resolve().parent
 DB_PATH  = _ROOT / "precos.db"
 OUT_PATH = _ROOT / "supermarket_prices.html"
 
