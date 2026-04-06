@@ -35,7 +35,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--bk);font-size:12px
 
 .content{padding:14px 24px;display:flex;flex-direction:column;gap:14px;}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-.row-bot{display:grid;grid-template-columns:290px 1fr;gap:14px;}
+.row-bot{display:grid;grid-template-columns:270px 1fr;gap:14px;}
 
 .card{background:var(--wh);border:1px solid var(--bd);border-radius:6px;padding:16px;}
 .card-hdr{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--or);}
@@ -121,10 +121,10 @@ tbody td:first-child{text-align:left;font-weight:600;}
 // ══ CONSTANTS ════════════════════════════════════════════════════════════════
 const CO_COLORS = { MBRF:'#FF5500', JBS:'#333333' };
 
-// Default weights per company
+// Default weights per company (no HH or Drop Credit)
 const V4 = {
-  MBRF: { choiceP:100, ksP:100, neP:0,   wDrop:0, wEnergy:0 },
-  JBS:  { choiceP:70,  ksP:0,   neP:100, wDrop:0, wEnergy:0 },
+  MBRF: { choiceP:100, ksP:100, neP:0 },
+  JBS:  { choiceP:70,  ksP:0,   neP:100 },
 };
 
 const CORR_WIN = { MBRF:['2Q23','4Q25'], JBS:['1Q24','3Q25'] };
@@ -133,13 +133,13 @@ const CORR_WIN = { MBRF:['2Q23','4Q25'], JBS:['1Q24','3Q25'] };
 let allQtr=[], allWk=[], allMon=[];
 let company='MBRF', viewFrom='L3Y', tblMode='quarterly';
 
-// Per-company independent weight state — each tab keeps its own values
+// Per-company independent weight state
 const WByCompany = { MBRF:{...V4.MBRF}, JBS:{...V4.JBS} };
-let W = WByCompany['MBRF']; // reference to current company's weight obj
+let W = WByCompany['MBRF'];
 
 const CHARTS={};
 
-// ══ WEIGHT / SPREAD ══════════════════════════════════════════════════════════
+// ══ SPREAD FORMULA ═══════════════════════════════════════════════════════════
 function ctP(w){ w=w||W; return Math.max(0,100-w.ksP-w.neP); }
 
 function calcSpread(row, snap){
@@ -147,12 +147,11 @@ function calcSpread(row, snap){
   const ct=row.ct150_steer??row.ct150_all;
   if(!row.choice||!row.select_||!ct) return null;
   const ks=row.ks_avg??ct, ne=row.ne_avg??ct;
-  const dr=row.drop_credit??0, hh=row.henry_hub??0;
   const rev=(w.choiceP/100)*row.choice+(1-w.choiceP/100)*row.select_;
   const _ks=w.ksP/100, _ne=w.neP/100, _ct=ctP(w)/100;
   const sum=_ks+_ne+_ct||1;
   const cattle=(_ks*ks+_ne*ne+_ct*ct)/sum;
-  return rev>0?(rev-cattle+w.wDrop*dr-w.wEnergy*hh)/rev:null;
+  return rev>0?(rev-cattle)/rev:null;
 }
 
 // ══ DATE / FILTER ════════════════════════════════════════════════════════════
@@ -175,7 +174,6 @@ function qToDate(q){
 // ══ FORMAT ═══════════════════════════════════════════════════════════════════
 const p1 =v=>v==null?'—':(v*100).toFixed(1)+'%';
 const n1 =v=>v==null?'—':v.toFixed(1);
-const n2 =v=>v==null?'—':v.toFixed(2);
 const cls=v=>v==null?'':v>0?'pos':'neg';
 
 function pearson(xs,ys){
@@ -192,7 +190,6 @@ function pearson(xs,ys){
 // ══ CHART HELPERS ════════════════════════════════════════════════════════════
 const TT={backgroundColor:'#fff',titleColor:'#333',bodyColor:'#555',borderColor:'#E5E5E5',borderWidth:1};
 
-// Neutral axis colors — never tied to a company color
 function axisL(label,unit='%'){
   return{position:'left',border:{color:'#555'},grid:{color:'#EEEEEE'},
     ticks:{color:'#555',font:{size:10},callback:v=>v+unit},
@@ -214,11 +211,10 @@ function mkChart(id,cfg){
 // ══ RENDER ═══════════════════════════════════════════════════════════════════
 function renderAll(){ renderBars(); renderTimeline(); renderTable(); updateCostBreakdown(); }
 
-// ── Left: ΔSpread vs ΔMargin — Grouped Bars, SINGLE AXIS ────────────────────
+// ── Left: ΔSpread vs ΔMargin — single axis ───────────────────────────────────
 function renderBars(){
   const rows=filteredQtr();
   const statEl=document.getElementById('corr-stat');
-
   const [qs,qe]=CORR_WIN[company]||['1Q18','9Q99'];
   const slice=rows.filter(r=>new Date(r.quarter_start)>=qToDate(qs)&&new Date(r.quarter_start)<=qToDate(qe));
   const getM=r=>company==='MBRF'?r.mbrf_gm:r.jbs_gm;
@@ -233,8 +229,6 @@ function renderBars(){
   }
   const r=pearson(dsSp,dsMg);
   statEl.textContent=r!=null?`r = ${r.toFixed(3)}   R² = ${(r*r).toFixed(3)}   N = ${dsSp.filter(v=>v!=null).length}`:'Insufficient data';
-
-  // Both series on same axis — no y2
   mkChart('chartCorr',{type:'bar',
     data:{labels,datasets:[
       {label:'ΔSpread',    data:dsSp,backgroundColor:'#FF5500CC',yAxisID:'y'},
@@ -247,21 +241,18 @@ function renderBars(){
     }});
 }
 
-// ── Right: Spread % & Gross Margin % — each company uses its own weights ─────
-// Axis colors are neutral (not tied to company colors).
+// ── Right: Spread % & Gross Margin % — per-company weights ───────────────────
 function renderTimeline(){
   const rows=filteredQtr();
   const labels=rows.map(r=>r.quarter);
-
   const datasets=[];
   Object.entries(CO_COLORS).forEach(([co,col])=>{
-    const snap=WByCompany[co]; // each company's independent weights
+    const snap=WByCompany[co];
     datasets.push({
       label:`${co} Spread`,
       data:rows.map(r=>{const s=calcSpread(r,snap);return s!=null?+(s*100).toFixed(2):null;}),
       borderColor:col, borderWidth:co===company?2.5:1.5,
-      pointRadius:co===company?3:2, tension:.3, fill:false, spanGaps:true,
-      yAxisID:'y',
+      pointRadius:co===company?3:2, tension:.3, fill:false, spanGaps:true, yAxisID:'y',
     });
     const gm=r=>co==='MBRF'?r.mbrf_gm:r.jbs_gm;
     datasets.push({
@@ -269,37 +260,29 @@ function renderTimeline(){
       data:rows.map(r=>{const m=gm(r);return m!=null?+(m*100).toFixed(2):null;}),
       borderColor:col, borderWidth:co===company?1.5:1,
       borderDash:[6,3], pointRadius:co===company?2:1,
-      tension:.3, fill:false, spanGaps:true,
-      yAxisID:'y2',
+      tension:.3, fill:false, spanGaps:true, yAxisID:'y2',
     });
   });
-
-  mkChart('chartTimeline',{type:'line',
-    data:{labels,datasets},
+  mkChart('chartTimeline',{type:'line',data:{labels,datasets},
     options:{
       plugins:{
         legend:{display:true,labels:{color:'#333',font:{size:10},
           generateLabels:chart=>chart.data.datasets.map((ds,i)=>({
-            text:ds.label, fillStyle:ds.borderColor,
-            strokeStyle:ds.borderColor, lineWidth:ds.borderWidth,
-            lineDash:ds.borderDash||[], datasetIndex:i, hidden:false,
+            text:ds.label,fillStyle:ds.borderColor,strokeStyle:ds.borderColor,
+            lineWidth:ds.borderWidth,lineDash:ds.borderDash||[],datasetIndex:i,hidden:false,
           }))}},
         tooltip:{...TT},
       },
-      scales:{
-        x:axisX(),
-        y: axisL('Spread %','%'),         // neutral dark gray — not orange
-        y2:axisR('Gross Margin %','%'),   // neutral medium gray
-      },
+      scales:{x:axisX(), y:axisL('Spread %','%'), y2:axisR('Gross Margin %','%')},
     }});
-
-  // Update disclaimer footnote
-  const other = company==='MBRF'?'JBS':'MBRF';
+  const other=company==='MBRF'?'JBS':'MBRF';
   const fn=document.getElementById('disc-note');
   if(fn) fn.textContent=`* Sliders adjust ${company} only — ${other} displayed at default weights.`;
 }
 
-// ── Cost Breakdown ───────────────────────────────────────────────────────────
+// ── Cost Breakdown ────────────────────────────────────────────────────────────
+// Shows the relative contribution of each cattle region to total cattle cost
+// based on the mix weights and last quarter's actual prices.
 function updateCostBreakdown(){
   if(!allQtr.length) return;
   const last=allQtr[allQtr.length-1];
@@ -308,38 +291,22 @@ function updateCostBreakdown(){
   const ks=last.ks_avg??ct, ne=last.ne_avg??ct;
   const _ks=w.ksP/100, _ne=w.neP/100, _ct=ctP(w)/100;
   const sum=_ks+_ne+_ct||1;
-  const cattleVal=(_ks*ks+_ne*ne+_ct*ct)/sum;
-  const hhVal  =w.wEnergy*(last.henry_hub??0);
-  const dropVal=w.wDrop  *(last.drop_credit??0);
-  const othersVal=hhVal+dropVal;
-  const total=cattleVal+othersVal||1;
 
-  const cattlePct=Math.round(cattleVal/total*100);
-  const otherPct =100-cattlePct;
+  // Contribution of each region (in $/cwt terms)
+  const ksVal =_ks*ks/sum, neVal=_ne*ne/sum, ctVal=_ct*ct/sum;
+  const total =ksVal+neVal+ctVal||1;
 
-  const $ = id=>document.getElementById(id);
-  $('cb-cattle-fill').style.width=cattlePct+'%';
-  $('cb-cattle-pct').textContent =cattlePct+'%';
-  $('cb-other-fill').style.width =otherPct+'%';
-  $('cb-other-pct').textContent  =otherPct+'%';
+  const ksPct=Math.round(ksVal/total*100);
+  const nePct=Math.round(neVal/total*100);
+  const ctPct=100-ksPct-nePct;
 
-  const hasOthers=othersVal>0;
-  $('cb-hh-row').style.opacity   =hasOthers?'1':'0.4';
-  $('cb-drop-row').style.opacity =hasOthers?'1':'0.4';
-  if(hasOthers){
-    const hhPct=Math.round(hhVal/othersVal*100);
-    $('cb-hh-fill').style.width  =hhPct+'%';
-    $('cb-hh-pct').textContent   =hhPct+'%';
-    $('cb-drop-fill').style.width=(100-hhPct)+'%';
-    $('cb-drop-pct').textContent =(100-hhPct)+'%';
-  } else {
-    ['cb-hh-fill','cb-drop-fill'].forEach(id=>$( id).style.width='0%');
-    $('cb-hh-pct').textContent='—';
-    $('cb-drop-pct').textContent='—';
-  }
+  const $=id=>document.getElementById(id);
+  $('cb-ks-fill').style.width  =ksPct+'%';  $('cb-ks-pct').textContent  =ksPct+'%';
+  $('cb-ne-fill').style.width  =nePct+'%';  $('cb-ne-pct').textContent  =nePct+'%';
+  $('cb-ct-fill').style.width  =ctPct+'%';  $('cb-ct-pct').textContent  =ctPct+'%';
 }
 
-// ── Table ───────────────────────────────────────────────────────────────────
+// ── Table ─────────────────────────────────────────────────────────────────────
 function renderTable(){
   const showMargin=(tblMode==='quarterly');
   const mLabel=company==='JBS'?'JBS GM%':'MBRF GM%';
@@ -347,7 +314,6 @@ function renderTable(){
     <th style="text-align:left">Period</th>
     <th>Choice $/cwt</th><th>Select $/cwt</th>
     <th>CT150 $/cwt</th><th>KS Avg $/cwt</th><th>NE Avg $/cwt</th>
-    <th>HH $/MMBtu</th><th>Drop $/cwt</th>
     <th style="color:var(--or)">Spread%</th>
     ${showMargin?`<th style="color:var(--or)">${mLabel}</th>`:''}
   </tr>`;
@@ -360,7 +326,6 @@ function renderTable(){
       <td>${n1(r.choice)}</td><td>${n1(r.select_)}</td>
       <td>${n1(r.ct150_steer??r.ct150_all)}</td>
       <td>${n1(r.ks_avg)}</td><td>${n1(r.ne_avg)}</td>
-      <td>${n2(r.henry_hub)}</td><td>${n2(r.drop_credit)}</td>
       <td class="ov">${p1(sp)}</td>
       ${showMargin?`<td class="${cls(mg)}">${p1(mg)}</td>`:''}
     </tr>`;
@@ -369,57 +334,47 @@ function renderTable(){
 
 // ══ CONTROLS ═════════════════════════════════════════════════════════════════
 function setCompany(co,el){
-  company=co;
-  W=WByCompany[co]; // switch reference — does NOT reset weights
+  company=co; W=WByCompany[co];
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
-  syncSliders();
-  renderAll();
+  syncSliders(); renderAll();
 }
 function setView(v,el){
   viewFrom=v;
   document.querySelectorAll('#view-toggles .tog-btn').forEach(b=>b.classList.remove('active'));
-  el.classList.add('active');
-  renderAll();
+  el.classList.add('active'); renderAll();
 }
 function setTblMode(mode,el){
   tblMode=mode;
   document.querySelectorAll('.tbl-tog').forEach(b=>b.classList.remove('active'));
-  el.classList.add('active');
-  renderTable();
+  el.classList.add('active'); renderTable();
 }
 
-// Sliders modify ONLY the current company's weights
-function onSlider(key,val,isFloat){
+function onSlider(key,val){
   if(key==='ksP'){
     W.ksP=parseInt(val);
-    if(W.ksP+W.neP>100){ W.neP=100-W.ksP; }
+    if(W.ksP+W.neP>100) W.neP=100-W.ksP;
   } else if(key==='neP'){
     W.neP=parseInt(val);
-    if(W.ksP+W.neP>100){ W.ksP=100-W.neP; }
+    if(W.ksP+W.neP>100) W.ksP=100-W.neP;
   } else {
-    W[key]=isFloat?parseFloat(val):parseInt(val);
+    W[key]=parseInt(val);
   }
-  syncSliders();
-  renderAll();
+  syncSliders(); renderAll();
 }
 
 function syncSliders(){
-  document.getElementById('sl-choice').value = W.choiceP;
-  document.getElementById('sl-ks').value     = W.ksP;
-  document.getElementById('sl-ne').value     = W.neP;
-  document.getElementById('sl-drop').value   = W.wDrop;
-  document.getElementById('sl-energy').value = W.wEnergy;
+  document.getElementById('sl-choice').value=W.choiceP;
+  document.getElementById('sl-ks').value    =W.ksP;
+  document.getElementById('sl-ne').value    =W.neP;
   updateLabels();
 }
 function updateLabels(){
-  document.getElementById('v-choice').textContent  = W.choiceP+'%';
-  document.getElementById('v-select').textContent  = (100-W.choiceP)+'%';
-  document.getElementById('v-ks').textContent      = W.ksP+'%';
-  document.getElementById('v-ne').textContent      = W.neP+'%';
-  document.getElementById('v-ct').textContent      = ctP()+'%';
-  document.getElementById('v-drop').textContent    = W.wDrop.toFixed(2);
-  document.getElementById('v-energy').textContent  = W.wEnergy.toFixed(2);
+  document.getElementById('v-choice').textContent=(W.choiceP)+'%';
+  document.getElementById('v-select').textContent=(100-W.choiceP)+'%';
+  document.getElementById('v-ks').textContent    =W.ksP+'%';
+  document.getElementById('v-ne').textContent    =W.neP+'%';
+  document.getElementById('v-ct').textContent    =ctP()+'%';
 }
 function resetWeights(){ WByCompany[company]={...V4[company]}; W=WByCompany[company]; syncSliders(); renderAll(); }
 
@@ -435,8 +390,7 @@ function buildMonthly(wk){
   return Object.entries(grp).sort().map(([month,rows])=>({month,
     choice:avg(rows,'choice'),select_:avg(rows,'select_'),
     ct150_steer:avg(rows,'ct150_steer'),ct150_all:avg(rows,'ct150_all'),
-    ks_avg:avg(rows,'ks_avg'),ne_avg:avg(rows,'ne_avg'),
-    henry_hub:avg(rows,'henry_hub'),drop_credit:avg(rows,'drop_credit')}));
+    ks_avg:avg(rows,'ks_avg'),ne_avg:avg(rows,'ne_avg')}));
 }
 
 // ══ LAYOUT ═══════════════════════════════════════════════════════════════════
@@ -444,8 +398,6 @@ function buildLayout(){
   document.getElementById('root').innerHTML=`
   <div class="content">
     <div class="row2">
-
-      <!-- Left: delta bars — single axis -->
       <div class="card">
         <div class="card-hdr">
           <span class="card-title">QoQ ΔSpread vs. ΔGross Margin — by Quarter</span>
@@ -453,8 +405,6 @@ function buildLayout(){
         </div>
         <canvas id="chartCorr"></canvas>
       </div>
-
-      <!-- Right: spread + GM% dual axis — per-company weights -->
       <div class="card">
         <div class="card-hdr">
           <span class="card-title">Spread Proxy % vs. Gross Margin % — MBRF &amp; JBS</span>
@@ -463,7 +413,6 @@ function buildLayout(){
         <canvas id="chartTimeline"></canvas>
         <div class="footnote" id="disc-note">* Sliders adjust MBRF only — JBS displayed at default weights.</div>
       </div>
-
     </div>
     <div class="row-bot">
 
@@ -508,47 +457,25 @@ function buildLayout(){
           </div>
         </div>
         <hr class="cp-divider">
-
-        <div class="cp-section">
-          <div class="cp-section-label">Adjustments</div>
-          <div class="cp-row">
-            <span class="cp-lbl">Drop Credit</span>
-            <input id="sl-drop" class="cp-slider" type="range" min="0" max="1" step="0.05"
-              oninput="onSlider('wDrop',this.value,true)">
-            <span class="cp-val" id="v-drop">0.00</span>
-          </div>
-          <div class="cp-row">
-            <span class="cp-lbl">Henry Hub</span>
-            <input id="sl-energy" class="cp-slider" type="range" min="0" max="1" step="0.05"
-              oninput="onSlider('wEnergy',this.value,true)">
-            <span class="cp-val" id="v-energy">0.00</span>
-          </div>
-        </div>
-        <hr class="cp-divider">
         <button class="btn-reset" onclick="resetWeights()">↺ Reset to default</button>
 
-        <!-- Cost breakdown -->
+        <!-- Cattle cost breakdown by region -->
         <div class="cb-wrap">
-          <div class="cb-head">Cost Structure (last quarter)</div>
+          <div class="cb-head">Cattle Cost by Region (last quarter)</div>
           <div class="cb-row">
-            <span class="cb-lbl">🐄 Cattle</span>
-            <div class="cb-track"><div class="cb-fill" id="cb-cattle-fill" style="background:var(--or);width:100%"></div></div>
-            <span class="cb-pct" id="cb-cattle-pct">100%</span>
+            <span class="cb-lbl">Kansas</span>
+            <div class="cb-track"><div class="cb-fill" id="cb-ks-fill" style="background:var(--or);width:100%"></div></div>
+            <span class="cb-pct" id="cb-ks-pct">100%</span>
           </div>
           <div class="cb-row">
-            <span class="cb-lbl">📦 Others</span>
-            <div class="cb-track"><div class="cb-fill" id="cb-other-fill" style="background:var(--gy);width:0%"></div></div>
-            <span class="cb-pct" id="cb-other-pct">0%</span>
+            <span class="cb-lbl">Nebraska</span>
+            <div class="cb-track"><div class="cb-fill" id="cb-ne-fill" style="background:var(--bk);width:0%"></div></div>
+            <span class="cb-pct" id="cb-ne-pct">0%</span>
           </div>
-          <div class="cb-row sub" id="cb-hh-row" style="opacity:0.4">
-            <span class="cb-lbl">↳ Henry Hub</span>
-            <div class="cb-track"><div class="cb-fill" id="cb-hh-fill" style="background:#AAA;width:0%"></div></div>
-            <span class="cb-pct" id="cb-hh-pct">—</span>
-          </div>
-          <div class="cb-row sub" id="cb-drop-row" style="opacity:0.4">
-            <span class="cb-lbl">↳ Drop Credit</span>
-            <div class="cb-track"><div class="cb-fill" id="cb-drop-fill" style="background:#CCC;width:0%"></div></div>
-            <span class="cb-pct" id="cb-drop-pct">—</span>
+          <div class="cb-row">
+            <span class="cb-lbl">5-Area</span>
+            <div class="cb-track"><div class="cb-fill" id="cb-ct-fill" style="background:var(--gy);width:0%"></div></div>
+            <span class="cb-pct" id="cb-ct-pct">0%</span>
           </div>
         </div>
       </div>
@@ -565,7 +492,7 @@ function buildLayout(){
         <div class="tbl-wrap">
           <table><thead id="tbl-head"></thead><tbody id="tbl-body"></tbody></table>
         </div>
-        <div class="src">Sources: USDA AMS rpt 2461/2527/2484/2667/2829 · EIA NG.RNGWHHD.D · MBRF/IFRS · JBS/US GAAP</div>
+        <div class="src">Sources: USDA AMS lm_ct150 · ams_2461 · ams_2484 · ams_2667 · MBRF/IFRS · JBS/US GAAP</div>
       </div>
 
     </div>

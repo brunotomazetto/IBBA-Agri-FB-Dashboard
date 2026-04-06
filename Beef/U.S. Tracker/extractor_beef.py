@@ -1,615 +1,529 @@
 #!/usr/bin/env python3
 """
-extractor_beef.py
-─────────────────
-Creates and maintains beef.db (SQLite) — the data backend for the
-U.S. Beef Packer Margin Tracker dashboard.
+extractor_beef.py — U.S. Beef Packer Margin Tracker
+All data fetched from USDA AMS PDFs — no API keys required.
 
-USAGE
------
-  # One-time historical load from the V4 Excel tracker:
-  python extractor_beef.py --history "US_Beef_Packer_Margin_Tracker_v4.xlsx"
+PDF sources (always current week):
+  CT150  (5-Area live steer/heifer): https://www.ams.usda.gov/mnreports/lm_ct150.pdf
+  Cutout (Choice / Select boxed beef): https://www.ams.usda.gov/mnreports/ams_2461.pdf
+  Kansas weekly price:                 https://www.ams.usda.gov/mnreports/ams_2484.pdf
+  Nebraska weekly price:               https://www.ams.usda.gov/mnreports/ams_2667.pdf
 
-  # Weekly update (run every Monday via cron / GitHub Actions):
-  python extractor_beef.py
-
-  # Weekly update AND rebuild all quarterly averages from scratch:
-  python extractor_beef.py --full
-
-DEPENDENCIES
-------------
-  pip install requests pandas openpyxl pdfplumber
-
-DATA SOURCES
-------------
-  Historical  → US_Beef_Packer_Margin_Tracker_v4.xlsx (local file)
-  CT150       → USDA AMS Datamart API, report 2461
-  Cutout      → USDA AMS Datamart API, report 2527
-  KS prices   → USDA AMS PDF, report 2484
-  NE prices   → USDA AMS PDF, report 2667
-  Drop Credit → USDA AMS PDF, report 2829
-  Slaughter   → USDA NASS Quick Stats API
-  Henry Hub   → EIA Open Data API, series NG.RNGWHHD.D
-
-OUTPUT
-------
-  beef.db  (SQLite, same folder as this script)
-  → beef_weekly    : one row per week
-  → beef_quarterly : one row per quarter (market averages + company financials)
+Usage:
+  python extractor_beef.py                  # default: update latest week from PDFs
+  python extractor_beef.py --history FILE   # one-time load from V4 Excel
+  python extractor_beef.py --full           # force full quarterly recompute
 """
 
-import argparse
-import io
-import math
-import re
-import sqlite3
-from collections import defaultdict
-from datetime import date, timedelta
-from pathlib import Path
-
+import os, re, io, sqlite3, argparse, datetime, logging
 import requests
+import pdfplumber
 import pandas as pd
 
-try:
-    import pdfplumber
-    HAS_PDFPLUMBER = True
-except ImportError:
-    HAS_PDFPLUMBER = False
-    print("⚠  pdfplumber not installed — KS/NE and Drop Credit will be skipped.\n"
-          "   Run: pip install pdfplumber")
+logging.basicConfig(level=logging.INFO, format="  %(message)s")
+log = logging.getLogger(__name__)
 
-# ─── CONFIG ──────────────────────────────────────────────────────────────────
-DB_PATH      = Path(__file__).parent / "beef.db"
-import os
-EIA_API_KEY  = os.environ.get('EIA_API_KEY', 'YOUR_EIA_API_KEY')
-LOOKBACK_WEEKS = 6
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Paths & URLs ──────────────────────────────────────────────────────────────
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "beef.db")
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS beef_weekly (
-    week_ending  TEXT PRIMARY KEY,
-    slaughter    REAL,
-    ct150_steer  REAL, ct150_heifer REAL, ct150_mixed REAL, ct150_all REAL,
-    ks_steer     REAL, ks_heifer    REAL, ks_avg      REAL,
-    ne_steer     REAL, ne_heifer    REAL, ne_avg      REAL,
-    choice       REAL, select_      REAL,
-    drop_credit  REAL,
-    henry_hub    REAL,
-    updated_at   TEXT DEFAULT (datetime('now'))
-);
+PDF_URLS = {
+    "ct150":    "https://www.ams.usda.gov/mnreports/lm_ct150.pdf",
+    "cutout":   "https://www.ams.usda.gov/mnreports/ams_2461.pdf",
+    "kansas":   "https://www.ams.usda.gov/mnreports/ams_2484.pdf",
+    "nebraska": "https://www.ams.usda.gov/mnreports/ams_2667.pdf",
+}
 
-CREATE TABLE IF NOT EXISTS beef_quarterly (
-    quarter          TEXT PRIMARY KEY,
-    quarter_start    TEXT,
-    slaughter        REAL,
-    ct150_steer      REAL, ct150_heifer REAL, ct150_mixed REAL, ct150_all REAL,
-    ks_steer         REAL, ks_heifer    REAL, ks_avg      REAL,
-    ne_steer         REAL, ne_heifer    REAL, ne_avg      REAL,
-    choice           REAL, select_      REAL,
-    drop_credit      REAL, henry_hub    REAL,
-    -- Marfrig / National Beef
-    mbrf_revenue     REAL, mbrf_gp      REAL, mbrf_gm         REAL,
-    mbrf_ebitda      REAL, mbrf_ebitda_mgn REAL,
-    -- JBS North America
-    jbs_revenue      REAL, jbs_gp       REAL, jbs_gm          REAL,
-    jbs_ebit         REAL, jbs_ebit_mgn REAL,
-    jbs_ebitda       REAL, jbs_ebitda_mgn REAL,
-    -- Tyson Beef
-    tyson_sales      REAL, tyson_adj_op_inc REAL, tyson_adj_op_mgn REAL,
-    updated_at       TEXT DEFAULT (datetime('now'))
-);
-"""
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "application/pdf,*/*",
+}
 
-MARKET_COLS = [
-    "slaughter",
-    "ct150_steer","ct150_heifer","ct150_mixed","ct150_all",
-    "ks_steer","ks_heifer","ks_avg",
-    "ne_steer","ne_heifer","ne_avg",
-    "choice","select_","drop_credit","henry_hub",
-]
-FIN_COLS = [
-    "mbrf_revenue","mbrf_gp","mbrf_gm","mbrf_ebitda","mbrf_ebitda_mgn",
-    "jbs_revenue","jbs_gp","jbs_gm","jbs_ebit","jbs_ebit_mgn",
-    "jbs_ebitda","jbs_ebitda_mgn",
-    "tyson_sales","tyson_adj_op_inc","tyson_adj_op_mgn",
-]
 
-# ══════════════════════════════════════════════════════════════════════════════
-# HELPERS
-# ══════════════════════════════════════════════════════════════════════════════
+# ══ DATABASE ══════════════════════════════════════════════════════════════════
 
-def fv(v):
-    """Float or None."""
-    if v is None or v == "": return None
-    try:
-        f = float(str(v).replace(",", ""))
-        return None if math.isnan(f) else round(f, 6)
-    except (TypeError, ValueError):
-        return None
+def init_db(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS beef_weekly (
+        week_ending   TEXT PRIMARY KEY,
+        choice        REAL,
+        select_       REAL,
+        ct150_steer   REAL,
+        ct150_heifer  REAL,
+        ks_avg        REAL,
+        ne_avg        REAL
+    );
+    CREATE TABLE IF NOT EXISTS beef_quarterly (
+        quarter       TEXT PRIMARY KEY,
+        quarter_start TEXT,
+        choice        REAL,
+        select_       REAL,
+        ct150_steer   REAL,
+        ct150_heifer  REAL,
+        ct150_all     REAL,
+        ks_avg        REAL,
+        ne_avg        REAL,
+        mbrf_gm       REAL,
+        jbs_gm        REAL
+    );
+    """)
+    conn.commit()
 
-def dv(v):
-    """Date → ISO string or None."""
-    if v is None: return None
-    if isinstance(v, date): return v.isoformat()
-    try:
-        return pd.to_datetime(v).date().isoformat()
-    except Exception:
-        return None
 
-def week_end_sat(d: date) -> date:
-    return d + timedelta(days=(5 - d.weekday()) % 7)
+def upsert_weekly(conn: sqlite3.Connection, rows: list[dict]) -> int:
+    sql = """
+    INSERT INTO beef_weekly (week_ending, choice, select_, ct150_steer, ct150_heifer, ks_avg, ne_avg)
+    VALUES (:week_ending,:choice,:select_,:ct150_steer,:ct150_heifer,:ks_avg,:ne_avg)
+    ON CONFLICT(week_ending) DO UPDATE SET
+        choice       = COALESCE(excluded.choice,       choice),
+        select_      = COALESCE(excluded.select_,      select_),
+        ct150_steer  = COALESCE(excluded.ct150_steer,  ct150_steer),
+        ct150_heifer = COALESCE(excluded.ct150_heifer, ct150_heifer),
+        ks_avg       = COALESCE(excluded.ks_avg,       ks_avg),
+        ne_avg       = COALESCE(excluded.ne_avg,       ne_avg)
+    """
+    conn.executemany(sql, rows)
+    conn.commit()
+    return len(rows)
 
-def quarter_label(d: date) -> str:
-    q = (d.month - 1) // 3 + 1
-    return f"{q}Q{str(d.year)[2:]}"
 
-def quarter_start(q: str) -> str:
-    """'1Q18' → '2018-01-01'"""
-    m = re.match(r"([1-4])Q(\d{2})", q)
-    if not m: return None
-    qn, yr = int(m.group(1)), 2000 + int(m.group(2))
-    return date(yr, (qn - 1) * 3 + 1, 1).isoformat()
+# ══ PDF HELPERS ═══════════════════════════════════════════════════════════════
 
-def since_date() -> str:
-    return (date.today() - timedelta(weeks=LOOKBACK_WEEKS)).isoformat()
+def fetch_pdf_text(key: str) -> str:
+    """Download a PDF and return all pages concatenated as plain text."""
+    url = PDF_URLS[key]
+    r = requests.get(url, headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    text_pages = []
+    with pdfplumber.open(io.BytesIO(r.content)) as pdf:
+        for page in pdf.pages:
+            t = page.extract_text()
+            if t:
+                text_pages.append(t)
+    return "\n".join(text_pages)
 
-def _parse_ams_date(text: str) -> date:
-    """Extract week-ending date from AMS PDF text; falls back to this Saturday."""
+
+def _parse_date(text: str) -> str:
+    """
+    Try to extract the 'week ending' date from a USDA PDF header.
+    Returns ISO date string 'YYYY-MM-DD' or Saturday of current week as fallback.
+    """
     patterns = [
-        r"[Ww]eek\s+[Ee]nd(?:ing)?\s*[:\-]?\s*(\w+ \d{1,2},?\s+\d{4})",
-        r"[Ff]or (?:the )?[Ww]eek (?:of\s+)?(\w+ \d{1,2},?\s+\d{4})",
-        r"[Ww]eek\s+[Ee]nd(?:ing)?\s*[:\-]?\s*(\d{1,2}/\d{1,2}/\d{2,4})",
-        r"(\w{3,9} \d{1,2},?\s+\d{4})",
+        # "Week Ending Sunday, 4/5/2026"
+        r"[Ww]eek\s+[Ee]nding\s+\w+,?\s+(\d{1,2}/\d{1,2}/\d{4})",
+        # "For Week Ending April 4, 2026"
+        r"[Ww]eek\s+[Ee]nding\s+(\w+ \d{1,2},? \d{4})",
+        # "4/5/2026"  or  "04/05/2026"
+        r"\b(\d{1,2}/\d{1,2}/\d{4})\b",
+        # "April 4, 2026" or "April 04, 2026"
+        r"\b([A-Za-z]+ \d{1,2},?\s+\d{4})\b",
     ]
     for pat in patterns:
-        m = re.search(pat, text)
+        m = re.search(pat, text[:800])
         if m:
-            try:
-                return week_end_sat(pd.to_datetime(m.group(1)).date())
-            except Exception:
-                continue
-    return week_end_sat(date.today())
+            raw = m.group(1).strip().rstrip(",")
+            for fmt in ("%m/%d/%Y", "%B %d %Y", "%B %d, %Y", "%b %d %Y", "%b %d, %Y"):
+                try:
+                    return datetime.datetime.strptime(raw, fmt).date().isoformat()
+                except ValueError:
+                    continue
+    # fallback: last Saturday
+    today = datetime.date.today()
+    sat = today - datetime.timedelta(days=(today.weekday() + 2) % 7)
+    log.warning("Could not parse date from PDF header; using %s", sat)
+    return sat.isoformat()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DATABASE
-# ══════════════════════════════════════════════════════════════════════════════
 
-def init_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
-    conn.commit()
-    return conn
-
-def upsert_weekly(conn: sqlite3.Connection, rows: list[dict]):
-    if not rows: return
-    cols = [c for c in ["week_ending","slaughter",
-                        "ct150_steer","ct150_heifer","ct150_mixed","ct150_all",
-                        "ks_steer","ks_heifer","ks_avg",
-                        "ne_steer","ne_heifer","ne_avg",
-                        "choice","select_","drop_credit","henry_hub"]
-            if any(c in r for r in rows)]
-    all_cols = list({c for r in rows for c in r})
-    sql = (f"INSERT INTO beef_weekly ({','.join(all_cols)}) "
-           f"VALUES ({','.join('?' for _ in all_cols)}) "
-           f"ON CONFLICT(week_ending) DO UPDATE SET "
-           + ", ".join(f"{c}=excluded.{c}" for c in all_cols if c != "week_ending"))
-    conn.executemany(sql, [[r.get(c) for c in all_cols] for r in rows])
-    conn.commit()
-
-def upsert_quarterly(conn: sqlite3.Connection, rows: list[dict]):
-    if not rows: return
-    all_cols = list({c for r in rows for c in r})
-    sql = (f"INSERT INTO beef_quarterly ({','.join(all_cols)}) "
-           f"VALUES ({','.join('?' for _ in all_cols)}) "
-           f"ON CONFLICT(quarter) DO UPDATE SET "
-           + ", ".join(f"{c}=excluded.{c}" for c in all_cols if c != "quarter"))
-    conn.executemany(sql, [[r.get(c) for c in all_cols] for r in rows])
-    conn.commit()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# HISTORICAL LOAD FROM V4 EXCEL
-# ══════════════════════════════════════════════════════════════════════════════
-
-def load_history(tracker_path: str, conn: sqlite3.Connection):
-    """
-    Reads both Summary sheets from the V4 tracker and populates beef.db.
-    Column mapping (1-indexed):
-      Weekly/Quarterly cols 1-16: date/quarter, slaughter, CT150 x4,
-                                   KS steer/heifer/avg, NE steer/heifer/avg,
-                                   choice, select, drop_credit, henry_hub
-      Quarterly cols 18-32: MBRF (5 cols), JBS (7 cols), Tyson (3 cols)
-    """
-    import openpyxl
-    print(f"\nLoading workbook: {tracker_path}")
-    wb = openpyxl.load_workbook(tracker_path, data_only=True)
-    print(f"Sheets: {wb.sheetnames}")
-
-    # ── Weekly ──────────────────────────────────────────────────────────────
-    ws = wb["Summary \u2013 Weekly"]
-    weekly_rows = []
-    for r in range(5, ws.max_row + 1):
-        dt = dv(ws.cell(r, 1).value)
-        if not dt: continue
-        weekly_rows.append({
-            "week_ending":  dt,
-            "slaughter":    fv(ws.cell(r, 2).value),
-            "ct150_steer":  fv(ws.cell(r, 3).value),
-            "ct150_heifer": fv(ws.cell(r, 4).value),
-            "ct150_mixed":  fv(ws.cell(r, 5).value),
-            "ct150_all":    fv(ws.cell(r, 6).value),
-            "ks_steer":     fv(ws.cell(r, 7).value),
-            "ks_heifer":    fv(ws.cell(r, 8).value),
-            "ks_avg":       fv(ws.cell(r, 9).value),
-            "ne_steer":     fv(ws.cell(r,10).value),
-            "ne_heifer":    fv(ws.cell(r,11).value),
-            "ne_avg":       fv(ws.cell(r,12).value),
-            "choice":       fv(ws.cell(r,13).value),
-            "select_":      fv(ws.cell(r,14).value),
-            "drop_credit":  fv(ws.cell(r,15).value),
-            "henry_hub":    fv(ws.cell(r,16).value),
-        })
-    print(f"  Weekly rows: {len(weekly_rows)}")
-    upsert_weekly(conn, weekly_rows)
-
-    # ── Quarterly ────────────────────────────────────────────────────────────
-    ws = wb["Summary \u2013 Quarterly"]
-    qtr_rows = []
-    for r in range(5, ws.max_row + 1):
-        q = ws.cell(r, 1).value
-        if not q or not re.match(r"[1-4]Q\d{2}", str(q)): continue
-        q = str(q)
-        qtr_rows.append({
-            "quarter":          q,
-            "quarter_start":    quarter_start(q),
-            "slaughter":        fv(ws.cell(r, 2).value),
-            "ct150_steer":      fv(ws.cell(r, 3).value),
-            "ct150_heifer":     fv(ws.cell(r, 4).value),
-            "ct150_mixed":      fv(ws.cell(r, 5).value),
-            "ct150_all":        fv(ws.cell(r, 6).value),
-            "ks_steer":         fv(ws.cell(r, 7).value),
-            "ks_heifer":        fv(ws.cell(r, 8).value),
-            "ks_avg":           fv(ws.cell(r, 9).value),
-            "ne_steer":         fv(ws.cell(r,10).value),
-            "ne_heifer":        fv(ws.cell(r,11).value),
-            "ne_avg":           fv(ws.cell(r,12).value),
-            "choice":           fv(ws.cell(r,13).value),
-            "select_":          fv(ws.cell(r,14).value),
-            "drop_credit":      fv(ws.cell(r,15).value),
-            "henry_hub":        fv(ws.cell(r,16).value),
-            # col 17 = spacer
-            "mbrf_revenue":     fv(ws.cell(r,18).value),
-            "mbrf_gp":          fv(ws.cell(r,19).value),
-            "mbrf_gm":          fv(ws.cell(r,20).value),
-            "mbrf_ebitda":      fv(ws.cell(r,21).value),
-            "mbrf_ebitda_mgn":  fv(ws.cell(r,22).value),
-            "jbs_revenue":      fv(ws.cell(r,23).value),
-            "jbs_gp":           fv(ws.cell(r,24).value),
-            "jbs_gm":           fv(ws.cell(r,25).value),
-            "jbs_ebit":         fv(ws.cell(r,26).value),
-            "jbs_ebit_mgn":     fv(ws.cell(r,27).value),
-            "jbs_ebitda":       fv(ws.cell(r,28).value),
-            "jbs_ebitda_mgn":   fv(ws.cell(r,29).value),
-            "tyson_sales":      fv(ws.cell(r,30).value),
-            "tyson_adj_op_inc": fv(ws.cell(r,31).value),
-            "tyson_adj_op_mgn": fv(ws.cell(r,32).value),
-        })
-    print(f"  Quarterly rows: {len(qtr_rows)}")
-    upsert_quarterly(conn, qtr_rows)
-    print("✓ Historical load complete.")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# FETCH FUNCTIONS — USDA AMS + EIA
-# ══════════════════════════════════════════════════════════════════════════════
-
-def fetch_ct150() -> pd.DataFrame:
-    """CT150 5-area weighted average — USDA AMS Datamart report 2461."""
-    url = "https://marsapi.ams.usda.gov/services/v1.2/reports/2461"
-    r = requests.get(url, params={"q": f"report_date>={since_date()}", "allSections": "true"}, timeout=30)
-    r.raise_for_status()
-    CLASS_MAP = {"Steers": "ct150_steer", "Heifers": "ct150_heifer",
-                 "Mixed":  "ct150_mixed", "All Beef": "ct150_all"}
-    rows: dict[date, dict] = defaultdict(dict)
-    for rec in r.json().get("results", []):
-        raw = pd.to_datetime(rec.get("report_date")).date()
-        sat = week_end_sat(raw - timedelta(days=2))  # Monday report → Saturday
-        col = CLASS_MAP.get(rec.get("class_description", ""))
-        val = fv(rec.get("wtd_avg"))
-        if col and val is not None:
-            rows[sat][col] = val
-    df = pd.DataFrame.from_dict(rows, orient="index")
-    df.index.name = "week_ending"
-    print(f"  CT150: {len(df)} weeks")
-    return df.reset_index()
-
-def fetch_cutout() -> pd.DataFrame:
-    """Choice & Select cutout — USDA AMS Datamart report 2527."""
-    url = "https://marsapi.ams.usda.gov/services/v1.2/reports/2527"
-    r = requests.get(url, params={"q": f"report_date>={since_date()}", "allSections": "true"}, timeout=30)
-    r.raise_for_status()
-    GRADE_MAP = {"Choice 600-900": "choice", "Select 600-900": "select_"}
-    rows: dict[date, dict] = defaultdict(dict)
-    for rec in r.json().get("results", []):
-        raw = pd.to_datetime(rec.get("report_date")).date()
-        sat = week_end_sat(raw + timedelta(days=1))  # Friday report → Saturday
-        grade = (rec.get("grade", "") + " " + rec.get("weight_range", "")).strip()
-        col = GRADE_MAP.get(grade)
-        val = fv(rec.get("avg_price"))
-        if col and val is not None:
-            rows[sat][col] = val
-    df = pd.DataFrame.from_dict(rows, orient="index")
-    df.index.name = "week_ending"
-    print(f"  Cutout: {len(df)} weeks")
-    return df.reset_index()
-
-def fetch_slaughter() -> pd.DataFrame:
-    """Weekly cattle slaughter — USDA NASS Quick Stats API."""
-    NASS_KEY = "YOUR_NASS_API_KEY"   # https://quickstats.nass.usda.gov/api
-    url = "https://quickstats.nass.usda.gov/api/api_GET/"
-    params = {
-        "key": NASS_KEY, "commodity_desc": "CATTLE",
-        "statisticcat_desc": "SLAUGHTER", "unit_desc": "HEAD",
-        "freq_desc": "WEEKLY", "begin_DT": since_date(), "format": "JSON",
-    }
+def _num(s: str) -> float | None:
+    """Parse a number string like '$245.82' or '22,550' → float."""
     try:
-        r = requests.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        data = r.json().get("data", [])
-    except Exception as e:
-        print(f"  Slaughter fetch failed: {e}"); return pd.DataFrame()
-    rows = {}
-    for rec in data:
-        raw = rec.get("week_ending") or rec.get("end_code", "")
-        if not raw: continue
-        try: d = pd.to_datetime(raw).date()
-        except: continue
-        v = fv(rec.get("Value", "").replace(",", ""))
-        if v: rows[week_end_sat(d)] = v
-    df = pd.DataFrame(list(rows.items()), columns=["week_ending", "slaughter"])
-    print(f"  Slaughter: {len(df)} weeks")
-    return df
+        return float(re.sub(r"[$,]", "", s.strip()))
+    except (ValueError, AttributeError):
+        return None
 
-def fetch_ks_ne() -> pd.DataFrame:
+
+# ══ CT150 — lm_ct150.pdf ══════════════════════════════════════════════════════
+# Layout (WEEKLY ACCUMULATED section near end of report):
+#
+#   WEEKLY ACCUMULATED    Head Count    Avg Weight    Avg Price
+#   Live    Steer          2,877         1,501.60      $245.82
+#   Live    Heifer         2,743         1,365.30      $245.83
+#
+# Also has LIVE FOB "Total all grades" rows per section:
+#   Total all grades    22,550  1,275•1,750  238.00•246.50  1,571  244.96
+#                                                                   ^^^^^^ Wtd Avg Price
+
+def fetch_ct150() -> dict:
     """
-    KS prices: USDA AMS report 2484  (mymarketnews.ams.usda.gov/viewReport/2484)
-    NE prices: USDA AMS report 2667  (mymarketnews.ams.usda.gov/viewReport/2667)
-
-    Strategy: try MARS JSON API first; fall back to PDF parsing.
-    Parses "WEEKLY ACCUMULATED" section → Live Steer / Heifer Avg Price.
+    Returns dict with keys: week_ending, ct150_steer, ct150_heifer
+    Parses WEEKLY ACCUMULATED section first; falls back to LIVE FOB totals.
     """
-    REPORTS = {
-        "ks": {"mars_id": "2484", "pdf_slug": "ams_2484"},
-        "ne": {"mars_id": "2667", "pdf_slug": "ams_2667"},
-    }
-    rows: dict[date, dict] = {}
+    text = fetch_pdf_text("ct150")
+    week = _parse_date(text)
+    result = {"week_ending": week, "ct150_steer": None, "ct150_heifer": None}
 
-    for state, cfg in REPORTS.items():
-        steer_col  = f"{state}_steer"
-        heifer_col = f"{state}_heifer"
-        fetched    = False
+    # Primary: WEEKLY ACCUMULATED block
+    # Pattern: Live  Steer  <count>  <avg_weight>  $<avg_price>
+    m_steer = re.search(
+        r"WEEKLY\s+ACCUMULATED.*?Live\s+Steer\s+[\d,]+\s+[\d,.]+\s+\$?([\d.]+)",
+        text, re.IGNORECASE | re.DOTALL
+    )
+    m_heifer = re.search(
+        r"WEEKLY\s+ACCUMULATED.*?Live\s+Heifer\s+[\d,]+\s+[\d,.]+\s+\$?([\d.]+)",
+        text, re.IGNORECASE | re.DOTALL
+    )
+    if m_steer:
+        result["ct150_steer"] = _num(m_steer.group(1))
+    if m_heifer:
+        result["ct150_heifer"] = _num(m_heifer.group(1))
 
-        # ── MARS API ──────────────────────────────────────────────────────────
-        try:
-            url = f"https://marsapi.ams.usda.gov/services/v1.2/reports/{cfg['mars_id']}"
-            r = requests.get(url, params={"q": f"report_date>={since_date()}", "allSections": "true"}, timeout=30)
-            r.raise_for_status()
-            for rec in r.json().get("results", []):
-                section = str(rec.get("report_section", "")).lower()
-                class_  = str(rec.get("class_description", "")).lower()
-                if "accum" not in section and "weekly" not in section: continue
-                if "live" not in str(rec.get("type_description", "")).lower(): continue
-                price = fv(rec.get("wtd_avg") or rec.get("avg_price"))
-                if price is None: continue
-                sat = week_end_sat(pd.to_datetime(rec.get("report_date")).date())
-                rows.setdefault(sat, {})
-                if "steer"  in class_: rows[sat][steer_col]  = price; fetched = True
-                if "heifer" in class_: rows[sat][heifer_col] = price; fetched = True
-            if fetched:
-                print(f"  {state.upper()}: fetched via MARS API"); continue
-        except Exception as e:
-            print(f"  {state.upper()} MARS API error ({e}); trying PDF…")
-
-        # ── PDF fallback ───────────────────────────────────────────────────────
-        if not HAS_PDFPLUMBER:
-            print(f"  {state.upper()}: pdfplumber not available — skipping"); continue
-        try:
-            pdf_url = f"https://www.ams.usda.gov/mnreports/{cfg['pdf_slug']}.pdf"
-            resp = requests.get(pdf_url, timeout=30)
-            resp.raise_for_status()
-            with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
-                text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-            sat = _parse_ams_date(text)
-            acc_idx = text.upper().find("WEEKLY ACCUMULATED")
-            if acc_idx == -1:
-                print(f"  {state.upper()}: 'WEEKLY ACCUMULATED' not found"); continue
-            section = text[acc_idx : acc_idx + 700]
-            rows.setdefault(sat, {})
-            for animal, col in [("Steer", steer_col), ("Heifer", heifer_col)]:
-                m = re.search(r"Live\s+" + animal + r"\s+[\d,]+\s+[\d,.]+\s+\$?([\d.]+)",
-                              section, re.IGNORECASE)
-                if m: rows[sat][col] = fv(m.group(1))
-            print(f"  {state.upper()}: steer=${rows[sat].get(steer_col)}, "
-                  f"heifer=${rows[sat].get(heifer_col)}  (PDF, week {sat})")
-        except Exception as e:
-            print(f"  {state.upper()} PDF error: {e}")
-
-    if not rows: return pd.DataFrame()
-    df = pd.DataFrame.from_dict(rows, orient="index")
-    df.index.name = "week_ending"
-    for st in ["ks", "ne"]:
-        sc, hc, ac = f"{st}_steer", f"{st}_heifer", f"{st}_avg"
-        if sc in df.columns and hc in df.columns:
-            df[ac] = df[[sc, hc]].mean(axis=1, skipna=False)
-    return df.reset_index()
-
-def fetch_drop_credit() -> pd.DataFrame:
-    """
-    By-product value — USDA AMS report 2829
-    PDF: https://www.ams.usda.gov/mnreports/ams_2829.pdf
-    Extracts "Dressed Equivalent Basis" from the STEER table ($/cwt dressed).
-    """
-    if not HAS_PDFPLUMBER:
-        print("  Drop Credit: pdfplumber not available — skipping")
-        return pd.DataFrame()
-    try:
-        r = requests.get("https://www.ams.usda.gov/mnreports/ams_2829.pdf", timeout=30)
-        r.raise_for_status()
-        with pdfplumber.open(io.BytesIO(r.content)) as pdf:
-            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-    except Exception as e:
-        print(f"  Drop Credit fetch error: {e}"); return pd.DataFrame()
-
-    sat = _parse_ams_date(text)
-    drop_val = None
-    m = re.search(r"[Dd]ressed\s+[Ee]quivalent\s+[Bb]asis\s*\([^)]+\)\s*[:\s]+([\d.]+)", text)
-    if m:
-        drop_val = fv(m.group(1))
-        print(f"  Drop Credit: {drop_val} $/cwt dressed  (week {sat})")
-    else:
-        m = re.search(r"[Tt]otals?\s*:?\s*[\d.]+\s+[\d.]+\s+([\d.]+)\s*$", text, re.MULTILINE)
-        if m:
-            drop_val = fv(m.group(1))
-            print(f"  Drop Credit: {drop_val} $/cwt live (Totals fallback, week {sat})")
-    if drop_val is None:
-        print("  Drop Credit: could not parse value"); return pd.DataFrame()
-    return pd.DataFrame([{"week_ending": sat, "drop_credit": drop_val}])
-
-def fetch_henry_hub() -> pd.DataFrame:
-    """Henry Hub daily spot → weekly average — EIA Open Data API."""
-    try:
-        r = requests.get(
-            "https://api.eia.gov/v2/natural-gas/pri/sum/data/",
-            params={
-                "api_key": EIA_API_KEY, "frequency": "daily",
-                "data[0]": "value", "facets[series][]": "NG.RNGWHHD.D",
-                "start": since_date(), "sort[0][column]": "period",
-                "sort[0][direction]": "asc", "length": 500,
-            }, timeout=30
+    # Fallback: "Total all grades" row under STEERS: LIVE FOB
+    # The Wtd Avg Price is the last number on that line
+    if result["ct150_steer"] is None:
+        m = re.search(
+            r"STEERS:?\s+LIVE\s+FOB.*?Total\s+all\s+grades\s+[\d,]+\s+[\d•,. -]+\s+([\d.]+)",
+            text, re.IGNORECASE | re.DOTALL
         )
-        r.raise_for_status()
-        records = r.json().get("response", {}).get("data", [])
-    except Exception as e:
-        print(f"  Henry Hub fetch failed: {e}"); return pd.DataFrame()
-    daily = {}
-    for rec in records:
-        try: d = pd.to_datetime(rec["period"]).date()
-        except: continue
-        v = fv(rec.get("value"))
-        if v: daily[d] = v
-    weekly: dict[date, list] = defaultdict(list)
-    for d, v in daily.items():
-        weekly[week_end_sat(d)].append(v)
-    rows = [{"week_ending": sat, "henry_hub": round(sum(vs)/len(vs), 4)}
-            for sat, vs in weekly.items() if vs]
-    df = pd.DataFrame(rows)
-    print(f"  Henry Hub: {len(df)} weeks")
-    return df
+        if m:
+            result["ct150_steer"] = _num(m.group(1))
 
-# ══════════════════════════════════════════════════════════════════════════════
-# WEEKLY UPDATE
-# ══════════════════════════════════════════════════════════════════════════════
-
-def update_weekly(conn: sqlite3.Connection):
-    print(f"\n=== Fetching weekly data (last {LOOKBACK_WEEKS} weeks) ===")
-    dfs = []
-    for name, fn in [("CT150", fetch_ct150), ("Cutout", fetch_cutout),
-                     ("Slaughter", fetch_slaughter), ("KS-NE", fetch_ks_ne),
-                     ("Drop", fetch_drop_credit), ("HH", fetch_henry_hub)]:
-        try:
-            df = fn()
-            if not df.empty:
-                df["week_ending"] = pd.to_datetime(df["week_ending"]).dt.date.apply(
-                    lambda d: d.isoformat() if d else None)
-                dfs.append(df.set_index("week_ending"))
-        except Exception as e:
-            print(f"  {name} error: {e}")
-
-    if not dfs:
-        print("No weekly data to write."); return
-
-    merged = dfs[0]
-    for df in dfs[1:]:
-        merged = merged.join(df, how="outer")
-
-    # Compute KS / NE averages if individual steer/heifer present
-    for st in ["ks", "ne"]:
-        sc, hc, ac = f"{st}_steer", f"{st}_heifer", f"{st}_avg"
-        if sc in merged.columns and hc in merged.columns and ac not in merged.columns:
-            merged[ac] = merged[[sc, hc]].mean(axis=1, skipna=False)
-
-    merged = merged.reset_index()
-    merged = merged.where(pd.notnull(merged), None)
-    rows = merged.to_dict("records")
-    upsert_weekly(conn, rows)
-    print(f"  ✓ beef_weekly: {len(rows)} rows upserted")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# QUARTERLY RECOMPUTE
-# ══════════════════════════════════════════════════════════════════════════════
-
-def recompute_quarterly(conn: sqlite3.Connection, full: bool = False):
-    print("\n=== Recomputing quarterly averages ===")
-    if full:
-        rows = conn.execute("SELECT * FROM beef_weekly").fetchall()
+    if result["ct150_steer"] is not None:
+        log.info("CT150: steer=$%.2f, heifer=%s  (week %s)",
+                 result["ct150_steer"],
+                 f"${result['ct150_heifer']:.2f}" if result["ct150_heifer"] else "n/a",
+                 week)
     else:
-        rows = conn.execute(
-            "SELECT * FROM beef_weekly WHERE week_ending >= ?", (since_date(),)
-        ).fetchall()
+        log.warning("CT150: could not parse price from PDF")
 
-    if not rows:
-        print("  No weekly rows found."); return
+    return result
 
-    df = pd.DataFrame([dict(r) for r in rows])
-    df["week_ending"] = pd.to_datetime(df["week_ending"]).dt.date
-    df["quarter"]     = df["week_ending"].apply(quarter_label)
 
-    agg = df.groupby("quarter")[MARKET_COLS].mean().reset_index()
-    agg = agg.where(pd.notnull(agg), None)
-    agg["quarter_start"] = agg["quarter"].apply(quarter_start)
+# ══ CUTOUT — ams_2461.pdf (report LM_XB459) ══════════════════════════════════
+# "National Weekly Boxed Beef Cutout And Boxed Beef Cuts - Negotiated Sales"
+# Values in US dollars per 100 lbs ($/cwt).
+#
+# Target: "Weekly Cutout Value Summary" → "Weekly Average" row
+#
+#   Weekly Cutout Value Summary
+#   Date   Choice  Select  Trim  Grinds  Total   Choice    Select
+#                                               600-900   600-900
+#   04/03    73       4     12     13     102    387.78    386.19
+#   ...
+#   Weekly Average                              392.28    390.09   ← extract these
+#   Change From Prior Week                       -2.44     -2.99
+#   Choice/Select Spread:  2.19
+#
+# The "Weekly Average" line has the two cutout values as the last two numbers.
 
-    # Preserve existing company financials
-    quarters = agg["quarter"].tolist()
-    fin_rows = conn.execute(
-        f"SELECT * FROM beef_quarterly WHERE quarter IN ({','.join('?'*len(quarters))})",
-        quarters
-    ).fetchall()
-    fin_map = {r["quarter"]: dict(r) for r in fin_rows}
+def fetch_cutout() -> dict:
+    """
+    Returns dict with keys: week_ending, choice, select_
+    Parses the 'Weekly Average' row from LM_XB459 (ams_2461.pdf).
+    """
+    text = fetch_pdf_text("cutout")
+    week = _parse_date(text)
+    result = {"week_ending": week, "choice": None, "select_": None}
 
-    out_rows = []
-    for _, row in agg.iterrows():
-        q = row["quarter"]
-        rec = {"quarter": q, "quarter_start": row["quarter_start"]}
-        for col in MARKET_COLS:
-            v = row.get(col)
-            rec[col] = round(float(v), 6) if v is not None else None
-        existing = fin_map.get(q, {})
-        for col in FIN_COLS:
-            rec[col] = existing.get(col)
-        out_rows.append(rec)
+    # Primary: "Weekly Average  ...  392.28  390.09"
+    # The line ends with two $/cwt values (Choice 600-900, Select 600-900)
+    m = re.search(
+        r"Weekly\s+Average\s+[\d.\s-]*([\d]{2,3}\.\d{2})\s+([\d]{2,3}\.\d{2})",
+        text, re.IGNORECASE
+    )
+    if m:
+        result["choice"]  = _num(m.group(1))
+        result["select_"] = _num(m.group(2))
 
-    upsert_quarterly(conn, out_rows)
-    print(f"  ✓ beef_quarterly: {len(out_rows)} rows recomputed")
+    # Fallback A: look for the two numbers right after "Weekly Average"
+    if result["choice"] is None:
+        m = re.search(
+            r"Weekly\s+Average[^\n]*([\d]{2,3}\.\d{2})[^\n]*([\d]{2,3}\.\d{2})",
+            text, re.IGNORECASE
+        )
+        if m:
+            result["choice"]  = _num(m.group(1))
+            result["select_"] = _num(m.group(2))
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MAIN
-# ══════════════════════════════════════════════════════════════════════════════
+    # Fallback B: scan for "Choice/Select Spread" and work backwards
+    if result["choice"] is None:
+        # Find all $/cwt-range numbers (250-500 range) near "Weekly Average"
+        block = re.search(r"Weekly\s+Average(.{0,200})", text, re.IGNORECASE | re.DOTALL)
+        if block:
+            nums = re.findall(r"\b(\d{3}\.\d{2})\b", block.group(1))
+            if len(nums) >= 2:
+                result["choice"]  = float(nums[0])
+                result["select_"] = float(nums[1])
+
+    if result["choice"] is not None:
+        log.info("Cutout: Choice=%.2f, Select=%s  (week %s)",
+                 result["choice"],
+                 f"{result['select_']:.2f}" if result["select_"] else "n/a",
+                 week)
+    else:
+        log.warning("Cutout: could not parse Choice/Select from PDF (LM_XB459)")
+
+    return result
+
+
+# ══ KANSAS — ams_2484.pdf ═════════════════════════════════════════════════════
+# WEEKLY ACCUMULATED section (same layout as CT150):
+#
+#   WEEKLY ACCUMULATED    Head Count    Avg Weight    Avg Price
+#   Live    Steer          X,XXX         X,XXX.XX      $XXX.XX
+#   Live    Heifer         X,XXX         X,XXX.XX      $XXX.XX
+
+def _parse_weekly_accumulated(text: str, label: str) -> tuple[float | None, str]:
+    """
+    Generic parser for USDA reports that have a WEEKLY ACCUMULATED section.
+    Returns (avg_price_steer, week_ending_iso).
+    Falls back to heifer price if steer is missing.
+    """
+    week = _parse_date(text)
+
+    # Try steer first
+    m = re.search(
+        r"WEEKLY\s+ACCUMULATED.*?Live\s+Steer\s+[\d,]+\s+[\d,.]+\s+\$?([\d.]+)",
+        text, re.IGNORECASE | re.DOTALL
+    )
+    if m:
+        return _num(m.group(1)), week
+
+    # Try heifer
+    m = re.search(
+        r"WEEKLY\s+ACCUMULATED.*?Live\s+Heifer\s+[\d,]+\s+[\d,.]+\s+\$?([\d.]+)",
+        text, re.IGNORECASE | re.DOTALL
+    )
+    if m:
+        log.info("%s: steer not found, using heifer price", label)
+        return _num(m.group(1)), week
+
+    # Fallback: any dollar price after "WEEKLY ACCUMULATED"
+    m = re.search(
+        r"WEEKLY\s+ACCUMULATED.*?\$\s*([\d.]+)",
+        text, re.IGNORECASE | re.DOTALL
+    )
+    if m:
+        log.info("%s: using first price after WEEKLY ACCUMULATED as fallback", label)
+        return _num(m.group(1)), week
+
+    log.warning("%s: 'WEEKLY ACCUMULATED' block not parsed", label)
+    return None, week
+
+
+def fetch_kansas() -> dict:
+    text = fetch_pdf_text("kansas")
+    price, week = _parse_weekly_accumulated(text, "KS")
+    if price:
+        log.info("KS: avg=$%.2f  (week %s)", price, week)
+    return {"week_ending": week, "ks_avg": price}
+
+
+def fetch_nebraska() -> dict:
+    # NOTE: Nebraska report is AMS 2667 (ams_2667.pdf), same layout as Kansas.
+    text = fetch_pdf_text("nebraska")
+    price, week = _parse_weekly_accumulated(text, "NE")
+    if price:
+        log.info("NE: avg=$%.2f  (week %s)", price, week)
+    return {"week_ending": week, "ne_avg": price}
+
+
+# ══ MERGE WEEKLY DATA ═════════════════════════════════════════════════════════
+
+def build_weekly_rows(ct150: dict, cutout: dict, ks: dict, ne: dict) -> list[dict]:
+    """
+    Merge data from the four PDFs into a list of weekly rows keyed by week_ending.
+    Each PDF may have a slightly different week_ending date (e.g. Friday vs Saturday).
+    We normalise to the latest date seen across all four sources.
+    """
+    dates = [d for d in [
+        ct150.get("week_ending"), cutout.get("week_ending"),
+        ks.get("week_ending"),    ne.get("week_ending")
+    ] if d]
+    # Use the single most common date, or max date if all differ
+    from collections import Counter
+    week = Counter(dates).most_common(1)[0][0] if dates else datetime.date.today().isoformat()
+
+    row = {
+        "week_ending":   week,
+        "choice":        cutout.get("choice"),
+        "select_":       cutout.get("select_"),
+        "ct150_steer":   ct150.get("ct150_steer"),
+        "ct150_heifer":  ct150.get("ct150_heifer"),
+        "ks_avg":        ks.get("ks_avg"),
+        "ne_avg":        ne.get("ne_avg"),
+    }
+    return [row]
+
+
+# ══ QUARTERLY RECOMPUTE ═══════════════════════════════════════════════════════
+
+def quarter_label(d: datetime.date) -> str:
+    return f"{((d.month - 1) // 3) + 1}Q{str(d.year)[-2:]}"
+
+def quarter_start(d: datetime.date) -> datetime.date:
+    m = ((d.month - 1) // 3) * 3 + 1
+    return datetime.date(d.year, m, 1)
+
+
+def recompute_quarterly(conn: sqlite3.Connection, full: bool = False) -> None:
+    df = pd.read_sql("SELECT * FROM beef_weekly ORDER BY week_ending", conn)
+    if df.empty:
+        log.warning("beef_weekly is empty; skipping quarterly recompute")
+        return
+
+    # Fix: use format='mixed' to handle both 'YYYY-MM-DD' and 'YYYY-MM-DDTHH:MM:SS'
+    df["week_ending"] = pd.to_datetime(df["week_ending"], format="mixed").dt.date
+    df["quarter"]       = df["week_ending"].apply(quarter_label)
+    df["quarter_start"] = df["week_ending"].apply(lambda d: quarter_start(d).isoformat())
+
+    agg = df.groupby(["quarter", "quarter_start"]).agg(
+        choice       =("choice",       "mean"),
+        select_      =("select_",      "mean"),
+        ct150_steer  =("ct150_steer",  "mean"),
+        ct150_heifer =("ct150_heifer", "mean"),
+        ks_avg       =("ks_avg",       "mean"),
+        ne_avg       =("ne_avg",       "mean"),
+    ).reset_index()
+
+    # ct150_all = average of steer and heifer (if both present)
+    agg["ct150_all"] = agg[["ct150_steer", "ct150_heifer"]].mean(axis=1, skipna=True)
+
+    # Preserve existing mbrf_gm / jbs_gm (manually entered)
+    existing = pd.read_sql("SELECT quarter, mbrf_gm, jbs_gm FROM beef_quarterly", conn)
+    agg = agg.merge(existing, on="quarter", how="left")
+
+    sql = """
+    INSERT INTO beef_quarterly
+        (quarter, quarter_start, choice, select_, ct150_steer, ct150_heifer, ct150_all, ks_avg, ne_avg, mbrf_gm, jbs_gm)
+    VALUES
+        (:quarter,:quarter_start,:choice,:select_,:ct150_steer,:ct150_heifer,:ct150_all,:ks_avg,:ne_avg,:mbrf_gm,:jbs_gm)
+    ON CONFLICT(quarter) DO UPDATE SET
+        quarter_start = excluded.quarter_start,
+        choice        = COALESCE(excluded.choice,        choice),
+        select_       = COALESCE(excluded.select_,       select_),
+        ct150_steer   = COALESCE(excluded.ct150_steer,   ct150_steer),
+        ct150_heifer  = COALESCE(excluded.ct150_heifer,  ct150_heifer),
+        ct150_all     = COALESCE(excluded.ct150_all,     ct150_all),
+        ks_avg        = COALESCE(excluded.ks_avg,        ks_avg),
+        ne_avg        = COALESCE(excluded.ne_avg,        ne_avg),
+        mbrf_gm       = COALESCE(mbrf_gm, excluded.mbrf_gm),
+        jbs_gm        = COALESCE(jbs_gm,  excluded.jbs_gm)
+    """
+    rows = agg.where(pd.notnull(agg), None).to_dict("records")
+    conn.executemany(sql, rows)
+    conn.commit()
+    log.info("✓ beef_quarterly: %d quarters recomputed", len(rows))
+
+
+# ══ HISTORICAL LOAD ═══════════════════════════════════════════════════════════
+
+def load_history(conn: sqlite3.Connection, xlsx_path: str) -> None:
+    """
+    One-time load from the V4 Excel workbook.
+    Expects a sheet with at least: week_ending, choice, select_, ct150_steer (or ct150),
+    ks_avg (or ks), ne_avg (or ne).
+    """
+    log.info("Loading history from %s …", xlsx_path)
+    xl = pd.ExcelFile(xlsx_path)
+
+    # Try to find the weekly data sheet
+    weekly_sheet = None
+    for name in xl.sheet_names:
+        if "week" in name.lower() or "raw" in name.lower() or "data" in name.lower():
+            weekly_sheet = name
+            break
+    if weekly_sheet is None:
+        weekly_sheet = xl.sheet_names[0]
+        log.warning("No obvious weekly sheet found; using '%s'", weekly_sheet)
+
+    df = xl.parse(weekly_sheet)
+    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+
+    # Normalise column names
+    rename = {
+        "week_end": "week_ending", "week": "week_ending", "date": "week_ending",
+        "choice_cutout": "choice",  "choice_$/cwt": "choice",
+        "select_cutout": "select_", "select_$/cwt": "select_",
+        "ct150": "ct150_steer",    "ct150_steer_avg": "ct150_steer",
+        "ks":    "ks_avg",         "ks_price": "ks_avg",
+        "ne":    "ne_avg",         "ne_price": "ne_avg",
+    }
+    df.rename(columns={k: v for k, v in rename.items() if k in df.columns}, inplace=True)
+
+    required = ["week_ending"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Required columns not found in Excel: {missing}. Columns available: {list(df.columns)}")
+
+    df["week_ending"] = pd.to_datetime(df["week_ending"], format="mixed").dt.date.astype(str)
+
+    for col in ["choice", "select_", "ct150_steer", "ct150_heifer", "ks_avg", "ne_avg"]:
+        if col not in df.columns:
+            df[col] = None
+
+    rows = df[["week_ending","choice","select_","ct150_steer","ct150_heifer","ks_avg","ne_avg"]]\
+             .where(pd.notnull(df), None).to_dict("records")
+    n = upsert_weekly(conn, rows)
+    log.info("✓ beef_weekly: %d rows loaded from Excel", n)
+
+
+# ══ WEEKLY UPDATE ═════════════════════════════════════════════════════════════
+
+def update_weekly(conn: sqlite3.Connection) -> None:
+    log.info("=== Fetching weekly data from USDA PDFs ===")
+
+    ct150_data  = {"week_ending": None, "ct150_steer": None, "ct150_heifer": None}
+    cutout_data = {"week_ending": None, "choice": None, "select_": None}
+    ks_data     = {"week_ending": None, "ks_avg": None}
+    ne_data     = {"week_ending": None, "ne_avg": None}
+
+    try:
+        ct150_data = fetch_ct150()
+    except Exception as e:
+        log.error("CT150 fetch failed: %s", e)
+
+    try:
+        cutout_data = fetch_cutout()
+    except Exception as e:
+        log.error("Cutout fetch failed: %s", e)
+
+    try:
+        ks_data = fetch_kansas()
+    except Exception as e:
+        log.error("Kansas fetch failed: %s", e)
+
+    try:
+        ne_data = fetch_nebraska()
+    except Exception as e:
+        log.error("Nebraska fetch failed: %s", e)
+
+    rows = build_weekly_rows(ct150_data, cutout_data, ks_data, ne_data)
+    n = upsert_weekly(conn, rows)
+    log.info("✓ beef_weekly: %d row(s) upserted  (week_ending=%s)", n, rows[0]["week_ending"])
+
+
+# ══ MAIN ══════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="U.S. Beef Tracker — SQLite extractor")
-    parser.add_argument("--history", metavar="XLSX_PATH",
-                        help="Path to V4 tracker (.xlsx) — runs one-time historical load")
-    parser.add_argument("--full", action="store_true",
-                        help="Rebuild ALL quarterly rows from beef_weekly (use with weekly update)")
+    parser = argparse.ArgumentParser(description="U.S. Beef Packer Margin Extractor")
+    parser.add_argument("--history", metavar="XLSX", help="One-time load from V4 Excel workbook")
+    parser.add_argument("--full", action="store_true", help="Force full quarterly recompute")
+    parser.add_argument("--db", default=DB_PATH, help="Path to beef.db (default: same folder as script)")
     args = parser.parse_args()
 
-    conn = init_db()
-    print(f"Database: {DB_PATH}")
+    if args.db != DB_PATH:
+        DB_PATH = args.db
+
+    log.info("Database: %s", DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
+    init_db(conn)
 
     if args.history:
-        load_history(args.history, conn)
+        load_history(conn, args.history)
     else:
         update_weekly(conn)
-        recompute_quarterly(conn, full=args.full)
+
+    log.info("=== Recomputing quarterly averages ===")
+    recompute_quarterly(conn, full=args.full)
 
     conn.close()
-    print("\n✓ Done.")
+    log.info("Done.")
