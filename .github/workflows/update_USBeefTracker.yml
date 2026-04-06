@@ -5,23 +5,20 @@ on:
     - cron: '0 14 * * 1'   # toda segunda às 14h UTC (11h Brasília)
   workflow_dispatch:         # botão manual no GitHub, caso queira forçar
 
+permissions:
+  contents: write
+
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v4
         with: { python-version: '3.11' }
-
       - name: Install dependencies
         run: pip install requests pandas openpyxl pdfplumber
-
       - name: Fetch latest data & update beef.db
         run: python "Beef/U.S. Tracker/extractor_beef.py"
-        env:
-          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
-
       - name: Commit updated beef.db
         run: |
           git config user.name  "github-actions[bot]"
