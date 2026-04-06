@@ -269,28 +269,29 @@ def _parse_weekly_accumulated(text: str, label: str) -> tuple[float | None, str]
     """
     week = _parse_date(text)
 
-    # Try steer first
-    m = re.search(
+    m_steer = re.search(
         r"WEEKLY\s+ACCUMULATED.*?Live\s+Steer\s+[\d,]+\s+[\d,.]+\s+\$?([\d.]+)",
         text, re.IGNORECASE | re.DOTALL
     )
-    if m:
-        return _num(m.group(1)), week
-
-    # Try heifer
-    m = re.search(
+    m_heifer = re.search(
         r"WEEKLY\s+ACCUMULATED.*?Live\s+Heifer\s+[\d,]+\s+[\d,.]+\s+\$?([\d.]+)",
         text, re.IGNORECASE | re.DOTALL
     )
-    if m:
-        log.info("%s: steer not found, using heifer price", label)
-        return _num(m.group(1)), week
+    steer  = _num(m_steer.group(1))  if m_steer  else None
+    heifer = _num(m_heifer.group(1)) if m_heifer else None
+
+    if steer and heifer:
+        avg = round((steer + heifer) / 2, 4)
+        return avg, week
+    if steer:
+        log.info("%s: heifer not found, using steer only", label)
+        return steer, week
+    if heifer:
+        log.info("%s: steer not found, using heifer only", label)
+        return heifer, week
 
     # Fallback: any dollar price after "WEEKLY ACCUMULATED"
-    m = re.search(
-        r"WEEKLY\s+ACCUMULATED.*?\$\s*([\d.]+)",
-        text, re.IGNORECASE | re.DOTALL
-    )
+    m = re.search(r"WEEKLY\s+ACCUMULATED.*?\$\s*([\d.]+)", text, re.IGNORECASE | re.DOTALL)
     if m:
         log.info("%s: using first price after WEEKLY ACCUMULATED as fallback", label)
         return _num(m.group(1)), week
@@ -324,13 +325,16 @@ def build_weekly_rows(ct150: dict, cutout: dict, ks: dict, ne: dict) -> list[dic
     Each PDF may have a slightly different week_ending date (e.g. Friday vs Saturday).
     We normalise to the latest date seen across all four sources.
     """
-    dates = [d for d in [
-        ct150.get("week_ending"), cutout.get("week_ending"),
-        ks.get("week_ending"),    ne.get("week_ending")
-    ] if d]
-    # Use the single most common date, or max date if all differ
-    from collections import Counter
-    week = Counter(dates).most_common(1)[0][0] if dates else datetime.date.today().isoformat()
+    # Cutout (ams_2461) is published every Friday and has the most reliable
+    # week_ending date. Use it as the canonical key; fall back to most common.
+    if cutout.get("week_ending"):
+        week = cutout["week_ending"]
+    else:
+        dates = [d for d in [
+            ct150.get("week_ending"), ks.get("week_ending"), ne.get("week_ending")
+        ] if d]
+        from collections import Counter
+        week = Counter(dates).most_common(1)[0][0] if dates else datetime.date.today().isoformat()
 
     row = {
         "week_ending":   week,
