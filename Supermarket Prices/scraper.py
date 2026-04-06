@@ -19,7 +19,7 @@ from datetime import date, datetime
 from pathlib import Path
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-_ROOT    = Path(__file__).resolve().parent.parent
+_ROOT    = Path(__file__).resolve().parent
 DB_PATH  = _ROOT / "precos.db"
 LOG_PATH = _ROOT / "coleta.log"
 
