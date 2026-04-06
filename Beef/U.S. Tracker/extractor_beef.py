@@ -7,7 +7,7 @@ PDF sources (always current week):
   CT150  (5-Area live steer/heifer): https://www.ams.usda.gov/mnreports/ams_2477.pdf
   Cutout (Choice / Select boxed beef): https://www.ams.usda.gov/mnreports/ams_2461.pdf
   Kansas weekly price:                 https://www.ams.usda.gov/mnreports/ams_2484.pdf
-  Nebraska weekly price:               https://www.ams.usda.gov/mnreports/ams_2667.pdf
+  Nebraska weekly price:               https://www.ams.usda.gov/mnreports/ams_2485.pdf
 
 Usage:
   python extractor_beef.py                  # default: update latest week from PDFs
@@ -30,7 +30,7 @@ PDF_URLS = {
     "ct150":    "https://www.ams.usda.gov/mnreports/ams_2477.pdf",
     "cutout":   "https://www.ams.usda.gov/mnreports/ams_2461.pdf",
     "kansas":   "https://www.ams.usda.gov/mnreports/ams_2484.pdf",
-    "nebraska": "https://www.ams.usda.gov/mnreports/ams_2667.pdf",
+    "nebraska": "https://www.ams.usda.gov/mnreports/ams_2485.pdf",
 }
 
 HEADERS = {
