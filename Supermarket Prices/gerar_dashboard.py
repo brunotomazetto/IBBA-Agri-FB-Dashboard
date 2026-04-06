@@ -125,6 +125,8 @@ CLUSTERS_DEF = {
         {"id":"heineken",   "nome":"Heineken",   "skus":["Heineken Lata_350ml","Heineken Lata_269ml","Heineken 0.0_350ml","Amstel Lata_350ml","Amstel Lata_269ml"]},
         {"id":"ambev",      "nome":"Ambev",      "skus":["Skol Lata_350ml","Skol Lata_269ml","Brahma Duplo Malte_350ml","Brahma Duplo Malte_269ml","Antarctica Lata_350ml","Budweiser Lata_350ml","Budweiser Lata_269ml","Stella Artois Long Neck_330ml","Corona Extra Lata_350ml","Corona Extra Long Neck_330ml","Spaten Puro Malte Lata_350ml","Spaten Puro Malte Lata_269ml","Original Lata_350ml","Original Lata_269ml"]},
         {"id":"petropolis", "nome":"Petrópolis", "skus":["Itaipava Lata_350ml"]},
+        {"id":"premium",    "nome":"Premium",    "skus":["Heineken Lata_350ml","Heineken Lata_269ml","Heineken 0.0_350ml","Stella Artois Long Neck_330ml","Corona Extra Long Neck_330ml","Corona Extra Lata_350ml","Spaten Puro Malte Lata_350ml","Spaten Puro Malte Lata_269ml","Budweiser Lata_350ml","Budweiser Lata_269ml"]},
+        {"id":"mainstream", "nome":"Mainstream", "skus":["Skol Lata_350ml","Skol Lata_269ml","Brahma Duplo Malte_350ml","Brahma Duplo Malte_269ml","Amstel Lata_350ml","Amstel Lata_269ml","Itaipava Lata_350ml","Original Lata_350ml","Original Lata_269ml"]},
     ],
     "Carnes, Processados e Preparados": [
         {"id":"beef",       "nome":"Beef",       "skus":["Picanha 1kg Bassi_1kg","Picanha 1kg Friboi_1kg","Picanha 1kg Estância 92_1kg","Fraldinha 1kg Bassi_1kg","Carne Moida 1kg Swift_1kg"]},
