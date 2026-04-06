@@ -225,8 +225,10 @@ def fetch_cutout() -> dict:
 
     # Primary: "Weekly Average  ...  392.28  390.09"
     # The line ends with two $/cwt values (Choice 600-900, Select 600-900)
+    # Cutout values are always 3-digit (300-500 range); use \d{3} to avoid
+    # the greedy [\d.\s-]* eating the leading digit of the first value.
     m = re.search(
-        r"Weekly\s+Average\s+[\d.\s-]*([\d]{2,3}\.\d{2})\s+([\d]{2,3}\.\d{2})",
+        r"Weekly\s+Average\s+[\d.\s-]*(\d{3}\.\d{2})\s+(\d{3}\.\d{2})",
         text, re.IGNORECASE
     )
     if m:
@@ -236,7 +238,7 @@ def fetch_cutout() -> dict:
     # Fallback A: look for the two numbers right after "Weekly Average"
     if result["choice"] is None:
         m = re.search(
-            r"Weekly\s+Average[^\n]*([\d]{2,3}\.\d{2})[^\n]*([\d]{2,3}\.\d{2})",
+            r"Weekly\s+Average[^\n]*(\d{3}\.\d{2})[^\n]*(\d{3}\.\d{2})",
             text, re.IGNORECASE
         )
         if m:
