@@ -147,6 +147,84 @@ CLUSTERS_DEF = {
 
 CLUSTER_COLORS = ["#0a0a0f","#0e9f6e","#e02424","#c27803","#7e3af2","#0694a2","#ff8a4c","#84cc16","#ec4899","#14b8a6"]
 
+
+def aba_cervejas():
+    return """
+    <div class="page" id="page-grupo-Cervejas">
+
+      <!-- BLOCK 1: BREWERY PRICE INDEX -->
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Brewery Price Index — R$/hl</span>
+          <span style="font-size:11px;color:var(--muted)">Weighted average across supermarkets</span>
+        </div>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:.85rem">
+          Ambev: Brahma 40%, Skol 20%, Corona 10%, Original/Spaten/Stella 6.7% each, Antarctica & Bud 5% each ·
+          Heineken: Heineken 75%, Amstel 25% · Petrópolis: Itaipava 100%
+        </p>
+        <div style="height:300px;margin-bottom:.5rem"><canvas id="chart-brewery-index"></canvas></div>
+        <div id="tabela-brewery-index" style="margin-top:.5rem"></div>
+      </div>
+
+      <!-- BLOCK 2: PRICE PER HECTOLITER BY BRAND -->
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Price per Hectoliter by Brand</span>
+          <span style="font-size:11px;color:var(--muted)">Average across supermarkets · R$/hl</span>
+        </div>
+        <div style="height:320px;margin-bottom:.5rem"><canvas id="chart-preco-hl"></canvas></div>
+        <div id="tabela-preco-hl" style="margin-top:.5rem"></div>
+      </div>
+
+      <!-- BLOCK 3: PRICE HISTORY -->
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Cervejas — Price History</span>
+          <span style="font-size:11px;color:var(--muted)">São Paulo — SP</span>
+        </div>
+        <div style="display:flex;gap:1.25rem;flex-wrap:wrap;align-items:flex-start;margin-bottom:.85rem">
+          <div>
+            <div class="ctrl-label">Product</div>
+            <div id="chk-prod-Cervejas" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px 8px;min-width:240px;background:var(--card)"></div>
+            <button onclick="toggleTodos('chk-prod-Cervejas',true,'Cervejas')" class="btn-mini accent">all</button>
+            <button onclick="toggleTodos('chk-prod-Cervejas',false,'Cervejas')" class="btn-mini muted">none</button>
+          </div>
+          <div>
+            <div class="ctrl-label">Supermarket</div>
+            <div id="chk-sm-Cervejas" style="border:1px solid var(--border);border-radius:6px;padding:6px 8px;min-width:170px;background:var(--card)"></div>
+            <button onclick="toggleTodos('chk-sm-Cervejas',true,'Cervejas')" class="btn-mini accent">all</button>
+            <button onclick="toggleTodos('chk-sm-Cervejas',false,'Cervejas')" class="btn-mini muted">none</button>
+          </div>
+          <div>
+            <div class="ctrl-label">Period</div>
+            <select id="sel-periodo-Cervejas" onchange="onPeriodoChange('Cervejas')" class="sel-ctrl" style="width:180px;margin-bottom:6px">
+              <option value="tudo">Full history</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="3m">Last 3 months</option>
+              <option value="ano">This year</option>
+              <option value="custom">Custom range...</option>
+            </select>
+            <div id="range-Cervejas" style="display:none;flex-direction:column;gap:4px">
+              <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)">
+                <span>From</span><input type="date" id="dt-de-Cervejas" onchange="renderGrupo('Cervejas')" class="sel-ctrl">
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)">
+                <span>To</span><input type="date" id="dt-ate-Cervejas" onchange="renderGrupo('Cervejas')" class="sel-ctrl">
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="height:320px;margin-bottom:1rem"><canvas id="chart-Cervejas"></canvas></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+          <span class="section-title" style="font-size:12px">Price comparison — most recent day in period</span>
+          <button class="btn btn-green" style="font-size:11px;padding:5px 10px" onclick="exportarComparacao('Cervejas')">⬇ Excel</button>
+        </div>
+        <div id="tabela-comp-Cervejas"></div>
+      </div>
+
+    </div>"""
+
 def aba_grupo(grupo_nome, cats):
     gid = grupo_nome.replace(" ","_").replace(",","").replace("/","")
     clusters_j = json.dumps(CLUSTERS_DEF.get(grupo_nome, []), ensure_ascii=False)
@@ -229,14 +307,20 @@ def gerar_html(todos, erros, historico, ultima_data, alertas):
     grupos_j   = json.dumps({g:cats for g,cats in GRUPOS.items()}, ensure_ascii=False)
     clusters_j = json.dumps(CLUSTERS_DEF, ensure_ascii=False)
     colors_j   = json.dumps(CLUSTER_COLORS, ensure_ascii=False)
-    abas       = "".join(aba_grupo(g,cats) for g,cats in GRUPOS.items())
+    abas_list  = []
+    for g,cats in GRUPOS.items():
+        if g == "Cervejas":
+            abas_list.append(aba_cervejas())
+        else:
+            abas_list.append(aba_grupo(g,cats))
+    abas = "".join(abas_list)
     grupo_tabs = ""
     for g in GRUPOS:
         gid = g.replace(" ","_").replace(",","").replace("/","")
         label = GRUPOS_EN.get(g, g)
         grupo_tabs += f'<button class="tab-btn" onclick="showTab(\'grupo-{gid}\',this)">{label}</button>\n    '
 
-    _js_extra = ""
+    _js_extra = '\n// ── BREWERY INDEX & PRICE PER HL ─────────────────────────────────────────────\n\nconst ML_MAP = {\n  "Amstel Lata":              {"269ml":269,"350ml":350},\n  "Antarctica Lata":          {"350ml":350},\n  "Brahma Duplo Malte":       {"269ml":269,"350ml":350},\n  "Budweiser Lata":           {"269ml":269,"350ml":350},\n  "Corona Extra Lata":        {"350ml":350},\n  "Corona Extra Long Neck":   {"330ml":330},\n  "Heineken 0.0":             {"350ml":350},\n  "Heineken Lata":            {"269ml":269,"350ml":350},\n  "Itaipava Lata":            {"350ml":350},\n  "Original Lata":            {"269ml":269,"350ml":350},\n  "Skol Lata":                {"269ml":269,"350ml":350},\n  "Spaten Puro Malte Lata":   {"269ml":269,"350ml":350},\n  "Stella Artois Long Neck":  {"330ml":330},\n};\n\nconst BRAND_MAP = {\n  "Amstel Lata":"Amstel","Antarctica Lata":"Antarctica",\n  "Brahma Duplo Malte":"Brahma","Budweiser Lata":"Budweiser",\n  "Corona Extra Lata":"Corona","Corona Extra Long Neck":"Corona",\n  "Heineken 0.0":"Heineken","Heineken Lata":"Heineken",\n  "Itaipava Lata":"Itaipava","Original Lata":"Original",\n  "Skol Lata":"Skol","Spaten Puro Malte Lata":"Spaten",\n  "Stella Artois Long Neck":"Stella",\n};\n\nconst BREWERY_WEIGHTS = {\n  "Ambev": {\n    "Antarctica":0.05,"Brahma":0.40,"Budweiser":0.05,\n    "Skol":0.20,"Corona":0.10,"Original":0.067,\n    "Spaten":0.067,"Stella":0.067\n  },\n  "Heineken": {"Heineken":0.75,"Amstel":0.25},\n  "Petrópolis": {"Itaipava":1.0},\n};\n\nconst BREWERY_COLORS = {"Ambev":"#E02424","Heineken":"#0E9F6E","Petrópolis":"#C27803"};\nconst BRAND_COLORS = ["#0a0a0f","#0e9f6e","#e02424","#c27803","#7e3af2",\n                      "#0694a2","#ff8a4c","#84cc16","#ec4899","#14b8a6","#f59e0b"];\n\nfunction precoHL(nome, emb, preco) {\n  const ml = (ML_MAP[nome]||{})[emb];\n  if (!ml || !preco) return null;\n  return (preco / ml) * 100000;\n}\n\nfunction mediaHL(brand, datas_arr) {\n  // Média do preço/hl de um brand numa lista de datas, média dos SMs\n  const rows = HIST.filter(r=>r.categoria==="Cervejas" && BRAND_MAP[r.nome_produto]===brand);\n  if (!rows.length) return null;\n  const byData = {};\n  datas_arr.forEach(d=>{\n    const r_dia = rows.filter(r=>r.data_coleta===d);\n    if (!r_dia.length) return;\n    const hls = r_dia.map(r=>precoHL(r.nome_produto,r.embalagem,r.preco_atual)).filter(v=>v);\n    if (hls.length) byData[d] = hls.reduce((a,b)=>a+b,0)/hls.length;\n  });\n  return byData;\n}\n\nfunction renderBreweryIndex() {\n  const cervDatas = [...new Set(HIST.filter(r=>r.categoria==="Cervejas").map(r=>r.data_coleta))].sort();\n  const datasets = Object.entries(BREWERY_WEIGHTS).map(([brewery, weights])=>({\n    label: brewery,\n    borderColor: BREWERY_COLORS[brewery],\n    backgroundColor: BREWERY_COLORS[brewery]+"22",\n    tension:0.3, pointRadius:3, fill:false,\n    data: cervDatas.map(d=>{\n      let total=0, wSum=0;\n      Object.entries(weights).forEach(([brand,w])=>{\n        const hl = (mediaHL(brand,[d])||{})[d];\n        if (hl) { total+=hl*w; wSum+=w; }\n      });\n      return wSum>0 ? +(total/wSum).toFixed(2) : null;\n    })\n  }));\n\n  const ctx = document.getElementById("chart-brewery-index");\n  if (!ctx) return;\n  if (ctx._chart) ctx._chart.destroy();\n  ctx._chart = new Chart(ctx, {\n    type:"line",\n    data:{labels:cervDatas, datasets},\n    options:{\n      responsive:true, maintainAspectRatio:false,\n      plugins:{legend:{position:"top"}},\n      scales:{y:{ticks:{callback:v=>"R$"+v.toFixed(0)},title:{display:true,text:"R$/hl"}}}\n    }\n  });\n\n  // Tabela última data\n  const ultima = cervDatas[cervDatas.length-1]||"";\n  const tbl = document.getElementById("tabela-brewery-index");\n  if (!tbl) return;\n  tbl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">\n    <thead><tr style="background:var(--bg2)">\n      <th style="padding:6px 10px;text-align:left">Brewery</th>\n      <th style="padding:6px 10px;text-align:right">R$/hl (latest)</th>\n    </tr></thead><tbody>`+\n    Object.entries(BREWERY_WEIGHTS).map(([brewery,weights])=>{\n      let total=0,wSum=0;\n      Object.entries(weights).forEach(([brand,w])=>{\n        const hl=(mediaHL(brand,[ultima])||{})[ultima];\n        if(hl){total+=hl*w;wSum+=w;}\n      });\n      const val = wSum>0?`R$ ${(total/wSum).toFixed(2)}`:"—";\n      return `<tr style="border-bottom:1px solid var(--border)">\n        <td style="padding:6px 10px;font-weight:600;color:${BREWERY_COLORS[brewery]}">${brewery}</td>\n        <td style="padding:6px 10px;text-align:right">${val}</td></tr>`;\n    }).join("")+`</tbody></table>`;\n}\n\nfunction renderPrecoHL() {\n  const cervDatas = [...new Set(HIST.filter(r=>r.categoria==="Cervejas").map(r=>r.data_coleta))].sort();\n  const brands = [...new Set(Object.values(BRAND_MAP))].sort();\n  const ultima = cervDatas[cervDatas.length-1]||"";\n\n  // Bar chart — preço/hl por marca na última data\n  const vals = brands.map(b=>{\n    const hl=(mediaHL(b,[ultima])||{})[ultima];\n    return hl?+hl.toFixed(2):null;\n  });\n\n  const ctx = document.getElementById("chart-preco-hl");\n  if (!ctx) return;\n  if (ctx._chart) ctx._chart.destroy();\n  ctx._chart = new Chart(ctx, {\n    type:"bar",\n    data:{\n      labels:brands,\n      datasets:[{\n        label:`R$/hl (${ultima})`,\n        data:vals,\n        backgroundColor:BRAND_COLORS.slice(0,brands.length),\n      }]\n    },\n    options:{\n      responsive:true, maintainAspectRatio:false,\n      plugins:{legend:{display:false}},\n      scales:{y:{ticks:{callback:v=>"R$"+v.toFixed(0)},title:{display:true,text:"R$/hl"}}}\n    }\n  });\n\n  // Tabela histórica por marca\n  const tbl = document.getElementById("tabela-preco-hl");\n  if (!tbl) return;\n  tbl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">\n    <thead><tr style="background:var(--bg2)">\n      <th style="padding:6px 10px;text-align:left">Brand</th>`+\n      cervDatas.slice(-7).map(d=>`<th style="padding:6px 10px;text-align:right">${d}</th>`).join("")+\n    `</tr></thead><tbody>`+\n    brands.map(b=>{\n      const row_data = cervDatas.slice(-7).map(d=>{\n        const hl=(mediaHL(b,[d])||{})[d];\n        return hl?`R$ ${hl.toFixed(2)}`:"—";\n      });\n      return `<tr style="border-bottom:1px solid var(--border)">\n        <td style="padding:6px 10px;font-weight:600">${b}</td>`+\n        row_data.map(v=>`<td style="padding:6px 10px;text-align:right">${v}</td>`).join("")+\n        `</tr>`;\n    }).join("")+`</tbody></table>`;\n}\n'
 
     return _js_extra + f"""<!DOCTYPE html>
 <html lang="en">
@@ -471,6 +555,8 @@ function showTab(id,btn){{
   document.getElementById("page-"+id)?.classList.add("active"); btn.classList.add("active");
 }}
 function init(){{
+  renderBreweryIndex();
+  renderPrecoHL();
   renderKPIs(); renderAlertasBanner(); renderAlertasLista();
   populaFiltros(); filtrarTabela();
   populaFiltrosErros(); filtrarErros();
