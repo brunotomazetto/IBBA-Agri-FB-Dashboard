@@ -160,7 +160,11 @@ def get_json(url: str, params: dict = None) -> dict:
         try:
             r = requests.get(url, params=params, auth=auth, timeout=TIMEOUT)
             r.raise_for_status()
-            return r.json()
+            data = r.json()
+            # MARS API sometimes returns a bare list instead of {"results": [...]}
+            if isinstance(data, list):
+                return {"results": data}
+            return data
         except Exception as e:
             if attempt == RETRY - 1:
                 print(f"  ✗ HTTP error ({url[:60]}…): {e}")
@@ -221,11 +225,9 @@ AMS_BROILER_ID = "2020"   # AMS Weekly National Composite Broiler report
 def fetch_bw_wholesale() -> list[dict]:
     """
     Fetch Broiler Composite Wholesale price from USDA AMS report 2020.
-    Falls back to USDA ERS monthly data if AMS is unavailable.
     """
     url = f"{AMS_BASE}/{AMS_BROILER_ID}"
     params = {
-        "q": "composite,wholesale",
         "startDate": "01/01/2016",
         "endDate": datetime.now().strftime("%m/%d/%Y"),
         "allSections": "true",
@@ -234,9 +236,9 @@ def fetch_bw_wholesale() -> list[dict]:
     rows = []
     for item in data.get("results", []):
         try:
-            dt  = datetime.strptime(item.get("report_date",""), "%m/%d/%Y")
-            # Try several field names the API uses
-            for field in ("weighted_avg", "price", "avg_price", "wtd_avg"):
+            dt = datetime.strptime(item.get("report_date", ""), "%m/%d/%Y")
+            for field in ("weighted_avg", "price", "avg_price", "wtd_avg",
+                          "composite_price", "national_composite"):
                 v = item.get(field)
                 if v is not None:
                     rows.append({"date": dt, "value": float(v)})
@@ -244,6 +246,114 @@ def fetch_bw_wholesale() -> list[dict]:
         except (ValueError, TypeError):
             continue
     return rows
+
+# ─── Chicken Parts from USDA AMS Weekly PDF (ams_3646.pdf) ───────────────────
+# URL: https://www.ams.usda.gov/mnreports/ams_3646.pdf  (overwritten weekly)
+# Easier and more reliable than the MARS API endpoint.
+# Parsed with pdfplumber; falls back gracefully if unavailable.
+
+AMS_PARTS_PDF = "https://www.ams.usda.gov/mnreports/ams_3646.pdf"
+
+def fetch_parts_from_pdf() -> dict:
+    """
+    Download the USDA AMS Weekly National Chicken Parts PDF and parse prices.
+    Returns same format as fetch_parts(): dict of lists of {'date', 'value'}.
+    Returns empty dict on any failure so caller can fall back to API.
+    """
+    try:
+        import pdfplumber, io, re
+    except ImportError:
+        print("  ⚠ pdfplumber not installed — skipping PDF fetch")
+        return {}
+
+    try:
+        resp = requests.get(AMS_PARTS_PDF, timeout=TIMEOUT)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"  ✗ PDF download failed: {e}")
+        return {}
+
+    results = {"breast": [], "leg_qtrs": [], "wings": [], "tenders": []}
+
+    try:
+        with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+
+        # ── Extract report date ──────────────────────────────────────────────
+        # Typical header: "Week of April 4, 2026" or "For Week Ending 04/04/2026"
+        dt = None
+        for pat in [
+            r"[Ww]eek\s+[Oo]f\s+([A-Za-z]+ \d{1,2},\s*\d{4})",
+            r"[Ff]or\s+[Ww]eek\s+[Ee]nding\s+(\d{1,2}/\d{1,2}/\d{4})",
+            r"(\d{1,2}/\d{1,2}/\d{4})",
+        ]:
+            m = re.search(pat, text)
+            if m:
+                raw = m.group(1).strip()
+                for fmt in ("%B %d, %Y", "%m/%d/%Y"):
+                    try:
+                        dt = datetime.strptime(raw, fmt)
+                        break
+                    except ValueError:
+                        continue
+            if dt:
+                break
+
+        if not dt:
+            print("  ⚠ PDF: could not parse report date")
+            return {}
+
+        print(f"  PDF report date: {dt.strftime('%Y-%m-%d')}")
+
+        # ── Extract prices ───────────────────────────────────────────────────
+        # Rows look like (with varying spacing / extra cols):
+        #   Breast, Boneless Skinless    135.00-145.00   140.20   +2.10   ...
+        #   Leg Quarters, Bulk            48.00- 52.00    49.92   -0.50   ...
+        #   Wings, Whole                 105.00-112.00   108.43   +1.20   ...
+        #   Tenderloins                  147.00-153.00   149.76   +0.80   ...
+        #
+        # Strategy: find each product name then grab the first standalone
+        # decimal number that follows it on the same or next non-blank line
+        # (that number is the weighted average).
+
+        def find_wtd_avg(keyword_pattern: str) -> float | None:
+            m = re.search(keyword_pattern, text, re.IGNORECASE)
+            if not m:
+                return None
+            snippet = text[m.end(): m.end() + 200]
+            # Weighted avg is typically after a price range "NNN.NN-NNN.NN"
+            # Try to find it after a range, or just the first number ≥ 10
+            range_m = re.search(r"\d{2,3}\.\d{2}\s*-\s*\d{2,3}\.\d{2}\s+([\d]{2,3}\.\d{2})", snippet)
+            if range_m:
+                return float(range_m.group(1))
+            # Fallback: first number ≥ 10 with 2 decimal places
+            nums = re.findall(r"\b(\d{2,3}\.\d{2})\b", snippet)
+            candidates = [float(n) for n in nums if float(n) >= 10]
+            return candidates[0] if candidates else None
+
+        breast_price  = find_wtd_avg(r"Breast[,\s]+[Bb]oneless\s*[Ss]kinless|B/?S\s+Breast")
+        leg_price     = find_wtd_avg(r"Leg\s+[Qq]uarters?[,\s]+[Bb]ulk|Leg\s+Quarters?")
+        wings_price   = find_wtd_avg(r"Wings?[,\s]+[Ww]hole|Whole\s+Wings?")
+        tenders_price = find_wtd_avg(r"Tenderloins?|Tenders?")
+
+        def add(key, price):
+            if price is not None:
+                results[key].append({"date": dt, "value": price})
+                print(f"  PDF {key}: {price:.2f} cts/lb")
+            else:
+                print(f"  ⚠ PDF {key}: not found in report")
+
+        add("breast",   breast_price)
+        add("leg_qtrs", leg_price)
+        add("wings",    wings_price)
+        add("tenders",  tenders_price)
+
+    except Exception as e:
+        print(f"  ✗ PDF parse error: {e}")
+        return {}
+
+    return results
+
 
 # ─── Chicken Parts from USDA AMS 3646 ────────────────────────────────────────
 # AMS NW_LS644 = National Chicken Parts (weekly, cts/lb)
@@ -254,8 +364,18 @@ def fetch_parts() -> dict[str, list[dict]]:
     """
     Returns dict with keys: 'breast', 'leg_qtrs', 'wings', 'tenders'
     Each: list of {'date': datetime, 'value': float}.
+    Primary source: USDA AMS Weekly PDF (ams_3646.pdf) — no auth needed.
+    Fallback: USDA AMS MARS API (report 3646) — requires API key.
     """
-    # Try USDA AMS MARS for the NW_LS644 report
+    # ── Primary: PDF ─────────────────────────────────────────────────────────
+    print("  Trying PDF source (ams_3646.pdf) …")
+    pdf_results = fetch_parts_from_pdf()
+    has_pdf_data = any(len(v) > 0 for v in pdf_results.values())
+    if has_pdf_data:
+        return pdf_results
+    print("  PDF empty or failed — falling back to MARS API …")
+
+    # ── Fallback: MARS API ────────────────────────────────────────────────────
     url = f"{AMS_BASE}/3646"
     params = {
         "startDate": "09/01/2016",
