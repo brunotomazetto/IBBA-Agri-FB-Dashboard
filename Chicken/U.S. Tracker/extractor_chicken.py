@@ -259,6 +259,10 @@ def fetch_parts_from_pdf() -> dict:
     Download the USDA AMS Weekly National Chicken Parts PDF and parse prices.
     Returns same format as fetch_parts(): dict of lists of {'date', 'value'}.
     Returns empty dict on any failure so caller can fall back to API.
+
+    Strategy:
+      1. Try pdfplumber table extraction (most reliable for tabular data)
+      2. Fall back to regex on raw text if table extraction yields nothing
     """
     try:
         import pdfplumber, io, re
@@ -277,23 +281,25 @@ def fetch_parts_from_pdf() -> dict:
 
     try:
         with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
-            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            full_text  = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            all_tables = []
+            for page in pdf.pages:
+                tbls = page.extract_tables() or []
+                all_tables.extend(tbls)
 
         # ── Extract report date ──────────────────────────────────────────────
-        # Typical header: "Week of April 4, 2026" or "For Week Ending 04/04/2026"
         dt = None
         for pat in [
-            r"[Ww]eek\s+[Oo]f\s+([A-Za-z]+ \d{1,2},\s*\d{4})",
+            r"[Ww]eek\s+[Oo]f\s+([A-Za-z]+ \d{1,2},?\s*\d{4})",
             r"[Ff]or\s+[Ww]eek\s+[Ee]nding\s+(\d{1,2}/\d{1,2}/\d{4})",
-            r"(\d{1,2}/\d{1,2}/\d{4})",
+            r"(\d{2}/\d{2}/\d{4})",
         ]:
-            m = re.search(pat, text)
+            m = re.search(pat, full_text)
             if m:
                 raw = m.group(1).strip()
-                for fmt in ("%B %d, %Y", "%m/%d/%Y"):
+                for fmt in ("%B %d %Y", "%B %d, %Y", "%m/%d/%Y"):
                     try:
-                        dt = datetime.strptime(raw, fmt)
-                        break
+                        dt = datetime.strptime(raw, fmt); break
                     except ValueError:
                         continue
             if dt:
@@ -301,55 +307,85 @@ def fetch_parts_from_pdf() -> dict:
 
         if not dt:
             print("  ⚠ PDF: could not parse report date")
+            # Print first 800 chars of text to help diagnose format issues
+            print("  PDF text preview:\n" + full_text[:800])
             return {}
-
         print(f"  PDF report date: {dt.strftime('%Y-%m-%d')}")
+        # Debug: print lines containing key product words
+        for line in full_text.splitlines():
+            if any(kw in line.lower() for kw in ("breast","leg quarter","wing","tender")):
+                print(f"  [PDF line] {line.strip()}")
 
-        # ── Extract prices ───────────────────────────────────────────────────
-        # Rows look like (with varying spacing / extra cols):
-        #   Breast, Boneless Skinless    135.00-145.00   140.20   +2.10   ...
-        #   Leg Quarters, Bulk            48.00- 52.00    49.92   -0.50   ...
-        #   Wings, Whole                 105.00-112.00   108.43   +1.20   ...
-        #   Tenderloins                  147.00-153.00   149.76   +0.80   ...
-        #
-        # Strategy: find each product name then grab the first standalone
-        # decimal number that follows it on the same or next non-blank line
-        # (that number is the weighted average).
+        # ── Helper: grab weighted-average price from a text snippet ──────────
+        def wtd_avg_from_snippet(snippet: str) -> float | None:
+            # Pattern 1: price range followed by wtd avg  "NNN.NN-NNN.NN  NNN.NN"
+            m = re.search(
+                r"\d{2,3}\.\d{2}\s*[-–]\s*\d{2,3}\.\d{2}\s+([\d]{2,3}\.\d{2})",
+                snippet)
+            if m:
+                return float(m.group(1))
+            # Pattern 2: first decimal ≥ 10 in snippet
+            nums = [float(n) for n in re.findall(r"\b(\d{2,3}\.\d{2})\b", snippet)
+                    if float(n) >= 10]
+            return nums[0] if nums else None
 
-        def find_wtd_avg(keyword_pattern: str) -> float | None:
-            m = re.search(keyword_pattern, text, re.IGNORECASE)
+        # ── Method 1: scan extracted tables ──────────────────────────────────
+        # Each table row is a list of cell strings. Look for rows whose first
+        # cell matches a product keyword, then extract the price column.
+        keyword_map = {
+            "breast":   re.compile(r"breast.*b\.?/?s\.?|b\.?/?s\.?\s*breast|breast.*boneless",
+                                   re.IGNORECASE),
+            "leg_qtrs": re.compile(r"leg\s*quarter", re.IGNORECASE),
+            "wings":    re.compile(r"wing", re.IGNORECASE),
+            "tenders":  re.compile(r"tender|tenderloin", re.IGNORECASE),
+        }
+        found_via_table = {k: None for k in results}
+
+        for table in all_tables:
+            for row in table:
+                cells = [str(c or "").strip() for c in row]
+                row_text = " ".join(cells)
+                for key, pat in keyword_map.items():
+                    if found_via_table[key] is not None:
+                        continue
+                    if pat.search(row_text):
+                        # Weighted avg is typically the 3rd or 4th numeric cell
+                        nums = [float(c) for c in cells
+                                if re.match(r"^\d{2,3}\.\d{2}$", c)]
+                        if nums:
+                            found_via_table[key] = nums[0]
+
+        # ── Method 2: regex on raw text (fallback per field) ─────────────────
+        text_patterns = {
+            # "Breast - B/S:" — traço e abreviação B/S (não "Boneless Skinless")
+            "breast":   r"[Bb]reast[,\s/\-]+B\.?/?S\.?|B\.?/?S\.?\s+[Bb]reast",
+            "leg_qtrs": r"[Ll]eg\s+[Qq]uarters?",
+            # "Wings - Whole:" — traço obrigatório evita falso match em "Previous Weeks"
+            "wings":    r"[Ww]ings?\s*[-–]",
+            "tenders":  r"[Tt]enderloins?|[Tt]enders?",
+        }
+
+        def find_via_text(pattern: str) -> float | None:
+            m = re.search(pattern, full_text)
             if not m:
                 return None
-            snippet = text[m.end(): m.end() + 200]
-            # Weighted avg is typically after a price range "NNN.NN-NNN.NN"
-            # Try to find it after a range, or just the first number ≥ 10
-            range_m = re.search(r"\d{2,3}\.\d{2}\s*-\s*\d{2,3}\.\d{2}\s+([\d]{2,3}\.\d{2})", snippet)
-            if range_m:
-                return float(range_m.group(1))
-            # Fallback: first number ≥ 10 with 2 decimal places
-            nums = re.findall(r"\b(\d{2,3}\.\d{2})\b", snippet)
-            candidates = [float(n) for n in nums if float(n) >= 10]
-            return candidates[0] if candidates else None
+            return wtd_avg_from_snippet(full_text[m.end(): m.end() + 250])
 
-        breast_price  = find_wtd_avg(r"Breast[,\s]+[Bb]oneless\s*[Ss]kinless|B/?S\s+Breast")
-        leg_price     = find_wtd_avg(r"Leg\s+[Qq]uarters?[,\s]+[Bb]ulk|Leg\s+Quarters?")
-        wings_price   = find_wtd_avg(r"Wings?[,\s]+[Ww]hole|Whole\s+Wings?")
-        tenders_price = find_wtd_avg(r"Tenderloins?|Tenders?")
-
-        def add(key, price):
+        # Merge: prefer table result, then text result
+        for key in results:
+            price = found_via_table[key]
+            if price is None:
+                price = find_via_text(text_patterns[key])
             if price is not None:
                 results[key].append({"date": dt, "value": price})
                 print(f"  PDF {key}: {price:.2f} cts/lb")
             else:
                 print(f"  ⚠ PDF {key}: not found in report")
 
-        add("breast",   breast_price)
-        add("leg_qtrs", leg_price)
-        add("wings",    wings_price)
-        add("tenders",  tenders_price)
-
     except Exception as e:
+        import traceback
         print(f"  ✗ PDF parse error: {e}")
+        traceback.print_exc()
         return {}
 
     return results
