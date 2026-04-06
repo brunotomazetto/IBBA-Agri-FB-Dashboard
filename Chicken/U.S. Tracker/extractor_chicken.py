@@ -224,14 +224,16 @@ AMS_BROILER_ID = "2020"   # AMS Weekly National Composite Broiler report
 
 def fetch_bw_wholesale() -> list[dict]:
     """
-    Fetch Broiler Composite Wholesale price from USDA AMS report 2020.
+    Broiler composite wholesale cts/lb — PDF primary, MARS API fallback.
     """
+    print("  Trying PDF source (pytbroilerfryer.pdf) …")
+    rows = fetch_bw_from_pdf()
+    if rows:
+        return rows
+    print("  PDF empty — falling back to MARS API …")
     url = f"{AMS_BASE}/{AMS_BROILER_ID}"
-    params = {
-        "startDate": "01/01/2016",
-        "endDate": datetime.now().strftime("%m/%d/%Y"),
-        "allSections": "true",
-    }
+    params = {"startDate": "01/01/2016", "endDate": datetime.now().strftime("%m/%d/%Y"),
+              "allSections": "true"}
     data = get_json(url, params)
     rows = []
     for item in data.get("results", []):
@@ -443,15 +445,209 @@ def fetch_parts() -> dict[str, list[dict]]:
             continue
     return results
 
+# ─── Feed costs + BW from USDA PDF / TXT ─────────────────────────────────────
+# URLs (overwritten weekly by USDA):
+AMS_SBM_PDF  = "https://www.ams.usda.gov/mnreports/ams_3511.pdf"
+AMS_CORN_TXT = "https://www.ams.usda.gov/mnreports/gx_gr115.txt"
+AMS_BW_PDF   = "https://www.ams.usda.gov/mnreports/pytbroilerfryer.pdf"
+
+
+def _parse_report_date(text: str) -> "datetime | None":
+    """Extract report date from USDA report header text."""
+    import re
+    for pat in [
+        r"[Ww]eek\s+[Oo]f\s+([A-Za-z]+ \d{1,2},?\s*\d{4})",
+        r"[Ff]or\s+[Ww]eek\s+[Ee]nding[:\s]+(\d{1,2}/\d{1,2}/\d{4})",
+        r"[Dd]ate[:\s]+(\d{1,2}/\d{1,2}/\d{4})",
+        r"\b(\d{1,2}/\d{1,2}/\d{4})\b",
+        r"\b([A-Za-z]+ \d{1,2},\s*\d{4})\b",
+    ]:
+        m = re.search(pat, text)
+        if m:
+            raw = m.group(1).strip()
+            for fmt in ("%B %d %Y", "%B %d, %Y", "%m/%d/%Y"):
+                try:
+                    return datetime.strptime(raw, fmt)
+                except ValueError:
+                    continue
+    return None
+
+
+def _first_price(text: str, min_val: float = 1.0, max_val: float = 9999.0) -> "float | None":
+    """Return first decimal number in text within [min_val, max_val]."""
+    import re
+    for n in re.findall(r"\b(\d{1,4}\.\d{1,2})\b", text):
+        v = float(n)
+        if min_val <= v <= max_val:
+            return v
+    return None
+
+
+def fetch_corn_from_txt() -> "list[dict]":
+    """
+    Corn Central Illinois $/bu from USDA AMS text report gx_gr115.txt.
+    The report is daily/weekly and contains spot bid prices for Central IL.
+    """
+    import re
+    try:
+        resp = requests.get(AMS_CORN_TXT, timeout=TIMEOUT)
+        resp.raise_for_status()
+        text = resp.text
+    except Exception as e:
+        print(f"  ✗ Corn TXT download failed: {e}")
+        return []
+
+    dt = _parse_report_date(text)
+    if not dt:
+        print("  ⚠ Corn TXT: could not parse date")
+        print("  TXT preview:\n" + text[:600])
+        return []
+
+    # Look for corn price: line containing "Corn" and a $/bu price (2-8 $/bu range)
+    price = None
+    for line in text.splitlines():
+        if re.search(r"\bCorn\b", line, re.IGNORECASE):
+            p = _first_price(line, min_val=2.0, max_val=15.0)
+            if p:
+                price = p
+                print(f"  [TXT line] {line.strip()}")
+                break
+
+    if price is None:
+        # Fallback: first price in 2-15 range in whole doc
+        price = _first_price(text, min_val=2.0, max_val=15.0)
+
+    if price:
+        print(f"  Corn TXT {dt.strftime('%Y-%m-%d')}: {price:.2f} $/bu")
+        return [{"date": dt, "value": price}]
+    print("  ⚠ Corn TXT: price not found")
+    return []
+
+
+def fetch_sbm_from_pdf() -> "list[dict]":
+    """
+    SBM Illinois FOB Truck $/ton from USDA AMS PDF ams_3511.pdf.
+    National Grain and Oilseed Processor Feedstuff Report (weekly).
+    """
+    import re
+    try:
+        import pdfplumber, io
+    except ImportError:
+        print("  ⚠ pdfplumber not installed — skipping SBM PDF")
+        return []
+
+    try:
+        resp = requests.get(AMS_SBM_PDF, timeout=TIMEOUT)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"  ✗ SBM PDF download failed: {e}")
+        return []
+
+    try:
+        with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
+            text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+    except Exception as e:
+        print(f"  ✗ SBM PDF parse error: {e}")
+        return []
+
+    dt = _parse_report_date(text)
+    if not dt:
+        print("  ⚠ SBM PDF: could not parse date")
+        print("  PDF preview:\n" + text[:600])
+        return []
+
+    # Look for "Soybean Meal" + "Illinois" + "FOB Truck" → Wtd Avg price ($/ton, 200-700 range)
+    price = None
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if re.search(r"[Ss]oybean\s+[Mm]eal", line):
+            print(f"  [PDF line] {line.strip()}")
+            # Search this line + next 3 lines for Illinois FOB price
+            block = " ".join(lines[i:i+4])
+            if re.search(r"[Ii]llinois|[Ii]L\b|FOB", block):
+                p = _first_price(block, min_val=150.0, max_val=800.0)
+                if p:
+                    price = p
+                    break
+            # No Illinois qualifier found — try price directly on this line
+            if price is None:
+                p = _first_price(line, min_val=150.0, max_val=800.0)
+                if p:
+                    price = p
+
+    if price:
+        print(f"  SBM PDF {dt.strftime('%Y-%m-%d')}: {price:.2f} $/ton")
+        return [{"date": dt, "value": price}]
+    print("  ⚠ SBM PDF: price not found — printing relevant lines:")
+    for line in lines:
+        if re.search(r"[Ss]oybean|[Ss]BM|[Ii]llinois", line):
+            print(f"    {line.strip()}")
+    return []
+
+
+def fetch_bw_from_pdf() -> "list[dict]":
+    """
+    Broiler composite wholesale cts/lb from USDA AMS pytbroilerfryer.pdf.
+    """
+    import re
+    try:
+        import pdfplumber, io
+    except ImportError:
+        print("  ⚠ pdfplumber not installed — skipping BW PDF")
+        return []
+
+    try:
+        resp = requests.get(AMS_BW_PDF, timeout=TIMEOUT)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"  ✗ BW PDF download failed: {e}")
+        return []
+
+    try:
+        with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
+            text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+    except Exception as e:
+        print(f"  ✗ BW PDF parse error: {e}")
+        return []
+
+    dt = _parse_report_date(text)
+    if not dt:
+        print("  ⚠ BW PDF: could not parse date")
+        print("  PDF preview:\n" + text[:600])
+        return []
+
+    # Look for composite price line (cts/lb, 50-200 range)
+    price = None
+    lines = text.splitlines()
+    for line in lines:
+        if re.search(r"[Cc]omposite", line):
+            print(f"  [PDF line] {line.strip()}")
+            p = _first_price(line, min_val=40.0, max_val=250.0)
+            if p:
+                price = p
+                break
+
+    if price:
+        print(f"  BW PDF {dt.strftime('%Y-%m-%d')}: {price:.2f} cts/lb")
+        return [{"date": dt, "value": price}]
+    print("  ⚠ BW PDF: price not found — printing all lines:")
+    for line in lines[:40]:
+        if line.strip():
+            print(f"    {line.strip()}")
+    return []
+
+
 # ─── Feed costs from USDA AMS ────────────────────────────────────────────────
 def fetch_sbm() -> list[dict]:
-    """SBM Illinois FOB Truck $/ton from AMS 3511."""
+    """SBM Illinois FOB Truck $/ton — PDF primary, MARS API fallback."""
+    print("  Trying PDF source (ams_3511.pdf) …")
+    rows = fetch_sbm_from_pdf()
+    if rows:
+        return rows
+    print("  PDF empty — falling back to MARS API …")
     url = f"{AMS_BASE}/3511"
-    params = {
-        "startDate": "01/01/2017",
-        "endDate":   datetime.now().strftime("%m/%d/%Y"),
-        "allSections": "true",
-    }
+    params = {"startDate": "01/01/2017", "endDate": datetime.now().strftime("%m/%d/%Y"),
+              "allSections": "true"}
     data = get_json(url, params)
     rows = []
     for item in data.get("results", []):
@@ -465,14 +661,17 @@ def fetch_sbm() -> list[dict]:
             continue
     return rows
 
+
 def fetch_corn() -> list[dict]:
-    """Corn Central Illinois $/bu from AMS 3192."""
+    """Corn Central Illinois $/bu — TXT primary, MARS API fallback."""
+    print("  Trying TXT source (gx_gr115.txt) …")
+    rows = fetch_corn_from_txt()
+    if rows:
+        return rows
+    print("  TXT empty — falling back to MARS API …")
     url = f"{AMS_BASE}/3192"
-    params = {
-        "startDate": "01/01/2017",
-        "endDate":   datetime.now().strftime("%m/%d/%Y"),
-        "allSections": "true",
-    }
+    params = {"startDate": "01/01/2017", "endDate": datetime.now().strftime("%m/%d/%Y"),
+              "allSections": "true"}
     data = get_json(url, params)
     rows = []
     for item in data.get("results", []):
