@@ -3,7 +3,7 @@ name: Weekly Beef Data Update
 on:
   schedule:
     - cron: '0 14 * * 1'   # toda segunda às 14h UTC (11h Brasília)
-  workflow_dispatch:         # botão manual no GitHub, caso queira forçar
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,18 +13,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-python@v4
-        with: { python-version: '3.11' }
+        with:
+          python-version: '3.11'
+
       - name: Install dependencies
         run: pip install requests pandas openpyxl pdfplumber
+
       - name: Fetch latest data & update beef.db
         run: python "Beef/U.S. Tracker/extractor_beef.py"
+
       - name: Commit updated beef.db
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp "Beef/U.S. Tracker/beef.db" /tmp/beef.db
           git fetch origin main
-          git rebase origin/main
+          git reset --hard origin/main
+          cp /tmp/beef.db "Beef/U.S. Tracker/beef.db"
           git add "Beef/U.S. Tracker/beef.db"
           git diff --staged --quiet || git commit -m "chore: weekly beef data update $(date +'%Y-%m-%d')"
           git push origin HEAD:main
