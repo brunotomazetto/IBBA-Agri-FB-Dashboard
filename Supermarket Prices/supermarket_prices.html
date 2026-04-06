@@ -1,3 +1,168 @@
+
+// ── BREWERY INDEX & PRICE PER HL ─────────────────────────────────────────────
+
+const ML_MAP = {
+  "Amstel Lata":              {"269ml":269,"350ml":350},
+  "Antarctica Lata":          {"350ml":350},
+  "Brahma Duplo Malte":       {"269ml":269,"350ml":350},
+  "Budweiser Lata":           {"269ml":269,"350ml":350},
+  "Corona Extra Lata":        {"350ml":350},
+  "Corona Extra Long Neck":   {"330ml":330},
+  "Heineken 0.0":             {"350ml":350},
+  "Heineken Lata":            {"269ml":269,"350ml":350},
+  "Itaipava Lata":            {"350ml":350},
+  "Original Lata":            {"269ml":269,"350ml":350},
+  "Skol Lata":                {"269ml":269,"350ml":350},
+  "Spaten Puro Malte Lata":   {"269ml":269,"350ml":350},
+  "Stella Artois Long Neck":  {"330ml":330},
+};
+
+const BRAND_MAP = {
+  "Amstel Lata":"Amstel","Antarctica Lata":"Antarctica",
+  "Brahma Duplo Malte":"Brahma","Budweiser Lata":"Budweiser",
+  "Corona Extra Lata":"Corona","Corona Extra Long Neck":"Corona",
+  "Heineken 0.0":"Heineken","Heineken Lata":"Heineken",
+  "Itaipava Lata":"Itaipava","Original Lata":"Original",
+  "Skol Lata":"Skol","Spaten Puro Malte Lata":"Spaten",
+  "Stella Artois Long Neck":"Stella",
+};
+
+const BREWERY_WEIGHTS = {
+  "Ambev": {
+    "Antarctica":0.05,"Brahma":0.40,"Budweiser":0.05,
+    "Skol":0.20,"Corona":0.10,"Original":0.067,
+    "Spaten":0.067,"Stella":0.067
+  },
+  "Heineken": {"Heineken":0.75,"Amstel":0.25},
+  "Petrópolis": {"Itaipava":1.0},
+};
+
+const BREWERY_COLORS = {"Ambev":"#E02424","Heineken":"#0E9F6E","Petrópolis":"#C27803"};
+const BRAND_COLORS = ["#0a0a0f","#0e9f6e","#e02424","#c27803","#7e3af2",
+                      "#0694a2","#ff8a4c","#84cc16","#ec4899","#14b8a6","#f59e0b"];
+
+function precoHL(nome, emb, preco) {
+  const ml = (ML_MAP[nome]||{})[emb];
+  if (!ml || !preco) return null;
+  return (preco / ml) * 100000;
+}
+
+function mediaHL(brand, datas_arr) {
+  // Média do preço/hl de um brand numa lista de datas, média dos SMs
+  const rows = HIST.filter(r=>r.categoria==="Cervejas" && BRAND_MAP[r.nome_produto]===brand);
+  if (!rows.length) return null;
+  const byData = {};
+  datas_arr.forEach(d=>{
+    const r_dia = rows.filter(r=>r.data_coleta===d);
+    if (!r_dia.length) return;
+    const hls = r_dia.map(r=>precoHL(r.nome_produto,r.embalagem,r.preco_atual)).filter(v=>v);
+    if (hls.length) byData[d] = hls.reduce((a,b)=>a+b,0)/hls.length;
+  });
+  return byData;
+}
+
+function renderBreweryIndex() {
+  const cervDatas = [...new Set(HIST.filter(r=>r.categoria==="Cervejas").map(r=>r.data_coleta))].sort();
+  const datasets = Object.entries(BREWERY_WEIGHTS).map(([brewery, weights])=>({
+    label: brewery,
+    borderColor: BREWERY_COLORS[brewery],
+    backgroundColor: BREWERY_COLORS[brewery]+"22",
+    tension:0.3, pointRadius:3, fill:false,
+    data: cervDatas.map(d=>{
+      let total=0, wSum=0;
+      Object.entries(weights).forEach(([brand,w])=>{
+        const hl = (mediaHL(brand,[d])||{})[d];
+        if (hl) { total+=hl*w; wSum+=w; }
+      });
+      return wSum>0 ? +(total/wSum).toFixed(2) : null;
+    })
+  }));
+
+  const ctx = document.getElementById("chart-brewery-index");
+  if (!ctx) return;
+  if (ctx._chart) ctx._chart.destroy();
+  ctx._chart = new Chart(ctx, {
+    type:"line",
+    data:{labels:cervDatas, datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{position:"top"}},
+      scales:{y:{ticks:{callback:v=>"R$"+v.toFixed(0)},title:{display:true,text:"R$/hl"}}}
+    }
+  });
+
+  // Tabela última data
+  const ultima = cervDatas[cervDatas.length-1]||"";
+  const tbl = document.getElementById("tabela-brewery-index");
+  if (!tbl) return;
+  tbl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="background:var(--bg2)">
+      <th style="padding:6px 10px;text-align:left">Brewery</th>
+      <th style="padding:6px 10px;text-align:right">R$/hl (latest)</th>
+    </tr></thead><tbody>`+
+    Object.entries(BREWERY_WEIGHTS).map(([brewery,weights])=>{
+      let total=0,wSum=0;
+      Object.entries(weights).forEach(([brand,w])=>{
+        const hl=(mediaHL(brand,[ultima])||{})[ultima];
+        if(hl){total+=hl*w;wSum+=w;}
+      });
+      const val = wSum>0?`R$ ${(total/wSum).toFixed(2)}`:"—";
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 10px;font-weight:600;color:${BREWERY_COLORS[brewery]}">${brewery}</td>
+        <td style="padding:6px 10px;text-align:right">${val}</td></tr>`;
+    }).join("")+`</tbody></table>`;
+}
+
+function renderPrecoHL() {
+  const cervDatas = [...new Set(HIST.filter(r=>r.categoria==="Cervejas").map(r=>r.data_coleta))].sort();
+  const brands = [...new Set(Object.values(BRAND_MAP))].sort();
+  const ultima = cervDatas[cervDatas.length-1]||"";
+
+  // Bar chart — preço/hl por marca na última data
+  const vals = brands.map(b=>{
+    const hl=(mediaHL(b,[ultima])||{})[ultima];
+    return hl?+hl.toFixed(2):null;
+  });
+
+  const ctx = document.getElementById("chart-preco-hl");
+  if (!ctx) return;
+  if (ctx._chart) ctx._chart.destroy();
+  ctx._chart = new Chart(ctx, {
+    type:"bar",
+    data:{
+      labels:brands,
+      datasets:[{
+        label:`R$/hl (${ultima})`,
+        data:vals,
+        backgroundColor:BRAND_COLORS.slice(0,brands.length),
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{y:{ticks:{callback:v=>"R$"+v.toFixed(0)},title:{display:true,text:"R$/hl"}}}
+    }
+  });
+
+  // Tabela histórica por marca
+  const tbl = document.getElementById("tabela-preco-hl");
+  if (!tbl) return;
+  tbl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="background:var(--bg2)">
+      <th style="padding:6px 10px;text-align:left">Brand</th>`+
+      cervDatas.slice(-7).map(d=>`<th style="padding:6px 10px;text-align:right">${d}</th>`).join("")+
+    `</tr></thead><tbody>`+
+    brands.map(b=>{
+      const row_data = cervDatas.slice(-7).map(d=>{
+        const hl=(mediaHL(b,[d])||{})[d];
+        return hl?`R$ ${hl.toFixed(2)}`:"—";
+      });
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 10px;font-weight:600">${b}</td>`+
+        row_data.map(v=>`<td style="padding:6px 10px;text-align:right">${v}</td>`).join("")+
+        `</tr>`;
+    }).join("")+`</tbody></table>`;
+}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -149,21 +314,31 @@ tr:hover td{background:#fafafa}
     
     <div class="page" id="page-grupo-Cervejas">
 
-      <!-- BLOCK 1: CLUSTERS -->
+      <!-- BLOCK 1: BREWERY PRICE INDEX -->
       <div class="section">
         <div class="section-head">
-          <span class="section-title">Clusters</span>
-          <button class="btn btn-black" onclick="abrirModalNovoCluster('Cervejas',[&quot;Cervejas&quot;])">+ New cluster</button>
+          <span class="section-title">Brewery Price Index — R$/hl</span>
+          <span style="font-size:11px;color:var(--muted)">Weighted average across supermarkets</span>
         </div>
         <p style="font-size:11px;color:var(--muted);margin-bottom:.85rem">
-          Average price per cluster · click a SKU tag to remove/include it · toggle clusters on the chart below
+          Ambev: Brahma 40%, Skol 20%, Corona 10%, Original/Spaten/Stella 6.7% each, Antarctica & Bud 5% each ·
+          Heineken: Heineken 75%, Amstel 25% · Petrópolis: Itaipava 100%
         </p>
-        <div id="cluster-cards-Cervejas" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.75rem;margin-bottom:1rem"></div>
-        <div class="section-title" style="font-size:12px;margin-bottom:.5rem">Cluster price history</div>
-        <div style="height:260px"><canvas id="chart-cluster-Cervejas"></canvas></div>
+        <div style="height:300px;margin-bottom:.5rem"><canvas id="chart-brewery-index"></canvas></div>
+        <div id="tabela-brewery-index" style="margin-top:.5rem"></div>
       </div>
 
-      <!-- BLOCK 2: FILTERS + CHART -->
+      <!-- BLOCK 2: PRICE PER HECTOLITER BY BRAND -->
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Price per Hectoliter by Brand</span>
+          <span style="font-size:11px;color:var(--muted)">Average across supermarkets · R$/hl</span>
+        </div>
+        <div style="height:320px;margin-bottom:.5rem"><canvas id="chart-preco-hl"></canvas></div>
+        <div id="tabela-preco-hl" style="margin-top:.5rem"></div>
+      </div>
+
+      <!-- BLOCK 3: PRICE HISTORY -->
       <div class="section">
         <div class="section-head">
           <span class="section-title">Cervejas — Price History</span>
@@ -426,6 +601,8 @@ function showTab(id,btn){
   document.getElementById("page-"+id)?.classList.add("active"); btn.classList.add("active");
 }
 function init(){
+  renderBreweryIndex();
+  renderPrecoHL();
   renderKPIs(); renderAlertasBanner(); renderAlertasLista();
   populaFiltros(); filtrarTabela();
   populaFiltrosErros(); filtrarErros();
