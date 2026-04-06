@@ -169,8 +169,29 @@ tr:hover td{background:#fafafa}
           <span class="section-title">Price per Hectoliter by Brand</span>
           <span style="font-size:11px;color:var(--muted)">Average across supermarkets · R$/hl</span>
         </div>
-        <div style="height:320px;margin-bottom:.5rem"><canvas id="chart-preco-hl"></canvas></div>
-        <div id="tabela-preco-hl" style="margin-top:.5rem"></div>
+        <div style="display:flex;gap:1.25rem;flex-wrap:wrap;align-items:flex-start;margin-bottom:.85rem">
+          <div>
+            <div class="ctrl-label">Brand</div>
+            <div id="chk-brand-hl" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px 8px;min-width:200px;background:var(--card)"></div>
+            <button onclick="toggleBrandsHL(true)" class="btn-mini accent">all</button>
+            <button onclick="toggleBrandsHL(false)" class="btn-mini muted">none</button>
+          </div>
+          <div>
+            <div class="ctrl-label">Period</div>
+            <select id="sel-periodo-hl" onchange="renderPrecoHL()" class="sel-ctrl" style="width:180px;margin-bottom:6px">
+              <option value="tudo">Full history</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="3m">Last 3 months</option>
+              <option value="ano">This year</option>
+            </select>
+          </div>
+        </div>
+        <div style="height:320px;margin-bottom:1rem"><canvas id="chart-preco-hl"></canvas></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+          <span class="section-title" style="font-size:12px">Price per hectoliter — most recent day in period</span>
+        </div>
+        <div id="tabela-preco-hl"></div>
       </div>
 
       <!-- BLOCK 3: PRICE HISTORY -->
@@ -1006,54 +1027,74 @@ function renderBreweryIndex() {
     }).join("")+`</tbody></table>`;
 }
 
-function renderPrecoHL() {
-  const cervDatas = [...new Set(HIST.filter(r=>r.categoria==="Cervejas").map(r=>r.data_coleta))].sort();
+function initBrandHL() {
+  const el = document.getElementById("chk-brand-hl");
+  if (!el || el.innerHTML) return;
   const brands = [...new Set(Object.values(BRAND_MAP))].sort();
-  const ultima = cervDatas[cervDatas.length-1]||"";
+  el.innerHTML = brands.map((b,i)=>`<label style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;cursor:pointer">
+    <input type="checkbox" class="brand-hl-cb" value="${b}" ${i<2?"checked":""} onchange="renderPrecoHL()" style="accent-color:var(--accent)"> ${b}</label>`).join("");
+}
+function toggleBrandsHL(v) {
+  document.querySelectorAll(".brand-hl-cb").forEach(cb=>cb.checked=v);
+  renderPrecoHL();
+}
+function getHLPeriodDatas(allDatas) {
+  const s=[...allDatas].sort();
+  const p=document.getElementById("sel-periodo-hl")?.value||"tudo";
+  if(p==="7d") return s.slice(-7);
+  if(p==="30d") return s.slice(-30);
+  if(p==="3m") return s.slice(-90);
+  if(p==="ano") return s.filter(d=>d.startsWith(s[s.length-1]?.slice(0,4)||""));
+  return s;
+}
+function renderPrecoHL() {
+  initBrandHL();
+  const allDatas = [...new Set(HIST.filter(r=>r.categoria==="Cervejas").map(r=>r.data_coleta))].sort();
+  const datas = getHLPeriodDatas(allDatas);
+  const selBrands = [...document.querySelectorAll(".brand-hl-cb:checked")].map(cb=>cb.value);
+  if (!selBrands.length) return;
 
-  // Bar chart — preço/hl por marca na última data
-  const vals = brands.map(b=>{
-    const hl=(mediaHL(b,[ultima])||{})[ultima];
-    return hl?+hl.toFixed(2):null;
+  const datasets = selBrands.map((b,i)=>{
+    const color = BRAND_COLORS[i % BRAND_COLORS.length];
+    return {
+      label: b,
+      borderColor: color,
+      backgroundColor: color+"22",
+      tension:0.3, pointRadius:3, fill:false,
+      data: datas.map(d=>{
+        const hl=(mediaHL(b,[d])||{})[d];
+        return hl?+hl.toFixed(2):null;
+      })
+    };
   });
 
   const ctx = document.getElementById("chart-preco-hl");
   if (!ctx) return;
   if (ctx._chart) ctx._chart.destroy();
   ctx._chart = new Chart(ctx, {
-    type:"bar",
-    data:{
-      labels:brands,
-      datasets:[{
-        label:`R$/hl (${ultima})`,
-        data:vals,
-        backgroundColor:BRAND_COLORS.slice(0,brands.length),
-      }]
-    },
+    type:"line",
+    data:{labels:datas, datasets},
     options:{
       responsive:true, maintainAspectRatio:false,
-      plugins:{legend:{display:false}},
+      plugins:{legend:{position:"top"}},
       scales:{y:{ticks:{callback:v=>"R$"+v.toFixed(0)},title:{display:true,text:"R$/hl"}}}
     }
   });
 
-  // Tabela histórica por marca
+  // Tabela última data
+  const ultima = datas[datas.length-1]||"";
   const tbl = document.getElementById("tabela-preco-hl");
   if (!tbl) return;
   tbl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
     <thead><tr style="background:var(--bg2)">
-      <th style="padding:6px 10px;text-align:left">Brand</th>`+
-      cervDatas.slice(-7).map(d=>`<th style="padding:6px 10px;text-align:right">${d}</th>`).join("")+
-    `</tr></thead><tbody>`+
-    brands.map(b=>{
-      const row_data = cervDatas.slice(-7).map(d=>{
-        const hl=(mediaHL(b,[d])||{})[d];
-        return hl?`R$ ${hl.toFixed(2)}`:"—";
-      });
+      <th style="padding:6px 10px;text-align:left">Brand</th>
+      <th style="padding:6px 10px;text-align:right">R$/hl (latest)</th>
+    </tr></thead><tbody>`+
+    selBrands.map(b=>{
+      const hl=(mediaHL(b,[ultima])||{})[ultima];
       return `<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:6px 10px;font-weight:600">${b}</td>`+
-        row_data.map(v=>`<td style="padding:6px 10px;text-align:right">${v}</td>`).join("")+
-        `</tr>`;
+        <td style="padding:6px 10px;font-weight:600">${b}</td>
+        <td style="padding:6px 10px;text-align:right">${hl?`R$ ${hl.toFixed(2)}`:"—"}</td></tr>`;
     }).join("")+`</tbody></table>`;
 }
 function salvarNovoCluster(){
