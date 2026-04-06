@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import date
 
 _ROOT    = Path(__file__).resolve().parent
-DB_PATH  = _ROOT / "precos.db"
+DB_PATH  = _ROOT / "data/precos.db"
 OUT_PATH = _ROOT / "supermarket_prices.html"
 
 def carregar_dados():
@@ -251,13 +251,12 @@ def gerar_html(todos, erros, historico, ultima_data, alertas):
   --radius:10px;--font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}}
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px}}
-#login-screen{{display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0a0a0f}}
-.login-card{{background:var(--card);border-radius:16px;padding:2.5rem 2rem;width:340px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.25)}}
-.login-card h2{{color:#0a0a0f;margin-bottom:.4rem;font-size:20px}}
-.login-card p{{font-size:12px;color:var(--muted);margin-bottom:1.8rem}}
-.login-card input{{width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:12px;outline:none}}
-.login-card input:focus{{border-color:#0a0a0f}}
-.login-card button{{width:100%;padding:11px;background:#0a0a0f;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}}
+border-radius:16px;padding:2.5rem 2rem;width:340px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.25)}}
+
+
+
+
+
 .erro-login{{color:var(--red);font-size:12px;margin-top:8px;display:none}}
 #app{{display:none;min-height:100vh}}
 header{{background:#0a0a0f;color:#fff;padding:.85rem 1.5rem;display:flex;justify-content:space-between;align-items:center}}
@@ -329,30 +328,8 @@ tr:hover td{{background:#fafafa}}
 </head>
 <body>
 
-<div id="login-screen">
-  <div class="login-card">
-    <div style="margin-bottom:1.25rem;font-size:14px;font-weight:700;letter-spacing:.5px;color:#0a0a0f">ITAÚ BBA</div>
-    <h2>F&B Price Monitor</h2>
-    <p>Supermarkets — Brazil</p>
-    <input type="text" id="usuario-input" placeholder="Username" style="margin-bottom:8px"
-      onkeydown="if(event.key==='Enter')document.getElementById('senha-input').focus()">
-    <input type="password" id="senha-input" placeholder="Password"
-      onkeydown="if(event.key==='Enter')login()">
-    <button onclick="login()">Sign In</button>
-    <div class="erro-login" id="erro-login">Incorrect username or password</div>
-  </div>
-</div>
-
 <div id="app">
-  <header>
-    <div class="header-left">
-      <span style="font-size:13px;font-weight:700;letter-spacing:.5px">ITAÚ BBA</span>
-      <div class="hdiv"></div>
-      <h1>F&B Price Monitor — Supermarkets</h1>
-    </div>
-    <div class="meta">Last collection: <strong>{ultima_data}</strong><br>
-      {len(ok)} prices · {len(err)} errors · {len(promos)} promotions</div>
-  </header>
+  
 
   <div class="tab-bar">
     <button class="tab-btn active" onclick="showTab('inicio',this)">Overview</button>
@@ -486,21 +463,7 @@ function fmt(v){{return v!=null?"R$ "+v.toFixed(2).replace(".",","):"—"}}
 function fmtPct(a,b){{return(a&&b&&b>a)?"-"+Math.round((b-a)/b*100)+"%":"—"}}
 
 // ── Auth ────────────────────────────────────────────────────────────────────
-function login(){{
-  const u=(document.getElementById("usuario-input")?.value||"").trim().toLowerCase();
-  const s=document.getElementById("senha-input").value;
-  if((USUARIOS[u]&&USUARIOS[u]===s)||s===SENHA_GLOBAL){{
-    sessionStorage.setItem("auth","1");
-    document.getElementById("login-screen").style.display="none";
-    document.getElementById("app").style.display="block"; init();
-  }} else document.getElementById("erro-login").style.display="block";
-}}
-window.onload=()=>{{
-  if(sessionStorage.getItem("auth")==="1"){{
-    document.getElementById("login-screen").style.display="none";
-    document.getElementById("app").style.display="block"; init();
-  }}
-}};
+window.onload=()=>{{init();}};
 function showTab(id,btn){{
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
