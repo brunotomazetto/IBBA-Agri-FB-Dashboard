@@ -5,7 +5,7 @@ on:
 
 jobs:
   test:
-    name: Testa undetected-chromedriver no CEPEA
+    name: Testa undetected-chromedriver + clique Turnstile
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -20,39 +20,33 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Instalar dependências
+      - name: Instalar dependências Python
         run: pip install undetected-chromedriver selenium
 
-      # Instala Xvfb para rodar Chrome não-headless em CI
-      - name: Instalar Xvfb e dependências de display
+      - name: Instalar Xvfb
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y xvfb x11-utils
+          sudo apt-get install -y xvfb
 
-      # Instala Google Chrome (versão estável)
       - name: Instalar Google Chrome
         run: |
           wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
           sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
           google-chrome --version
 
-      - name: Rodar diagnóstico com Xvfb
+      - name: Rodar teste com Xvfb
         run: |
-          # Sobe display virtual na porta :99
-          Xvfb :99 -screen 0 1280x800x24 &
+          Xvfb :99 -screen 0 1280x900x24 &
           export DISPLAY=:99
           sleep 2
           cd "S&E"
           python test_sources.py
 
-      - name: Upload screenshots de debug
+      - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: uc-debug-${{ github.run_id }}
-          path: |
-            /tmp/uc_screenshot_1.png
-            /tmp/uc_screenshot_2.png
-            /tmp/cepea_downloads/
+          path: /tmp/s*.png
           retention-days: 3
           if-no-files-found: ignore
