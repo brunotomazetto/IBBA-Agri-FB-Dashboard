@@ -1,0 +1,29 @@
+name: S&E Source Diagnostic
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Testa fontes de Etanol
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install requests pandas openpyxl xlrd
+
+      - name: Rodar diagnóstico
+        run: |
+          cd "S&E"
+          python test_sources.py
