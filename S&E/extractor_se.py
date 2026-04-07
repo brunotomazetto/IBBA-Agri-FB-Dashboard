@@ -6,7 +6,7 @@ Execução diária via GitHub Actions.
 
 Fluxo:
   1. Coleta histórico de preço spot de Açúcar NY11 (USDc/lb)
-     → Fonte: Nasdaq Data Link (CHRIS/ICE_SB1 — ICE Sugar No. 11 Continuous)
+     → Fonte: Yahoo Finance (SB=F — Sugar No. 11 front-month continuous)
   2. Coleta histórico de preço de Etanol Hidratado Carburante
      → Fonte: CEPEA/ESALQ — download da planilha Excel oficial
   3. Salva tudo em commodities.db (SQLite) dentro da pasta S&E
@@ -15,25 +15,17 @@ Fluxo:
 FONTES
 ═══════════════════════════════════════════════════════════════
 
-  AÇÚCAR NY11  → Nasdaq Data Link (antigo Quandl)
-                  Dataset : CHRIS/ICE_SB1
-                  Série   : Settle (preço de fechamento contrato front-month)
+  AÇÚCAR NY11  → Yahoo Finance (yfinance)
+                  Ticker  : SB=F  (ICE Sugar No. 11 front-month)
+                  Campo   : Close (preço de fechamento em USDc/lb)
                   Unidade : USDc/lb
                   Freq.   : diária (dias úteis)
-                  API Key : env var NASDAQ_API_KEY (gratuita em data.nasdaq.com)
+                  Sem API key — gratuito e sem restrição de acesso
 
   ETANOL HIDRATADO → CEPEA/ESALQ — Indicador Etanol Hidratado
-                  URL     : https://www.cepea.esalq.usp.br/br/indicador/etanol.aspx
-                  Planilha: download XLS/XLSX via POST (form do site)
+                  Produto : 17 / Indicador : 338 (Hidratado Carburante)
                   Unidade : R$/litro (à vista, posto usina São Paulo)
                   Freq.   : diária (dias úteis)
-
-═══════════════════════════════════════════════════════════════
-VARIÁVEIS DE AMBIENTE NECESSÁRIAS
-═══════════════════════════════════════════════════════════════
-
-  NASDAQ_API_KEY   → Chave gratuita em https://data.nasdaq.com/sign-up
-                     Sem a chave, a coleta do NY11 é pulada com aviso.
 
 ═══════════════════════════════════════════════════════════════
 ESTRUTURA DO BANCO (commodities.db)
@@ -46,7 +38,6 @@ ESTRUTURA DO BANCO (commodities.db)
 
 import io
 import logging
-import os
 import sqlite3
 import time
 from datetime import date, datetime, timedelta
@@ -54,11 +45,15 @@ from pathlib import Path
 
 import requests
 
-# ── Dependências extras (pandas + openpyxl para o Excel do CEPEA) ─────────────
 try:
     import pandas as pd
 except ImportError:
-    raise SystemExit("pandas não instalado. Execute: pip install pandas openpyxl xlrd")
+    raise SystemExit("pandas não instalado. Execute: pip install pandas openpyxl xlrd yfinance")
+
+try:
+    import yfinance as yf
+except ImportError:
+    raise SystemExit("yfinance não instalado. Execute: pip install yfinance")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -69,33 +64,17 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── Caminhos ──────────────────────────────────────────────────────────────────
-# Salva dentro da pasta S&E no mesmo repositório
 DB_PATH = Path(__file__).parent / "commodities.db"
 
-# ── Credenciais / Config ───────────────────────────────────────────────────────
-NASDAQ_API_KEY = os.getenv("NASDAQ_API_KEY", "")
-
-# Nasdaq Data Link — ICE Sugar No. 11 Continuous (front-month)
-# Coluna "Settle" = preço de fechamento em USDc/lb
-NASDAQ_NY11_URL = (
-    "https://data.nasdaq.com/api/v3/datasets/CHRIS/ICE_SB1.json"
-)
-
-# CEPEA — Indicador Etanol Hidratado Carburante (posto usina SP, R$/litro)
-# O site usa um POST com parâmetro de data para gerar o download Excel
-CEPEA_ETANOL_URL = (
-    "https://www.cepea.esalq.usp.br/br/indicador/etanol.aspx"
-)
-CEPEA_DOWNLOAD_URL = (
-    "https://www.cepea.esalq.usp.br/br/widgetpastas/17/indicador/338.aspx"
-)
-
-# Data de início da coleta histórica (não buscar mais antigo que isso)
+# ── Config ────────────────────────────────────────────────────────────────────
+YF_TICKER     = "SB=F"
 HISTORY_START = "2010-01-01"
 
-# Retry config
+CEPEA_DOWNLOAD_URL = "https://www.cepea.esalq.usp.br/br/widgetpastas/17/indicador/338.aspx"
+CEPEA_REFERER_URL  = "https://www.cepea.esalq.usp.br/br/indicador/etanol.aspx"
+
 MAX_RETRIES = 3
-RETRY_DELAY = 5  # segundos
+RETRY_DELAY = 5
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -109,37 +88,33 @@ def get_conn() -> sqlite3.Connection:
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript("""
-    -- ── Açúcar NY11 (ICE Sugar No. 11) ─────────────────────────────────────
     CREATE TABLE IF NOT EXISTS sugar_ny11 (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        data_referencia TEXT NOT NULL,   -- YYYY-MM-DD
-        ano            INTEGER,
-        mes            INTEGER,
-        preco_usdclb   REAL NOT NULL,    -- USDc/lb (Settle)
-        open_usdclb    REAL,
-        high_usdclb    REAL,
-        low_usdclb     REAL,
-        volume         REAL,
-        fonte          TEXT DEFAULT 'Nasdaq/ICE_SB1',
-        updated_at     TEXT,
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        data_referencia TEXT NOT NULL,
+        ano             INTEGER,
+        mes             INTEGER,
+        preco_usdclb    REAL NOT NULL,
+        open_usdclb     REAL,
+        high_usdclb     REAL,
+        low_usdclb      REAL,
+        volume          REAL,
+        fonte           TEXT DEFAULT 'Yahoo/SB=F',
+        updated_at      TEXT,
         UNIQUE(data_referencia)
     );
-    CREATE INDEX IF NOT EXISTS idx_sugar_data
-        ON sugar_ny11(data_referencia);
+    CREATE INDEX IF NOT EXISTS idx_sugar_data ON sugar_ny11(data_referencia);
 
-    -- ── Etanol Hidratado Carburante CEPEA/ESALQ ──────────────────────────────
     CREATE TABLE IF NOT EXISTS etanol_cepea (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        data_referencia TEXT NOT NULL,   -- YYYY-MM-DD
-        ano            INTEGER,
-        mes            INTEGER,
-        preco_brl_l    REAL NOT NULL,    -- R$/litro (à vista posto usina SP)
-        fonte          TEXT DEFAULT 'CEPEA/ESALQ',
-        updated_at     TEXT,
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        data_referencia TEXT NOT NULL,
+        ano             INTEGER,
+        mes             INTEGER,
+        preco_brl_l     REAL NOT NULL,
+        fonte           TEXT DEFAULT 'CEPEA/ESALQ',
+        updated_at      TEXT,
         UNIQUE(data_referencia)
     );
-    CREATE INDEX IF NOT EXISTS idx_etanol_data
-        ON etanol_cepea(data_referencia);
+    CREATE INDEX IF NOT EXISTS idx_etanol_data ON etanol_cepea(data_referencia);
     """)
     conn.commit()
     log.info(f"Schema OK — banco: {DB_PATH}")
@@ -148,115 +123,63 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 # ════════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ════════════════════════════════════════════════════════════════════════════════
-def _last_date_in_table(conn: sqlite3.Connection, table: str) -> str | None:
-    """Retorna a data mais recente já gravada na tabela (ou None se vazia)."""
-    row = conn.execute(
-        f"SELECT MAX(data_referencia) FROM {table}"
-    ).fetchone()
+def _last_date(conn: sqlite3.Connection, table: str) -> str | None:
+    row = conn.execute(f"SELECT MAX(data_referencia) FROM {table}").fetchone()
     return row[0] if row and row[0] else None
 
 
-def _request_with_retry(
-    method: str,
-    url: str,
-    **kwargs,
-) -> requests.Response:
-    """GET/POST com retry automático em caso de erro temporário."""
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            resp = requests.request(method, url, timeout=60, **kwargs)
-            resp.raise_for_status()
-            return resp
-        except requests.RequestException as exc:
-            log.warning(f"  Tentativa {attempt}/{MAX_RETRIES} falhou: {exc}")
-            if attempt < MAX_RETRIES:
-                time.sleep(RETRY_DELAY * attempt)
-    raise RuntimeError(f"Falha após {MAX_RETRIES} tentativas: {url}")
+def _safe_float(val) -> float | None:
+    try:
+        f = float(val)
+        return None if str(f) == "nan" else f
+    except (TypeError, ValueError):
+        return None
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# FETCH — AÇÚCAR NY11 (Nasdaq Data Link · CHRIS/ICE_SB1)
+# FETCH — AÇÚCAR NY11 (Yahoo Finance · SB=F)
 # ════════════════════════════════════════════════════════════════════════════════
 def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
     """
-    Coleta série histórica de fechamento do NY11 via Nasdaq Data Link.
-
-    Campos retornados pela API (coluna order do dataset CHRIS/ICE_SB1):
-      Date | Open | High | Low | Settle | Change | Wave | Volume | Prev. Day OI
-
-    Armazena: Date, Open, High, Low, Settle (→ preco_usdclb), Volume.
-
-    Estratégia incremental: se já há dados no banco, busca apenas
-    a partir do dia seguinte ao último registro.
+    Coleta histórico do NY11 via yfinance (ticker SB=F).
+    Gratuito, sem API key, sem bloqueio em ambientes CI/CD.
+    Close = preço de fechamento em USDc/lb.
     """
-    if not NASDAQ_API_KEY:
-        log.error(
-            "[NY11] NASDAQ_API_KEY não definida. "
-            "Crie uma chave gratuita em https://data.nasdaq.com/sign-up "
-            "e adicione como secret no GitHub Actions."
-        )
-        return 0
+    log.info("[NY11] Buscando dados Yahoo Finance (SB=F)...")
 
-    log.info("[NY11] Buscando dados Nasdaq Data Link (CHRIS/ICE_SB1)...")
-
-    last = _last_date_in_table(conn, "sugar_ny11")
-    start_date = (
+    last  = _last_date(conn, "sugar_ny11")
+    start = (
         (datetime.strptime(last, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
         if last else HISTORY_START
     )
+    today = date.today().strftime("%Y-%m-%d")
 
-    if start_date > date.today().strftime("%Y-%m-%d"):
+    if start > today:
         log.info("[NY11] Dados já atualizados até hoje. Nada a fazer.")
         return 0
 
-    log.info(f"[NY11] Buscando de {start_date} até hoje")
-
-    params = {
-        "api_key":   NASDAQ_API_KEY,
-        "start_date": start_date,
-        "order":      "asc",          # cronológico
-    }
+    log.info(f"[NY11] Buscando de {start} até hoje")
 
     try:
-        resp = _request_with_retry("GET", NASDAQ_NY11_URL, params=params)
-        payload = resp.json()
+        ticker = yf.Ticker(YF_TICKER)
+        df = ticker.history(start=start, end=today, auto_adjust=False)
     except Exception as exc:
-        log.error(f"[NY11] Falha na requisição: {exc}")
+        log.error(f"[NY11] Falha ao buscar yfinance: {exc}")
         return 0
 
-    dataset   = payload.get("dataset", {})
-    col_names = [c.lower() for c in dataset.get("column_names", [])]
-    data_rows = dataset.get("data", [])
-
-    if not data_rows:
-        log.info("[NY11] Nenhum dado novo retornado pela API.")
+    if df is None or df.empty:
+        log.info("[NY11] Nenhum dado novo retornado.")
         return 0
 
-    # Mapear índices das colunas relevantes
-    try:
-        idx_date   = col_names.index("date")
-        idx_settle = col_names.index("settle")
-        idx_open   = col_names.index("open")   if "open"   in col_names else None
-        idx_high   = col_names.index("high")   if "high"   in col_names else None
-        idx_low    = col_names.index("low")    if "low"    in col_names else None
-        idx_vol    = col_names.index("volume") if "volume" in col_names else None
-    except ValueError as exc:
-        log.error(f"[NY11] Coluna inesperada no dataset: {exc}. Colunas: {col_names}")
-        return 0
+    # Normaliza índice tz-aware → naive date string
+    df.index = pd.to_datetime(df.index).tz_localize(None)
 
     inserted = 0
-    for row in data_rows:
-        data_ref = str(row[idx_date])[:10]
-        settle   = row[idx_settle]
-
-        if settle is None:
-            continue  # dia sem fechamento (feriado/dia sem liquidez)
-
-        open_v  = row[idx_open]  if idx_open  is not None else None
-        high_v  = row[idx_high]  if idx_high  is not None else None
-        low_v   = row[idx_low]   if idx_low   is not None else None
-        vol_v   = row[idx_vol]   if idx_vol   is not None else None
-
+    for ts, row in df.iterrows():
+        data_ref = ts.strftime("%Y-%m-%d")
+        close    = _safe_float(row.get("Close"))
+        if close is None:
+            continue
         try:
             conn.execute(
                 """INSERT OR IGNORE INTO sugar_ny11
@@ -264,14 +187,12 @@ def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
                     open_usdclb, high_usdclb, low_usdclb, volume, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    data_ref,
-                    int(data_ref[:4]),
-                    int(data_ref[5:7]),
-                    float(settle),
-                    float(open_v) if open_v is not None else None,
-                    float(high_v) if high_v is not None else None,
-                    float(low_v)  if low_v  is not None else None,
-                    float(vol_v)  if vol_v  is not None else None,
+                    data_ref, int(data_ref[:4]), int(data_ref[5:7]),
+                    close,
+                    _safe_float(row.get("Open")),
+                    _safe_float(row.get("High")),
+                    _safe_float(row.get("Low")),
+                    _safe_float(row.get("Volume")),
                     now_str,
                 ),
             )
@@ -290,62 +211,74 @@ def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
 # ════════════════════════════════════════════════════════════════════════════════
 def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
     """
-    Coleta o indicador de Etanol Hidratado Carburante do CEPEA/ESALQ.
-
-    O CEPEA disponibiliza a série em planilha Excel via URL direta.
-    A planilha contém duas colunas: Data | Valor (R$/litro, à vista posto usina SP).
-
-    Estratégia:
-      1. Baixa a planilha Excel completa (histórico total)
-      2. Filtra apenas registros novos (posterior ao último no banco)
-      3. Insere os novos registros
-
-    URL do arquivo: varia por produto; o ID 338 corresponde ao
-    Indicador Etanol Hidratado (CEPEA/ESALQ - Hidratado).
+    Baixa a planilha Excel do CEPEA (Indicador Etanol Hidratado).
+    Usa sessão com cookies + headers completos de browser para evitar 403.
     """
     log.info("[ETANOL] Buscando planilha CEPEA/ESALQ...")
 
-    last = _last_date_in_table(conn, "etanol_cepea")
+    last = _last_date(conn, "etanol_cepea")
     log.info(f"[ETANOL] Último registro no banco: {last or 'nenhum'}")
 
-    # ── Download da planilha ──────────────────────────────────────────────────
-    # O CEPEA usa um formulário ASP.NET com ViewState. Para evitar complexidade
-    # de parsing do ViewState, usamos o link direto da planilha de indicadores
-    # que o CEPEA disponibiliza publicamente.
-    #
-    # URL do widget de download — produto 17 (Etanol), indicador 338 (Hidratado)
-    # Retorna arquivo .xlsx com histórico completo.
-    headers = {
+    session = requests.Session()
+    session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
+            "Chrome/123.0.0.0 Safari/537.36"
         ),
-        "Referer": CEPEA_ETANOL_URL,
         "Accept": (
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
-            "application/vnd.ms-excel,*/*"
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,image/apng,*/*;q=0.8"
         ),
-    }
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection":      "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    })
 
+    # Passo 1 — visita a página de indicador para pegar cookies de sessão
     try:
-        resp = _request_with_retry("GET", CEPEA_DOWNLOAD_URL, headers=headers)
+        log.info("[ETANOL] Obtendo cookies de sessão...")
+        session.get(CEPEA_REFERER_URL, timeout=30)
+        time.sleep(2)
     except Exception as exc:
-        log.error(f"[ETANOL] Falha ao baixar planilha CEPEA: {exc}")
+        log.warning(f"[ETANOL] Aviso ao obter cookies (continuando): {exc}")
+
+    # Passo 2 — download do Excel com Referer correto
+    try:
+        log.info("[ETANOL] Baixando planilha Excel...")
+        resp = session.get(
+            CEPEA_DOWNLOAD_URL,
+            headers={"Referer": CEPEA_REFERER_URL},
+            timeout=60,
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        log.error(f"[ETANOL] Falha ao baixar planilha: {exc}")
         return 0
 
     content_type = resp.headers.get("Content-Type", "")
-    log.info(f"[ETANOL] Content-Type recebido: {content_type}")
+    log.info(f"[ETANOL] Content-Type: {content_type} | Tamanho: {len(resp.content):,} bytes")
 
-    # ── Parse da planilha ─────────────────────────────────────────────────────
-    try:
-        df = _parse_cepea_excel(resp.content)
-    except Exception as exc:
-        log.error(f"[ETANOL] Falha ao parsear Excel CEPEA: {exc}")
-        # Tenta salvar o arquivo para debug
-        debug_path = Path(__file__).parent / "debug_cepea_etanol.bin"
+    # Verifica magic bytes para confirmar que é um Excel
+    is_xlsx = resp.content[:4] == b"PK\x03\x04"
+    is_xls  = resp.content[:4] == b"\xd0\xcf\x11\xe0"
+
+    if not (is_xlsx or is_xls or "spreadsheet" in content_type or "excel" in content_type):
+        log.error(
+            f"[ETANOL] Resposta não é Excel. "
+            f"Primeiros 200 bytes: {resp.content[:200]}"
+        )
+        debug_path = Path(__file__).parent / "debug_cepea_response.bin"
         debug_path.write_bytes(resp.content)
         log.info(f"[ETANOL] Arquivo salvo para debug: {debug_path}")
+        return 0
+
+    # Parse da planilha
+    try:
+        df = _parse_cepea_excel(resp.content, is_xlsx)
+    except Exception as exc:
+        log.error(f"[ETANOL] Falha ao parsear Excel: {exc}")
         return 0
 
     if df is None or df.empty:
@@ -354,7 +287,6 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
 
     log.info(f"[ETANOL] {len(df)} linhas lidas da planilha.")
 
-    # ── Filtrar apenas registros novos ────────────────────────────────────────
     if last:
         df = df[df["data_ref"] > last]
 
@@ -362,27 +294,18 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
         log.info("[ETANOL] Dados já atualizados. Nada a inserir.")
         return 0
 
-    # ── Inserir no banco ──────────────────────────────────────────────────────
     inserted = 0
     for _, row in df.iterrows():
         data_ref = row["data_ref"]
         preco    = row["preco"]
-
         if not data_ref or preco is None:
             continue
-
         try:
             conn.execute(
                 """INSERT OR IGNORE INTO etanol_cepea
                    (data_referencia, ano, mes, preco_brl_l, updated_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (
-                    data_ref,
-                    int(data_ref[:4]),
-                    int(data_ref[5:7]),
-                    float(preco),
-                    now_str,
-                ),
+                (data_ref, int(data_ref[:4]), int(data_ref[5:7]), float(preco), now_str),
             )
             if conn.execute("SELECT changes()").fetchone()[0]:
                 inserted += 1
@@ -394,101 +317,58 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
     return inserted
 
 
-def _parse_cepea_excel(content: bytes) -> "pd.DataFrame | None":
+def _parse_cepea_excel(content: bytes, is_xlsx: bool) -> "pd.DataFrame | None":
     """
-    Lê o Excel do CEPEA e retorna DataFrame com colunas ['data_ref', 'preco'].
-
-    O CEPEA geralmente entrega planilhas com:
-      - Algumas linhas de cabeçalho/rodapé descritivas
-      - Colunas: 'Data' (DD/MM/YYYY) | 'À Vista(R$)' ou similar
-    Esta função é tolerante a variações de layout.
+    Lê planilha CEPEA e retorna DataFrame com ['data_ref', 'preco'].
+    Tolerante a cabeçalhos descritivos e variações de layout.
     """
-    buf = io.BytesIO(content)
+    engine = "openpyxl" if is_xlsx else "xlrd"
+    buf    = io.BytesIO(content)
 
-    # Tenta xlsx primeiro, depois xls
-    for engine in ("openpyxl", "xlrd"):
-        try:
-            raw = pd.read_excel(buf, engine=engine, header=None)
-            break
-        except Exception:
-            buf.seek(0)
-            continue
-    else:
-        raise ValueError("Não foi possível ler o Excel com openpyxl nem xlrd.")
+    # Lê sem header para localizar linha de cabeçalho real
+    raw = pd.read_excel(buf, engine=engine, header=None, dtype=str)
 
-    # ── Localizar linha de cabeçalho ──────────────────────────────────────────
-    # Procura pela primeira linha que contenha "data" em alguma célula
-    header_row = None
+    header_row = 0
     for i, row in raw.iterrows():
         row_str = " ".join(str(v).lower() for v in row.values if pd.notna(v))
-        if "data" in row_str and ("vista" in row_str or "valor" in row_str or "preço" in row_str or "preco" in row_str):
+        if "data" in row_str and any(k in row_str for k in ["vista", "valor", "preco", "preço", "r$"]):
             header_row = i
             break
 
-    if header_row is None:
-        # Fallback: assume que a primeira linha é o header
-        header_row = 0
-
-    df = pd.read_excel(
-        io.BytesIO(content),
-        engine=engine,
-        header=header_row,
-        dtype=str,
-    )
-
-    # ── Normalizar nomes de colunas ───────────────────────────────────────────
+    buf.seek(0)
+    df = pd.read_excel(buf, engine=engine, header=header_row, dtype=str)
     df.columns = [str(c).strip().lower() for c in df.columns]
 
-    # Coluna de data
-    col_data = next(
-        (c for c in df.columns if "data" in c),
-        None,
-    )
-    # Coluna de preço: "à vista", "valor", "preço", etc.
+    col_data  = next((c for c in df.columns if "data" in c), None)
     col_preco = next(
         (c for c in df.columns if any(k in c for k in ["vista", "valor", "preço", "preco", "r$"])),
         None,
     )
 
-    if col_data is None or col_preco is None:
+    if not col_data or not col_preco:
         log.error(f"[ETANOL] Colunas não identificadas. Disponíveis: {list(df.columns)}")
         return None
 
-    # ── Converter tipos ───────────────────────────────────────────────────────
-    result_rows = []
+    rows = []
     for _, row in df.iterrows():
-        raw_data  = str(row[col_data]).strip()
-        raw_preco = str(row[col_preco]).strip().replace(",", ".")
-
-        # Parse de data: DD/MM/YYYY ou YYYY-MM-DD
-        data_ref = _parse_date_br(raw_data)
-        if data_ref is None:
-            continue  # linha de cabeçalho/rodapé
-
-        # Parse de preço
+        data_ref = _parse_date_br(str(row[col_data]).strip())
+        if not data_ref:
+            continue
         try:
-            preco = float(raw_preco)
+            preco = float(str(row[col_preco]).strip().replace(",", "."))
             if preco <= 0:
                 continue
         except (ValueError, TypeError):
             continue
+        rows.append({"data_ref": data_ref, "preco": preco})
 
-        result_rows.append({"data_ref": data_ref, "preco": preco})
-
-    if not result_rows:
+    if not rows:
         return None
 
-    out = pd.DataFrame(result_rows).sort_values("data_ref").reset_index(drop=True)
-    return out
+    return pd.DataFrame(rows).sort_values("data_ref").reset_index(drop=True)
 
 
 def _parse_date_br(raw: str) -> "str | None":
-    """
-    Converte string de data para YYYY-MM-DD.
-    Aceita: DD/MM/YYYY, DD/MM/YY, YYYY-MM-DD, e variantes.
-    Retorna None se não conseguir parsear.
-    """
-    raw = raw.strip()
     for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y"):
         try:
             return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
@@ -498,38 +378,32 @@ def _parse_date_br(raw: str) -> "str | None":
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# SUMMARY HELPERS
+# SUMMARY
 # ════════════════════════════════════════════════════════════════════════════════
 def _summary(conn: sqlite3.Connection) -> None:
-    """Loga um resumo dos dados no banco após a coleta."""
     log.info("=" * 60)
     log.info("RESUMO DO BANCO")
-
-    for table, label, col_preco, unidade in [
+    for table, label, col, unidade in [
         ("sugar_ny11",   "Açúcar NY11",            "preco_usdclb", "USDc/lb"),
         ("etanol_cepea", "Etanol Hidratado CEPEA", "preco_brl_l",  "R$/l"),
     ]:
         try:
-            row = conn.execute(
-                f"""SELECT COUNT(*), MIN(data_referencia), MAX(data_referencia),
-                           MIN({col_preco}), MAX({col_preco}), AVG({col_preco})
-                    FROM {table}"""
+            r    = conn.execute(
+                f"SELECT COUNT(*), MIN(data_referencia), MAX(data_referencia) FROM {table}"
             ).fetchone()
-            n, dt_min, dt_max, v_min, v_max, v_avg = row
-            last_row = conn.execute(
-                f"SELECT data_referencia, {col_preco} FROM {table} "
+            n, dt_min, dt_max = r
+            last = conn.execute(
+                f"SELECT data_referencia, {col} FROM {table} "
                 f"ORDER BY data_referencia DESC LIMIT 1"
             ).fetchone()
-            last_dt, last_v = (last_row[0], last_row[1]) if last_row else ("—", None)
-            last_str = f"{last_v:.4f} {unidade}" if last_v else "—"
+            last_str = f"{last[1]:.4f} {unidade}" if last and last[1] else "—"
             log.info(
                 f"  {label:30}: {n:6} registros | "
-                f"{dt_min} → {dt_max} | "
-                f"Último: {last_dt} = {last_str}"
+                f"{dt_min or '—'} → {dt_max or '—'} | "
+                f"Último: {last[0] if last else '—'} = {last_str}"
             )
         except Exception as exc:
             log.warning(f"  Erro ao resumir {table}: {exc}")
-
     log.info("=" * 60)
 
 
@@ -538,31 +412,25 @@ def _summary(conn: sqlite3.Connection) -> None:
 # ════════════════════════════════════════════════════════════════════════════════
 def main() -> None:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     log.info("=" * 60)
     log.info("S&E Extractor — iniciando")
-    log.info(f"  Banco   : {DB_PATH}")
-    log.info(f"  Data    : {now_str}")
+    log.info(f"  Banco : {DB_PATH}")
+    log.info(f"  Data  : {now_str}")
     log.info("=" * 60)
 
-    # Garante que a pasta existe
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     conn = get_conn()
     ensure_schema(conn)
 
-    # ── 1. Açúcar NY11 ────────────────────────────────────────────────────────
-    log.info("--- Açúcar NY11 (Nasdaq Data Link) ---")
+    log.info("--- Açúcar NY11 (Yahoo Finance · SB=F) ---")
     n_sugar = fetch_sugar_ny11(conn, now_str)
 
-    # Pequena pausa entre fontes
     time.sleep(2)
 
-    # ── 2. Etanol Hidratado CEPEA ─────────────────────────────────────────────
     log.info("--- Etanol Hidratado CEPEA/ESALQ ---")
     n_etanol = fetch_etanol_cepea(conn, now_str)
 
-    # ── Resumo ────────────────────────────────────────────────────────────────
     _summary(conn)
     conn.close()
 
