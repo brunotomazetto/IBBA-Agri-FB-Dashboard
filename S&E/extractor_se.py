@@ -3,38 +3,6 @@
 extractor_se.py — IBBA Agri Monitor · S&E Dashboard
 =====================================================
 Execução diária via GitHub Actions.
-
-Fluxo:
-  1. Coleta histórico de preço spot de Açúcar NY11 (USDc/lb)
-     → Fonte: Yahoo Finance (SB=F — Sugar No. 11 front-month continuous)
-  2. Coleta histórico de preço de Etanol Hidratado Carburante
-     → Fonte: CEPEA/ESALQ via Playwright (browser real — passa pelo WAF)
-  3. Salva tudo em commodities.db (SQLite) dentro da pasta S&E
-
-═══════════════════════════════════════════════════════════════
-FONTES
-═══════════════════════════════════════════════════════════════
-
-  AÇÚCAR NY11  → Yahoo Finance (yfinance)
-                  Ticker  : SB=F
-                  Campo   : Close (USDc/lb)
-                  Freq.   : diária (dias úteis)
-
-  ETANOL HIDRATADO → CEPEA/ESALQ via Playwright
-                  O CEPEA bloqueia IPs de datacenter via WAF (Imperva).
-                  Playwright abre um Chromium real que passa pela verificação.
-                  Intercepta o response da planilha Excel diretamente na rede
-                  (sem depender de networkidle ou clique no botão).
-                  Unidade : R$/litro (à vista, posto usina São Paulo)
-                  Freq.   : diária (dias úteis)
-
-═══════════════════════════════════════════════════════════════
-DEPENDÊNCIAS
-═══════════════════════════════════════════════════════════════
-
-  pip install requests pandas openpyxl xlrd yfinance playwright
-  playwright install chromium
-
 """
 
 import io
@@ -61,7 +29,6 @@ try:
 except ImportError:
     raise SystemExit("Execute: pip install playwright && playwright install chromium")
 
-# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -69,21 +36,14 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ── Caminhos ──────────────────────────────────────────────────────────────────
 DB_PATH      = Path(__file__).parent / "commodities.db"
 DOWNLOAD_DIR = Path(__file__).parent / "_cepea_downloads"
+DEBUG_DIR    = Path(__file__).parent / "_debug"
 
-# ── Config NY11 ───────────────────────────────────────────────────────────────
 YF_TICKER     = "SB=F"
 HISTORY_START = "2010-01-01"
 
-# ── Config CEPEA ──────────────────────────────────────────────────────────────
 CEPEA_ETANOL_URL = "https://www.cepea.esalq.usp.br/br/indicador/etanol.aspx"
-
-# Timeout de navegação: usa domcontentloaded (não espera scripts de terceiros)
-# O CEPEA tem trackers que nunca terminam → networkidle trava
-PLAYWRIGHT_NAV_TIMEOUT  = 90_000   # 90s para carregar o DOM
-PLAYWRIGHT_WAIT_TIMEOUT = 30_000   # 30s para encontrar elementos
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -155,12 +115,7 @@ def _parse_date_br(raw: str) -> str | None:
     return None
 
 
-def _insert_etanol_rows(
-    conn: sqlite3.Connection,
-    rows: list[dict],
-    last: str | None,
-    now_str: str,
-) -> int:
+def _insert_etanol_rows(conn, rows, last, now_str) -> int:
     if last:
         rows = [r for r in rows if r["data_ref"] > last]
     if not rows:
@@ -173,13 +128,8 @@ def _insert_etanol_rows(
                 """INSERT OR IGNORE INTO etanol_cepea
                    (data_referencia, ano, mes, preco_brl_l, updated_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (
-                    row["data_ref"],
-                    int(row["data_ref"][:4]),
-                    int(row["data_ref"][5:7]),
-                    float(row["preco"]),
-                    now_str,
-                ),
+                (row["data_ref"], int(row["data_ref"][:4]), int(row["data_ref"][5:7]),
+                 float(row["preco"]), now_str),
             )
             if conn.execute("SELECT changes()").fetchone()[0]:
                 inserted += 1
@@ -190,37 +140,29 @@ def _insert_etanol_rows(
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# FETCH — AÇÚCAR NY11 (Yahoo Finance · SB=F)
+# FETCH — NY11
 # ════════════════════════════════════════════════════════════════════════════════
 def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
     log.info("[NY11] Buscando dados Yahoo Finance (SB=F)...")
-
     last  = _last_date(conn, "sugar_ny11")
     start = (
         (datetime.strptime(last, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
         if last else HISTORY_START
     )
     today = date.today().strftime("%Y-%m-%d")
-
     if start > today:
         log.info("[NY11] Dados já atualizados até hoje.")
         return 0
-
     log.info(f"[NY11] Buscando de {start} até hoje")
-
     try:
-        ticker = yf.Ticker(YF_TICKER)
-        df = ticker.history(start=start, end=today, auto_adjust=False)
+        df = yf.Ticker(YF_TICKER).history(start=start, end=today, auto_adjust=False)
     except Exception as exc:
         log.error(f"[NY11] Falha yfinance: {exc}")
         return 0
-
     if df is None or df.empty:
         log.info("[NY11] Nenhum dado novo.")
         return 0
-
     df.index = pd.to_datetime(df.index).tz_localize(None)
-
     inserted = 0
     for ts, row in df.iterrows():
         data_ref = ts.strftime("%Y-%m-%d")
@@ -233,65 +175,40 @@ def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
                    (data_referencia, ano, mes, preco_usdclb,
                     open_usdclb, high_usdclb, low_usdclb, volume, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    data_ref, int(data_ref[:4]), int(data_ref[5:7]),
-                    close,
-                    _safe_float(row.get("Open")),
-                    _safe_float(row.get("High")),
-                    _safe_float(row.get("Low")),
-                    _safe_float(row.get("Volume")),
-                    now_str,
-                ),
+                (data_ref, int(data_ref[:4]), int(data_ref[5:7]), close,
+                 _safe_float(row.get("Open")), _safe_float(row.get("High")),
+                 _safe_float(row.get("Low")), _safe_float(row.get("Volume")), now_str),
             )
             if conn.execute("SELECT changes()").fetchone()[0]:
                 inserted += 1
         except Exception as exc:
             log.warning(f"[NY11] Erro ao inserir {data_ref}: {exc}")
-
     conn.commit()
     log.info(f"[NY11] {inserted} novas linhas inseridas.")
     return inserted
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# FETCH — ETANOL CEPEA via Playwright
+# FETCH — ETANOL CEPEA via Playwright (com dump de debug completo)
 # ════════════════════════════════════════════════════════════════════════════════
 def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
-    """
-    Estratégia principal: interceptar o response da planilha Excel
-    diretamente na camada de rede do browser (page.route / response).
-    Isso é mais robusto que clicar no botão: captura o arquivo assim que
-    o browser o recebe, sem depender de eventos de UI.
-
-    Fluxo:
-      1. Abre Chromium com interceptação de rede ativada
-      2. Navega para a página com wait_until='domcontentloaded'
-         (evita travar em networkidle por causa de trackers do CEPEA)
-      3. Aguarda o DOM carregar e procura o link de download
-      4. Clica no link — o handler de interceptação captura o bytes do Excel
-      5. Fallback: se o clique não funcionar, usa os cookies do browser
-         para baixar diretamente via requests
-    """
     log.info("[ETANOL] Iniciando Playwright (Chromium headless)...")
-
     last = _last_date(conn, "etanol_cepea")
     log.info(f"[ETANOL] Último registro no banco: {last or 'nenhum'}")
 
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+
     xls_content: bytes | None = None
+    all_responses: list[dict] = []   # log de todos os responses para debug
 
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
                 headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                ],
+                args=["--no-sandbox", "--disable-setuid-sandbox",
+                      "--disable-dev-shm-usage", "--disable-gpu"],
             )
-
             context = browser.new_context(
                 locale="pt-BR",
                 accept_downloads=True,
@@ -304,91 +221,81 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
             )
             page = context.new_page()
 
-            # ── Intercepta responses de Excel na rede ─────────────────────
-            # Captura qualquer response com conteúdo Excel antes mesmo do
-            # clique do usuário — útil se a página carregar o arquivo auto.
-            intercepted: list[bytes] = []
+            # ── Intercepta TODOS os responses para debug ───────────────────
+            intercepted_excel: list[bytes] = []
 
             def _on_response(response):
-                ct = response.headers.get("content-type", "")
+                ct  = response.headers.get("content-type", "")
                 url = response.url
+                status = response.status
+                all_responses.append({"url": url[:120], "status": status, "ct": ct[:80]})
+                # Captura Excel
                 if (
-                    "spreadsheet" in ct
-                    or "excel" in ct
-                    or "octet-stream" in ct
-                    or "widgetpastas" in url
+                    "spreadsheet" in ct or "excel" in ct or "octet-stream" in ct
+                    or "widgetpastas" in url or url.endswith(".xls") or url.endswith(".xlsx")
                 ):
                     try:
                         body = response.body()
-                        if len(body) > 5000:  # Excel mínimo razoável
-                            log.info(
-                                f"[ETANOL] Excel interceptado via rede: "
-                                f"{url[:80]} ({len(body):,} bytes)"
-                            )
-                            intercepted.append(body)
+                        if len(body) > 1000:
+                            log.info(f"[ETANOL] Excel interceptado: {url[:80]} ({len(body):,} bytes)")
+                            intercepted_excel.append(body)
                     except Exception:
                         pass
 
             page.on("response", _on_response)
 
-            # ── Navega com domcontentloaded (não trava em trackers) ────────
+            # ── Navega ────────────────────────────────────────────────────
             log.info(f"[ETANOL] Navegando para {CEPEA_ETANOL_URL}")
             try:
-                page.goto(
-                    CEPEA_ETANOL_URL,
-                    wait_until="domcontentloaded",   # ← chave da correção
-                    timeout=PLAYWRIGHT_NAV_TIMEOUT,
-                )
+                page.goto(CEPEA_ETANOL_URL, wait_until="domcontentloaded", timeout=90_000)
                 log.info("[ETANOL] DOM carregado.")
             except PlaywrightTimeout:
-                log.warning("[ETANOL] Timeout no goto — tentando continuar mesmo assim...")
+                log.warning("[ETANOL] Timeout no goto — continuando...")
 
-            # Aguarda um pouco para scripts da página rodarem
-            time.sleep(5)
+            # Aguarda scripts da página
+            time.sleep(8)
 
-            # ── Verifica se já interceptou algo ───────────────────────────
-            if intercepted:
-                xls_content = intercepted[-1]
-                log.info("[ETANOL] Excel capturado por interceptação automática.")
+            # ── Salva screenshot e HTML para debug ────────────────────────
+            try:
+                ss_path = DEBUG_DIR / "cepea_screenshot.png"
+                page.screenshot(path=str(ss_path), full_page=True)
+                log.info(f"[ETANOL] Screenshot salvo: {ss_path}")
+            except Exception as exc:
+                log.warning(f"[ETANOL] Screenshot falhou: {exc}")
 
-            # ── Tenta clicar no link de download ──────────────────────────
-            if not xls_content:
-                log.info("[ETANOL] Procurando link de download na página...")
+            html_content = page.content()
+            html_path = DEBUG_DIR / "cepea_page.html"
+            html_path.write_text(html_content, encoding="utf-8")
+            log.info(f"[ETANOL] HTML salvo: {html_path} ({len(html_content):,} chars)")
 
-                # Coleta todos os hrefs da página para debug
-                all_hrefs = page.eval_on_selector_all(
-                    "a[href]", "els => els.map(e => ({text: e.innerText.trim(), href: e.href}))"
-                )
+            # ── Log de todos os responses capturados ──────────────────────
+            log.info(f"[ETANOL] Total de responses capturados: {len(all_responses)}")
+            for r in all_responses:
+                log.info(f"  [{r['status']}] {r['url']}  |  {r['ct']}")
+
+            # ── Log de todos os links da página ───────────────────────────
+            all_links = page.eval_on_selector_all(
+                "a[href]", "els => els.map(e => ({text: e.innerText.trim().slice(0,40), href: e.href}))"
+            )
+            log.info(f"[ETANOL] Links na página ({len(all_links)} total):")
+            for lk in all_links[:30]:
+                log.info(f"  {lk['text']!r:42} → {lk['href'][:100]}")
+
+            # ── Verifica Excel interceptado ────────────────────────────────
+            if intercepted_excel:
+                xls_content = intercepted_excel[-1]
+                log.info("[ETANOL] Usando Excel interceptado da rede.")
+            else:
+                # Tenta links candidatos encontrados
                 xls_links = [
-                    h for h in all_hrefs
-                    if any(k in h.get("href", "").lower() for k in ["widgetpastas", "indicador", ".xls"])
+                    lk["href"] for lk in all_links
+                    if any(k in lk["href"].lower() for k in
+                           ["widgetpastas", ".xls", "download", "excel", "indicador"])
                 ]
-                log.info(f"[ETANOL] Links candidatos: {xls_links[:5]}")
-
+                log.info(f"[ETANOL] Links candidatos para download: {xls_links[:5]}")
                 if xls_links:
-                    target_url = xls_links[0]["href"]
-                    log.info(f"[ETANOL] Baixando diretamente: {target_url}")
-                    # Usa cookies do Playwright para requisição direta
                     cookies = context.cookies()
-                    xls_content = _download_with_cookies(target_url, cookies, CEPEA_ETANOL_URL)
-
-                    if not xls_content:
-                        # Tenta clicar via Playwright
-                        log.info("[ETANOL] Tentando clique via Playwright...")
-                        try:
-                            with page.expect_download(timeout=PLAYWRIGHT_WAIT_TIMEOUT) as dl_info:
-                                page.click(f"a[href='{xls_links[0]['href']}']", timeout=10_000)
-                            dl      = dl_info.value
-                            dl_path = DOWNLOAD_DIR / dl.suggested_filename
-                            dl.save_as(dl_path)
-                            xls_content = dl_path.read_bytes()
-                            log.info(f"[ETANOL] Download via clique: {dl_path.name} ({len(xls_content):,} bytes)")
-                        except Exception as exc:
-                            log.warning(f"[ETANOL] Clique falhou: {exc}")
-
-            # Verifica interceptações tardias (após clique)
-            if not xls_content and intercepted:
-                xls_content = intercepted[-1]
+                    xls_content = _download_with_cookies(xls_links[0], cookies, CEPEA_ETANOL_URL)
 
             context.close()
             browser.close()
@@ -398,28 +305,28 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
         return 0
 
     if not xls_content:
-        log.error("[ETANOL] Nenhum conteúdo Excel obtido.")
+        log.error(
+            "[ETANOL] Nenhum conteúdo Excel obtido. "
+            f"Verifique os arquivos de debug em {DEBUG_DIR}"
+        )
         return 0
 
-    # Valida magic bytes
     is_xlsx = xls_content[:4] == b"PK\x03\x04"
     is_xls  = xls_content[:4] == b"\xd0\xcf\x11\xe0"
     if not (is_xlsx or is_xls):
-        log.error(f"[ETANOL] Conteúdo não é Excel. Primeiros bytes: {xls_content[:20]}")
-        debug = Path(__file__).parent / "debug_cepea.bin"
-        debug.write_bytes(xls_content)
-        log.info(f"[ETANOL] Salvo para debug: {debug}")
+        log.error(f"[ETANOL] Conteúdo não é Excel. Bytes: {xls_content[:20]}")
+        (DEBUG_DIR / "debug_cepea.bin").write_bytes(xls_content)
         return 0
 
     log.info(f"[ETANOL] Parseando Excel ({len(xls_content):,} bytes)...")
     try:
         rows = _parse_cepea_excel(xls_content, is_xlsx)
     except Exception as exc:
-        log.error(f"[ETANOL] Falha ao parsear Excel: {exc}")
+        log.error(f"[ETANOL] Falha ao parsear: {exc}")
         return 0
 
     if not rows:
-        log.warning("[ETANOL] Planilha vazia ou não reconhecida.")
+        log.warning("[ETANOL] Planilha vazia.")
         return 0
 
     log.info(f"[ETANOL] {len(rows)} linhas lidas.")
@@ -429,15 +336,13 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
 
 
 def _download_with_cookies(url: str, pw_cookies: list[dict], referer: str) -> bytes | None:
-    """Baixa uma URL usando os cookies capturados pelo Playwright."""
     session = requests.Session()
     for ck in pw_cookies:
         session.cookies.set(ck["name"], ck["value"], domain=ck.get("domain", ""))
     session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/123.0.0.0 Safari/537.36"
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
         ),
         "Referer": referer,
         "Accept":  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*",
@@ -454,7 +359,6 @@ def _download_with_cookies(url: str, pw_cookies: list[dict], referer: str) -> by
 
 
 def _parse_cepea_excel(content: bytes, is_xlsx: bool) -> list[dict]:
-    """Lê planilha CEPEA e retorna lista de {'data_ref': str, 'preco': float}."""
     engine = "openpyxl" if is_xlsx else "xlrd"
     buf    = io.BytesIO(content)
     raw    = pd.read_excel(buf, engine=engine, header=None, dtype=str)
@@ -475,9 +379,8 @@ def _parse_cepea_excel(content: bytes, is_xlsx: bool) -> list[dict]:
         (c for c in df.columns if any(k in c for k in ["vista", "valor", "preço", "preco", "r$"])),
         None,
     )
-
     if not col_data or not col_preco:
-        raise ValueError(f"Colunas não encontradas. Disponíveis: {list(df.columns)}")
+        raise ValueError(f"Colunas não encontradas: {list(df.columns)}")
 
     rows = []
     for _, row in df.iterrows():
