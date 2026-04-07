@@ -5,9 +5,9 @@ on:
 
 jobs:
   test:
-    name: Testa fontes de Etanol
+    name: Testa undetected-chromedriver no CEPEA
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -21,23 +21,38 @@ jobs:
           python-version: "3.11"
 
       - name: Instalar dependências
-        run: pip install requests pandas openpyxl xlrd playwright
+        run: pip install undetected-chromedriver selenium
 
-      - name: Instalar Chromium
-        run: playwright install chromium --with-deps
-
-      - name: Rodar diagnóstico
+      # Instala Xvfb para rodar Chrome não-headless em CI
+      - name: Instalar Xvfb e dependências de display
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb x11-utils
+
+      # Instala Google Chrome (versão estável)
+      - name: Instalar Google Chrome
+        run: |
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+          google-chrome --version
+
+      - name: Rodar diagnóstico com Xvfb
+        run: |
+          # Sobe display virtual na porta :99
+          Xvfb :99 -screen 0 1280x800x24 &
+          export DISPLAY=:99
+          sleep 2
           cd "S&E"
           python test_sources.py
 
-      - name: Upload artefatos de debug
+      - name: Upload screenshots de debug
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-series-${{ github.run_id }}
+          name: uc-debug-${{ github.run_id }}
           path: |
-            /tmp/series_screenshot.png
-            /tmp/series_page.html
+            /tmp/uc_screenshot_1.png
+            /tmp/uc_screenshot_2.png
+            /tmp/cepea_downloads/
           retention-days: 3
           if-no-files-found: ignore
