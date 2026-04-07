@@ -5,7 +5,6 @@ on:
     # Roda todo dia útil às 22:00 UTC (19:00 BRT / após fechamento NY)
     - cron: "0 22 * * 1-5"
 
-  # Permite rodar manualmente pelo painel do GitHub Actions
   workflow_dispatch:
     inputs:
       dry_run:
@@ -21,10 +20,10 @@ jobs:
   extract:
     name: Coleta S&E (NY11 + Etanol CEPEA)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     permissions:
-      contents: write   # necessário para commitar o .db atualizado
+      contents: write
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
@@ -39,28 +38,30 @@ jobs:
         with:
           python-version: "3.11"
 
-      # ── 3. Dependências ───────────────────────────────────────────────────────
-      - name: Instalar dependências
+      # ── 3. Dependências Python ────────────────────────────────────────────────
+      - name: Instalar dependências Python
         run: |
           pip install --upgrade pip
-          pip install requests pandas openpyxl xlrd yfinance
+          pip install requests pandas openpyxl xlrd yfinance playwright
 
-      # ── 4. Executar extractor ─────────────────────────────────────────────────
+      # ── 4. Playwright — instala o browser Chromium ────────────────────────────
+      # O Chromium headless real é o que passa pelo WAF do CEPEA
+      - name: Instalar Chromium (Playwright)
+        run: playwright install chromium --with-deps
+
+      # ── 5. Executar extractor ─────────────────────────────────────────────────
       - name: Executar extractor_se.py
-        env:
-          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
         run: |
           cd "S&E"
           python extractor_se.py
 
-      # ── 5. Commit do banco atualizado ─────────────────────────────────────────
+      # ── 6. Commit do banco atualizado ─────────────────────────────────────────
       - name: Commit commodities.db
         if: ${{ github.event.inputs.dry_run != 'true' }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "S&E/commodities.db"
-          # Só commita se houver mudança real no banco
           git diff --staged --quiet || \
             git commit -m "chore: atualiza commodities.db [$(date -u '+%Y-%m-%d %H:%M UTC')]"
           git push
