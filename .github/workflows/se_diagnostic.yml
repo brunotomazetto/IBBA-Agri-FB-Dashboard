@@ -5,7 +5,7 @@ on:
 
 jobs:
   test:
-    name: Testa undetected-chromedriver + clique Turnstile
+    name: Testa B3 e Novacana
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Instalar dependências Python
+      - name: Instalar dependências
         run: pip install undetected-chromedriver selenium
 
       - name: Instalar Xvfb
@@ -32,9 +32,8 @@ jobs:
         run: |
           wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
           sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
-          google-chrome --version
 
-      - name: Rodar teste com Xvfb
+      - name: Rodar teste
         run: |
           Xvfb :99 -screen 0 1280x900x24 &
           export DISPLAY=:99
@@ -46,7 +45,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: uc-debug-${{ github.run_id }}
-          path: /tmp/s*.png
+          name: debug-${{ github.run_id }}
+          path: /tmp/*.png
           retention-days: 3
           if-no-files-found: ignore
