@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
 extractor_se.py — IBBA Agri Monitor · S&E Dashboard
+=====================================================
+Execução diária via GitHub Actions.
+
+Fontes:
+  NY11   → Yahoo Finance (SB=F), diário
+  Etanol → UNICAdata/UNICA (xlsPrcProd.php)
+             Diário: idTabela=2405 — retorna últimos ~20 dias úteis
+             Mensal: idTabela=1433 — tabela cruzada Mês x Ano (desde 2002)
 """
 
 import io, logging, sqlite3, sys, time
@@ -24,18 +32,19 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).parent / "commodities.db"
-
 YF_TICKER     = "SB=F"
 HISTORY_START = "2010-01-01"
 
-UNICA_XLS_DIARIO = (
-    "https://unicadata.com.br/xlsPrcProd.php"
-    "?idioma=1&tipoHistorico=7&idTabela=2405"
+# ── UNICAdata URLs ────────────────────────────────────────────────────────────
+# Diário: retorna os últimos ~20 dias úteis da tabela 2405 (Paulínia-SP)
+# Para pegar um período específico, passamos dataIni e dataFim
+UNICA_BASE = "https://unicadata.com.br/xlsPrcProd.php"
+UNICA_PARAMS_DIARIO = (
+    "idioma=1&tipoHistorico=7&idTabela=2405"
     "&estado=Paulinia&produto=Etanol+hidratado+combust%C3%ADvel&frequencia=Di%C3%A1rio"
 )
-UNICA_XLS_MENSAL = (
-    "https://unicadata.com.br/xlsPrcProd.php"
-    "?idioma=1&tipoHistorico=7&idTabela=1433"
+UNICA_PARAMS_MENSAL = (
+    "idioma=1&tipoHistorico=7&idTabela=1433"
     "&estado=S%C3%A3o+Paulo&produto=Etanol+hidratado+combust%C3%ADvel&frequencia=Mensal"
 )
 UNICA_REFERER = "https://unicadata.com.br/preco-ao-produtor.php?idMn=42"
@@ -45,8 +54,17 @@ HEADERS = {
     "Referer": UNICA_REFERER,
 }
 
+# Meses em português para parse da tabela mensal cruzada
+MESES_PT = {
+    "janeiro": 1, "fevereiro": 2, "março": 3, "abril": 4,
+    "maio": 5, "junho": 6, "julho": 7, "agosto": 8,
+    "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12,
+}
 
-# ── DB ────────────────────────────────────────────────────────────────────────
+
+# ════════════════════════════════════════════════════════════════════════════════
+# BANCO
+# ════════════════════════════════════════════════════════════════════════════════
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -60,10 +78,12 @@ def ensure_schema(conn):
         open_usdclb REAL, high_usdclb REAL, low_usdclb REAL, volume REAL,
         fonte TEXT DEFAULT 'Yahoo/SB=F', updated_at TEXT, UNIQUE(data_referencia));
     CREATE INDEX IF NOT EXISTS idx_sugar_data ON sugar_ny11(data_referencia);
+
     CREATE TABLE IF NOT EXISTS etanol_cepea (
         id INTEGER PRIMARY KEY AUTOINCREMENT, data_referencia TEXT NOT NULL,
         ano INTEGER, mes INTEGER, preco_brl_l REAL NOT NULL,
-        fonte TEXT DEFAULT 'UNICA/CEPEA-Paulinia', updated_at TEXT, UNIQUE(data_referencia));
+        fonte TEXT DEFAULT 'UNICA/CEPEA-Paulinia', updated_at TEXT,
+        UNIQUE(data_referencia));
     CREATE INDEX IF NOT EXISTS idx_etanol_data ON etanol_cepea(data_referencia);
     """)
     conn.commit()
@@ -87,15 +107,16 @@ def _parse_date_br(raw):
     return None
 
 
-# ── NY11 ──────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# NY11
+# ════════════════════════════════════════════════════════════════════════════════
 def fetch_sugar_ny11(conn, now_str):
     log.info("[NY11] Buscando Yahoo Finance (SB=F)...")
     last  = _last_date(conn, "sugar_ny11")
     start = (datetime.strptime(last, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d") if last else HISTORY_START
     today = date.today().strftime("%Y-%m-%d")
     if start > today:
-        log.info("[NY11] Já atualizado.")
-        return 0
+        log.info("[NY11] Já atualizado."); return 0
     log.info(f"[NY11] {start} → hoje")
     try:
         df = yf.Ticker(YF_TICKER).history(start=start, end=today, auto_adjust=False)
@@ -110,108 +131,152 @@ def fetch_sugar_ny11(conn, now_str):
         cl = _safe_float(row.get("Close"))
         if not cl: continue
         conn.execute(
-            "INSERT OR IGNORE INTO sugar_ny11 (data_referencia,ano,mes,preco_usdclb,open_usdclb,high_usdclb,low_usdclb,volume,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-            (dr,int(dr[:4]),int(dr[5:7]),cl,_safe_float(row.get("Open")),_safe_float(row.get("High")),_safe_float(row.get("Low")),_safe_float(row.get("Volume")),now_str))
+            "INSERT OR IGNORE INTO sugar_ny11 "
+            "(data_referencia,ano,mes,preco_usdclb,open_usdclb,high_usdclb,low_usdclb,volume,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (dr,int(dr[:4]),int(dr[5:7]),cl,
+             _safe_float(row.get("Open")),_safe_float(row.get("High")),
+             _safe_float(row.get("Low")),_safe_float(row.get("Volume")),now_str))
         if conn.execute("SELECT changes()").fetchone()[0]: inserted += 1
     conn.commit()
     log.info(f"[NY11] {inserted} linhas inseridas.")
     return inserted
 
 
-# ── ETANOL ────────────────────────────────────────────────────────────────────
-def fetch_etanol_cepea(conn, now_str):
-    carga = "--carga-historica" in sys.argv
-    last  = _last_date(conn, "etanol_cepea")
-    log.info(f"[ETANOL] Último no banco: {last or 'nenhum'}")
-    total = 0
-
-    if carga or last is None:
-        log.info("[ETANOL] Baixando histórico mensal (idTabela=1433)...")
-        rows = _download_and_parse(UNICA_XLS_MENSAL, "mensal")
-        if rows:
-            n = _insert_rows(conn, rows, last, now_str)
-            log.info(f"[ETANOL] Mensal: {n} inseridas.")
-            total += n
-            last = _last_date(conn, "etanol_cepea")
-
-    log.info("[ETANOL] Baixando dados diários (idTabela=2405)...")
-    rows = _download_and_parse(UNICA_XLS_DIARIO, "diário")
-    if rows:
-        n = _insert_rows(conn, rows, last, now_str)
-        log.info(f"[ETANOL] Diário: {n} inseridas.")
-        total += n
-    else:
-        log.error("[ETANOL] Falha nos dados diários.")
-    return total
-
-
-def _download_and_parse(url, label):
+# ════════════════════════════════════════════════════════════════════════════════
+# ETANOL — download
+# ════════════════════════════════════════════════════════════════════════════════
+def _get_xls(params, label):
+    url = f"{UNICA_BASE}?{params}"
     try:
         r = requests.get(url, headers=HEADERS, timeout=30)
         r.raise_for_status()
     except Exception as e:
-        log.error(f"[ETANOL] Download '{label}': {e}")
-        return []
+        log.error(f"[ETANOL] Download '{label}': {e}"); return None
+    c = r.content
+    log.info(f"[ETANOL] '{label}': {len(c):,} bytes")
+    if c[:4] not in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0"):
+        log.error(f"[ETANOL] '{label}': não é Excel"); return None
+    return c
 
-    content = r.content
-    log.info(f"[ETANOL] '{label}': {len(content):,} bytes | magic={content[:4].hex()}")
 
-    is_xlsx = content[:4] == b"PK\x03\x04"
-    is_xls  = content[:4] == b"\xd0\xcf\x11\xe0"
-    if not (is_xlsx or is_xls):
-        log.error(f"[ETANOL] '{label}': não é Excel")
-        return []
-
-    engine = "openpyxl" if is_xlsx else "xlrd"
-    try:
-        raw = pd.read_excel(io.BytesIO(content), engine=engine, header=None, dtype=str)
-    except Exception as e:
-        log.error(f"[ETANOL] parse erro: {e}")
-        return []
-
-    # ── Log das primeiras 20 linhas para ver o layout real ───────────────
-    log.info(f"[ETANOL] '{label}': shape={raw.shape}")
-    for i, row in raw.head(20).iterrows():
-        vals = [str(v)[:35] for v in row.tolist()]
-        log.info(f"[ETANOL]   row {i:2d}: {vals}")
-
-    # ── Parse: varre todas as células buscando data + preço na mesma linha
+# ── Parser da tabela DIÁRIA (col 4 = data DD/MM/YYYY, col 5 = preço com vírgula)
+def _parse_diario(content):
+    """
+    Layout confirmado pelo diagnóstico:
+      row 9:  [..., 'Data', 'Preço', 'Variação (%)*', ...]
+      row 10+: [..., '22/11/2019', '1,9740', ...]
+    Data na coluna 4, preço na coluna 5.
+    """
+    engine = "openpyxl" if content[:4] == b"PK\x03\x04" else "xlrd"
+    raw = pd.read_excel(io.BytesIO(content), engine=engine, header=None, dtype=str)
     rows = []
     for _, row in raw.iterrows():
-        data_ref = None
-        preco    = None
-        # Tenta cada célula como data
-        for ci in range(len(row)):
-            dr = _parse_date_br(str(row.iloc[ci]))
-            if dr:
-                data_ref = dr
-                # Preço = próxima célula numérica válida
-                for pi in range(ci + 1, len(row)):
-                    pv = str(row.iloc[pi]).strip().replace(",", ".")
-                    try:
-                        p = float(pv)
-                        if p > 0:
-                            preco = p
-                            break
-                    except: continue
-                break
-        if data_ref and preco:
-            rows.append({"data_ref": data_ref, "preco": preco})
-
+        if len(row) < 6: continue
+        dr = _parse_date_br(str(row.iloc[4]))
+        if not dr: continue
+        try:
+            p = float(str(row.iloc[5]).replace(",", "."))
+            if p > 0: rows.append({"data_ref": dr, "preco": p})
+        except: continue
     rows.sort(key=lambda r: r["data_ref"])
-    log.info(f"[ETANOL] '{label}': {len(rows)} registros válidos")
-    if rows:
-        log.info(f"[ETANOL] Período: {rows[0]['data_ref']} → {rows[-1]['data_ref']}")
-        log.info(f"[ETANOL] Amostra: {rows[:2]}")
+    log.info(f"[ETANOL] diário: {len(rows)} registros | {rows[0]['data_ref'] if rows else '—'} → {rows[-1]['data_ref'] if rows else '—'}")
     return rows
 
 
+# ── Parser da tabela MENSAL (tabela cruzada: mês x ano, desde 2002)
+def _parse_mensal(content):
+    """
+    Layout confirmado pelo diagnóstico:
+      row 9:  [..., 'Mês', '2011', '2012', '2013', ...]
+      row 10: [..., 'nan', 'A',    'B',    'C',    ...]   ← legenda, pular
+      row 11: [..., 'Janeiro', '1.1094', '1.159', '1.1446', ...]
+      ...
+    Col 3 = nome do mês, cols 4..N = valores por ano (anos em row 9).
+
+    Estratégia:
+      1. Localiza a linha de header que contém anos (4 dígitos)
+      2. Lê anos das colunas
+      3. Para cada linha de dado, converte "Janeiro" + ano → YYYY-MM-01
+      4. Usa o valor da coluna correspondente como preço
+    """
+    engine = "openpyxl" if content[:4] == b"PK\x03\x04" else "xlrd"
+    raw = pd.read_excel(io.BytesIO(content), engine=engine, header=None, dtype=str)
+
+    # Localiza linha de header (contém anos como 4 dígitos)
+    header_row = None
+    for i, row in raw.iterrows():
+        anos = []
+        for v in row:
+            try:
+                a = int(str(v).strip())
+                if 2000 <= a <= 2030:
+                    anos.append(a)
+            except: pass
+        if len(anos) >= 2:
+            header_row = i
+            break
+
+    if header_row is None:
+        log.warning("[ETANOL] mensal: header com anos não encontrado")
+        return []
+
+    # Monta mapa col_index → ano
+    header = raw.iloc[header_row]
+    col_ano = {}
+    for ci, v in enumerate(header):
+        try:
+            a = int(str(v).strip())
+            if 2000 <= a <= 2030:
+                col_ano[ci] = a
+        except: pass
+
+    log.info(f"[ETANOL] mensal: anos encontrados = {sorted(col_ano.values())}")
+
+    # Identifica coluna dos meses (coluna que contém "Janeiro" em alguma linha)
+    col_mes = None
+    for ci in range(len(raw.columns)):
+        for vi in range(header_row + 1, min(header_row + 15, len(raw))):
+            v = str(raw.iloc[vi, ci]).strip().lower()
+            if v in MESES_PT:
+                col_mes = ci
+                break
+        if col_mes is not None:
+            break
+
+    if col_mes is None:
+        log.warning("[ETANOL] mensal: coluna de meses não encontrada")
+        return []
+
+    log.info(f"[ETANOL] mensal: col_mes={col_mes}, col_anos={sorted(col_ano.keys())}")
+
+    rows = []
+    for ri in range(header_row + 1, len(raw)):
+        row = raw.iloc[ri]
+        mes_str = str(row.iloc[col_mes]).strip().lower()
+        mes_num = MESES_PT.get(mes_str)
+        if not mes_num:
+            continue  # linha de legenda ou rodapé
+        for ci, ano in col_ano.items():
+            try:
+                p = float(str(row.iloc[ci]).replace(",", "."))
+                if p <= 0: continue
+                # Usa dia 15 como referência para meses (convenção)
+                data_ref = f"{ano:04d}-{mes_num:02d}-15"
+                rows.append({"data_ref": data_ref, "preco": p})
+            except: continue
+
+    rows.sort(key=lambda r: r["data_ref"])
+    log.info(f"[ETANOL] mensal: {len(rows)} registros | {rows[0]['data_ref'] if rows else '—'} → {rows[-1]['data_ref'] if rows else '—'}")
+    return rows
+
+
+# ── Inserção no banco ─────────────────────────────────────────────────────────
 def _insert_rows(conn, rows, last, now_str):
     if last:
         rows = [r for r in rows if r["data_ref"] > last]
     if not rows:
-        log.info("[ETANOL] Nada novo.")
-        return 0
+        log.info("[ETANOL] Nada novo."); return 0
     inserted = 0
     for r in rows:
         conn.execute(
@@ -222,9 +287,48 @@ def _insert_rows(conn, rows, last, now_str):
     return inserted
 
 
-# ── SUMMARY ───────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# ETANOL — orquestração
+# ════════════════════════════════════════════════════════════════════════════════
+def fetch_etanol_cepea(conn, now_str):
+    carga = "--carga-historica" in sys.argv
+    last  = _last_date(conn, "etanol_cepea")
+    log.info(f"[ETANOL] Último no banco: {last or 'nenhum'}")
+    total = 0
+
+    # ── Carga histórica mensal (tabela cruzada desde ~2002) ───────────────────
+    if carga or last is None:
+        log.info("[ETANOL] Baixando histórico mensal (idTabela=1433)...")
+        c = _get_xls(UNICA_PARAMS_MENSAL, "mensal")
+        if c:
+            rows = _parse_mensal(c)
+            n = _insert_rows(conn, rows, None, now_str)
+            log.info(f"[ETANOL] Mensal: {n} inseridas.")
+            total += n
+            last = _last_date(conn, "etanol_cepea")
+
+    # ── Atualização diária (últimos ~20 dias úteis) ───────────────────────────
+    # O endpoint diário retorna sempre os últimos 20 dias da tabela 2405.
+    # Para garantir que pegamos dados recentes, não filtramos por data na URL.
+    log.info("[ETANOL] Baixando dados diários (idTabela=2405)...")
+    c = _get_xls(UNICA_PARAMS_DIARIO, "diário")
+    if c:
+        rows = _parse_diario(c)
+        n = _insert_rows(conn, rows, last, now_str)
+        log.info(f"[ETANOL] Diário: {n} inseridas.")
+        total += n
+    else:
+        log.error("[ETANOL] Falha nos dados diários.")
+
+    return total
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# SUMMARY + MAIN
+# ════════════════════════════════════════════════════════════════════════════════
 def _summary(conn):
     log.info("=" * 60)
+    log.info("RESUMO DO BANCO")
     for table, label, col, unit in [
         ("sugar_ny11",   "Açúcar NY11",           "preco_usdclb", "USDc/lb"),
         ("etanol_cepea", "Etanol Hidratado UNICA", "preco_brl_l",  "R$/l"),
@@ -236,8 +340,6 @@ def _summary(conn):
         log.info(f"  {label:28}: {n:6} | {dmin or '—'} → {dmax or '—'} | Último: {last[0] if last else '—'} = {ls}")
     log.info("=" * 60)
 
-
-# ── MAIN ──────────────────────────────────────────────────────────────────────
 def main():
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log.info("=" * 60)
