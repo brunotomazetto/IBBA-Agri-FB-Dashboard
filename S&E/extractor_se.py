@@ -23,7 +23,8 @@ FONTES
   ETANOL HIDRATADO → CEPEA/ESALQ via Playwright
                   O CEPEA bloqueia IPs de datacenter via WAF (Imperva).
                   Playwright abre um Chromium real que passa pela verificação.
-                  Baixa a planilha Excel do indicador Etanol Hidratado (338).
+                  Intercepta o response da planilha Excel diretamente na rede
+                  (sem depender de networkidle ou clique no botão).
                   Unidade : R$/litro (à vista, posto usina São Paulo)
                   Freq.   : diária (dias úteis)
 
@@ -78,11 +79,11 @@ HISTORY_START = "2010-01-01"
 
 # ── Config CEPEA ──────────────────────────────────────────────────────────────
 CEPEA_ETANOL_URL = "https://www.cepea.esalq.usp.br/br/indicador/etanol.aspx"
-# Seletor do botão de download da planilha Excel na página do CEPEA
-# (inspecionado via DevTools — link com texto "Excel" ou href widgetpastas)
-CEPEA_DOWNLOAD_SELECTOR = "a[href*='widgetpastas'][href*='338']"
-# Timeout máximo para o browser carregar a página (ms)
-PLAYWRIGHT_TIMEOUT = 60_000
+
+# Timeout de navegação: usa domcontentloaded (não espera scripts de terceiros)
+# O CEPEA tem trackers que nunca terminam → networkidle trava
+PLAYWRIGHT_NAV_TIMEOUT  = 90_000   # 90s para carregar o DOM
+PLAYWRIGHT_WAIT_TIMEOUT = 30_000   # 30s para encontrar elementos
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -257,11 +258,19 @@ def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
 # ════════════════════════════════════════════════════════════════════════════════
 def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
     """
-    Usa Playwright (Chromium headless) para:
-      1. Abrir a página do indicador Etanol no CEPEA
-      2. Aguardar o carregamento completo (passa pelo WAF)
-      3. Interceptar o download da planilha Excel
-      4. Parsear o Excel e inserir no banco
+    Estratégia principal: interceptar o response da planilha Excel
+    diretamente na camada de rede do browser (page.route / response).
+    Isso é mais robusto que clicar no botão: captura o arquivo assim que
+    o browser o recebe, sem depender de eventos de UI.
+
+    Fluxo:
+      1. Abre Chromium com interceptação de rede ativada
+      2. Navega para a página com wait_until='domcontentloaded'
+         (evita travar em networkidle por causa de trackers do CEPEA)
+      3. Aguarda o DOM carregar e procura o link de download
+      4. Clica no link — o handler de interceptação captura o bytes do Excel
+      5. Fallback: se o clique não funcionar, usa os cookies do browser
+         para baixar diretamente via requests
     """
     log.info("[ETANOL] Iniciando Playwright (Chromium headless)...")
 
@@ -269,7 +278,6 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
     log.info(f"[ETANOL] Último registro no banco: {last or 'nenhum'}")
 
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
     xls_content: bytes | None = None
 
     try:
@@ -284,7 +292,6 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
                 ],
             )
 
-            # Contexto com locale pt-BR e download habilitado
             context = browser.new_context(
                 locale="pt-BR",
                 accept_downloads=True,
@@ -295,63 +302,97 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
                     "Chrome/123.0.0.0 Safari/537.36"
                 ),
             )
-
             page = context.new_page()
 
-            # ── Abre a página do CEPEA ─────────────────────────────────────
+            # ── Intercepta responses de Excel na rede ─────────────────────
+            # Captura qualquer response com conteúdo Excel antes mesmo do
+            # clique do usuário — útil se a página carregar o arquivo auto.
+            intercepted: list[bytes] = []
+
+            def _on_response(response):
+                ct = response.headers.get("content-type", "")
+                url = response.url
+                if (
+                    "spreadsheet" in ct
+                    or "excel" in ct
+                    or "octet-stream" in ct
+                    or "widgetpastas" in url
+                ):
+                    try:
+                        body = response.body()
+                        if len(body) > 5000:  # Excel mínimo razoável
+                            log.info(
+                                f"[ETANOL] Excel interceptado via rede: "
+                                f"{url[:80]} ({len(body):,} bytes)"
+                            )
+                            intercepted.append(body)
+                    except Exception:
+                        pass
+
+            page.on("response", _on_response)
+
+            # ── Navega com domcontentloaded (não trava em trackers) ────────
             log.info(f"[ETANOL] Navegando para {CEPEA_ETANOL_URL}")
-            page.goto(CEPEA_ETANOL_URL, wait_until="networkidle", timeout=PLAYWRIGHT_TIMEOUT)
-            log.info("[ETANOL] Página carregada.")
-
-            # Pequena pausa humana
-            time.sleep(3)
-
-            # ── Localiza o link de download do Excel ──────────────────────
-            # Tenta pelo seletor CSS direto; se não achar, busca por texto
-            download_link = None
             try:
-                download_link = page.locator(CEPEA_DOWNLOAD_SELECTOR).first
-                download_link.wait_for(timeout=10_000)
-                log.info("[ETANOL] Link de download encontrado via seletor CSS.")
-            except Exception:
-                log.info("[ETANOL] Seletor CSS não encontrou — tentando por texto 'Excel'...")
-                try:
-                    download_link = page.get_by_text("Excel", exact=False).first
-                    download_link.wait_for(timeout=10_000)
-                    log.info("[ETANOL] Link de download encontrado via texto 'Excel'.")
-                except Exception:
-                    # Último recurso: pega todos os links e filtra por widgetpastas
-                    log.info("[ETANOL] Buscando links href com 'widgetpastas'...")
-                    hrefs = page.eval_on_selector_all(
-                        "a[href]",
-                        "els => els.map(e => e.href)"
-                    )
-                    xls_hrefs = [h for h in hrefs if "widgetpastas" in h or "indicador" in h]
-                    log.info(f"[ETANOL] Links encontrados: {xls_hrefs}")
-                    if xls_hrefs:
-                        # Usa requests com os cookies do Playwright para baixar
-                        cookies = context.cookies()
-                        xls_content = _download_with_playwright_cookies(
-                            xls_hrefs[0], cookies, CEPEA_ETANOL_URL
-                        )
+                page.goto(
+                    CEPEA_ETANOL_URL,
+                    wait_until="domcontentloaded",   # ← chave da correção
+                    timeout=PLAYWRIGHT_NAV_TIMEOUT,
+                )
+                log.info("[ETANOL] DOM carregado.")
+            except PlaywrightTimeout:
+                log.warning("[ETANOL] Timeout no goto — tentando continuar mesmo assim...")
 
-            # ── Faz o download clicando no link ───────────────────────────
-            if download_link is not None and xls_content is None:
-                log.info("[ETANOL] Clicando no link de download...")
-                with page.expect_download(timeout=PLAYWRIGHT_TIMEOUT) as dl_info:
-                    download_link.click()
-                download = dl_info.value
-                dl_path  = DOWNLOAD_DIR / download.suggested_filename
-                download.save_as(dl_path)
-                log.info(f"[ETANOL] Arquivo baixado: {dl_path} ({dl_path.stat().st_size:,} bytes)")
-                xls_content = dl_path.read_bytes()
+            # Aguarda um pouco para scripts da página rodarem
+            time.sleep(5)
+
+            # ── Verifica se já interceptou algo ───────────────────────────
+            if intercepted:
+                xls_content = intercepted[-1]
+                log.info("[ETANOL] Excel capturado por interceptação automática.")
+
+            # ── Tenta clicar no link de download ──────────────────────────
+            if not xls_content:
+                log.info("[ETANOL] Procurando link de download na página...")
+
+                # Coleta todos os hrefs da página para debug
+                all_hrefs = page.eval_on_selector_all(
+                    "a[href]", "els => els.map(e => ({text: e.innerText.trim(), href: e.href}))"
+                )
+                xls_links = [
+                    h for h in all_hrefs
+                    if any(k in h.get("href", "").lower() for k in ["widgetpastas", "indicador", ".xls"])
+                ]
+                log.info(f"[ETANOL] Links candidatos: {xls_links[:5]}")
+
+                if xls_links:
+                    target_url = xls_links[0]["href"]
+                    log.info(f"[ETANOL] Baixando diretamente: {target_url}")
+                    # Usa cookies do Playwright para requisição direta
+                    cookies = context.cookies()
+                    xls_content = _download_with_cookies(target_url, cookies, CEPEA_ETANOL_URL)
+
+                    if not xls_content:
+                        # Tenta clicar via Playwright
+                        log.info("[ETANOL] Tentando clique via Playwright...")
+                        try:
+                            with page.expect_download(timeout=PLAYWRIGHT_WAIT_TIMEOUT) as dl_info:
+                                page.click(f"a[href='{xls_links[0]['href']}']", timeout=10_000)
+                            dl      = dl_info.value
+                            dl_path = DOWNLOAD_DIR / dl.suggested_filename
+                            dl.save_as(dl_path)
+                            xls_content = dl_path.read_bytes()
+                            log.info(f"[ETANOL] Download via clique: {dl_path.name} ({len(xls_content):,} bytes)")
+                        except Exception as exc:
+                            log.warning(f"[ETANOL] Clique falhou: {exc}")
+
+            # Verifica interceptações tardias (após clique)
+            if not xls_content and intercepted:
+                xls_content = intercepted[-1]
 
             context.close()
             browser.close()
 
-    except PlaywrightTimeout as exc:
-        log.error(f"[ETANOL] Timeout do Playwright: {exc}")
-        return 0
     except Exception as exc:
         log.error(f"[ETANOL] Erro no Playwright: {exc}")
         return 0
@@ -360,37 +401,35 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
         log.error("[ETANOL] Nenhum conteúdo Excel obtido.")
         return 0
 
-    # ── Parse do Excel ────────────────────────────────────────────────────────
-    log.info(f"[ETANOL] Parseando Excel ({len(xls_content):,} bytes)...")
-    try:
-        rows = _parse_cepea_excel(xls_content)
-    except Exception as exc:
-        log.error(f"[ETANOL] Falha ao parsear Excel: {exc}")
+    # Valida magic bytes
+    is_xlsx = xls_content[:4] == b"PK\x03\x04"
+    is_xls  = xls_content[:4] == b"\xd0\xcf\x11\xe0"
+    if not (is_xlsx or is_xls):
+        log.error(f"[ETANOL] Conteúdo não é Excel. Primeiros bytes: {xls_content[:20]}")
         debug = Path(__file__).parent / "debug_cepea.bin"
         debug.write_bytes(xls_content)
         log.info(f"[ETANOL] Salvo para debug: {debug}")
+        return 0
+
+    log.info(f"[ETANOL] Parseando Excel ({len(xls_content):,} bytes)...")
+    try:
+        rows = _parse_cepea_excel(xls_content, is_xlsx)
+    except Exception as exc:
+        log.error(f"[ETANOL] Falha ao parsear Excel: {exc}")
         return 0
 
     if not rows:
         log.warning("[ETANOL] Planilha vazia ou não reconhecida.")
         return 0
 
-    log.info(f"[ETANOL] {len(rows)} linhas lidas da planilha.")
+    log.info(f"[ETANOL] {len(rows)} linhas lidas.")
     inserted = _insert_etanol_rows(conn, rows, last, now_str)
     log.info(f"[ETANOL] {inserted} novas linhas inseridas.")
     return inserted
 
 
-def _download_with_playwright_cookies(
-    url: str,
-    pw_cookies: list[dict],
-    referer: str,
-) -> bytes | None:
-    """
-    Usa requests com os cookies capturados pelo Playwright para baixar
-    diretamente uma URL que requer sessão autenticada.
-    """
-    log.info(f"[ETANOL] Baixando via cookies Playwright: {url}")
+def _download_with_cookies(url: str, pw_cookies: list[dict], referer: str) -> bytes | None:
+    """Baixa uma URL usando os cookies capturados pelo Playwright."""
     session = requests.Session()
     for ck in pw_cookies:
         session.cookies.set(ck["name"], ck["value"], domain=ck.get("domain", ""))
@@ -406,23 +445,19 @@ def _download_with_playwright_cookies(
     try:
         resp = session.get(url, timeout=60)
         resp.raise_for_status()
-        if len(resp.content) > 1000:  # mínimo razoável para um Excel
+        if len(resp.content) > 5000:
             return resp.content
-        log.warning(f"[ETANOL] Resposta muito pequena ({len(resp.content)} bytes), ignorando.")
+        log.warning(f"[ETANOL] Resposta muito pequena ({len(resp.content)} bytes).")
     except Exception as exc:
-        log.warning(f"[ETANOL] Download via cookies falhou: {exc}")
+        log.warning(f"[ETANOL] Download com cookies falhou: {exc}")
     return None
 
 
-# ── Parser do Excel ───────────────────────────────────────────────────────────
-def _parse_cepea_excel(content: bytes) -> list[dict]:
+def _parse_cepea_excel(content: bytes, is_xlsx: bool) -> list[dict]:
     """Lê planilha CEPEA e retorna lista de {'data_ref': str, 'preco': float}."""
-    is_xlsx = content[:4] == b"PK\x03\x04"
-    engine  = "openpyxl" if is_xlsx else "xlrd"
-    buf     = io.BytesIO(content)
-
-    # Lê sem header para localizar linha de cabeçalho real
-    raw = pd.read_excel(buf, engine=engine, header=None, dtype=str)
+    engine = "openpyxl" if is_xlsx else "xlrd"
+    buf    = io.BytesIO(content)
+    raw    = pd.read_excel(buf, engine=engine, header=None, dtype=str)
 
     header_row = 0
     for i, row in raw.iterrows():
