@@ -2,33 +2,14 @@ name: S&E Daily Extractor
 
 on:
   schedule:
-    # Roda todo dia útil às 22:00 UTC (19:00 BRT / após fechamento NY)
     - cron: "0 22 * * 1-5"
-
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Dry run (não commita o banco)"
-        required: false
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
-      carga_historica:
-        description: "Forçar carga histórica mensal UNICA (apenas 1ª vez)"
-        required: false
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
 
 jobs:
   extract:
-    name: Coleta S&E (NY11 + Etanol UNICA)
+    name: Coleta S&E (NY11 + Etanol CEPEA)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     permissions:
       contents: write
@@ -45,19 +26,26 @@ jobs:
           python-version: "3.11"
 
       - name: Instalar dependências
-        run: pip install requests pandas openpyxl xlrd yfinance
+        run: pip install requests pandas openpyxl xlrd yfinance playwright
+
+      - name: Instalar Chromium (Playwright)
+        run: playwright install chromium --with-deps
 
       - name: Executar extractor_se.py
         run: |
           cd "S&E"
-          if [ "${{ github.event.inputs.carga_historica }}" = "true" ]; then
-            python extractor_se.py --carga-historica
-          else
-            python extractor_se.py
-          fi
+          python extractor_se.py
+
+      - name: Upload screenshot de debug (se existir)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cepea-debug-${{ github.run_id }}
+          path: S&E/_downloads/
+          retention-days: 3
+          if-no-files-found: ignore
 
       - name: Commit commodities.db
-        if: ${{ github.event.inputs.dry_run != 'true' }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
