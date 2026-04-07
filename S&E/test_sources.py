@@ -1,105 +1,59 @@
 #!/usr/bin/env python3
-"""test_sources.py v5 — Verifica preços reais nas tabelas 2026"""
-import io, requests, logging
-import pandas as pd
-
+"""test_sources.py v6 — Testa BCB SGS série 28045 (etanol hidratado CEPEA)"""
+import requests, logging
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 log = logging.getLogger(__name__)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36",
-    "Referer": "https://unicadata.com.br/preco-ao-produtor.php?idMn=42",
+# BCB SGS — séries de etanol hidratado
+# 28045 = Etanol hidratado — preço ao produtor SP (CEPEA) — R$/litro — diário
+# 1399  = Etanol hidratado — preço ao consumidor SP (ANP) — R$/litro — semanal
+SERIES = {
+    28045: "Etanol hidratado produtor SP - CEPEA (R$/l) diário",
+    1399:  "Etanol hidratado consumidor SP - ANP (R$/l) semanal",
+    28052: "Etanol hidratado produtor GO - CEPEA (R$/l) diário",
+    28046: "Etanol hidratado produtor AL - CEPEA (R$/l) diário",
+    28050: "Etanol anidro produtor SP - CEPEA (R$/l) diário",
 }
 
-# Todos os estados possíveis para o etanol hidratado
-ESTADOS = ["Paulinia", "S%C3%A3o+Paulo", "Goias", "Goi%C3%A1s", ""]
+BCB_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{cod}/dados?formato=json&dataInicial=01/01/2024&dataFinal=07/04/2026"
 
-# idTabelas que mostraram 2026 no diagnóstico
-IDS_2026 = [2400, 2401, 2402, 2403, 2404, 2406, 2407, 2408, 2409, 2410,
-            2480, 2485, 2490, 2500, 2510, 2520, 3000, 3100, 3200]
-
-def get_precos(content):
-    """Retorna lista de (data, preco) onde preco > 0"""
-    try:
-        engine = "openpyxl" if content[:4] == b"PK\x03\x04" else "xlrd"
-        raw = pd.read_excel(io.BytesIO(content), engine=engine, header=None, dtype=str)
-        results = []
-        for _, row in raw.iterrows():
-            for ci in range(len(row)):
-                v = str(row.iloc[ci]).strip()
-                # Procura data DD/MM/YYYY
-                import re
-                if re.match(r'\d{2}/\d{2}/20\d{2}', v):
-                    # Preço na próxima coluna
-                    for pi in range(ci+1, min(ci+4, len(row))):
-                        pv = str(row.iloc[pi]).strip().replace(",",".")
-                        try:
-                            p = float(pv)
-                            if p > 0:
-                                results.append((v, p))
-                                break
-                        except: continue
-                    break
-        return results
-    except:
-        return []
-
-log.info("Testando idTabelas com dados de 2026 — buscando preço > 0")
+log.info("="*70)
+log.info("TESTE BCB SGS — Séries de Etanol")
 log.info("="*70)
 
-# Testa cada idTabela com Paulinia (estado padrão do diário de etanol)
-for tid in IDS_2026:
-    url = (f"https://unicadata.com.br/xlsPrcProd.php"
-           f"?idioma=1&tipoHistorico=7&idTabela={tid}"
-           f"&estado=Paulinia&produto=Etanol+hidratado+combust%C3%ADvel&frequencia=Di%C3%A1rio")
+for cod, desc in SERIES.items():
+    url = BCB_URL.format(cod=cod)
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        if r.status_code == 200 and r.content[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0"):
-            precos = get_precos(r.content)
-            precos_nz = [(d,p) for d,p in precos if p > 0]
-            if precos_nz:
-                log.info(f"✅ idTabela={tid}: PREÇO REAL! {precos_nz[:3]}")
-            else:
-                log.info(f"❌ idTabela={tid}: sem preço ({len(precos)} datas, tudo zero)")
+        r = requests.get(url, timeout=20)
+        log.info(f"\n[{r.status_code}] Série {cod}: {desc}")
+        log.info(f"  URL: {url[:80]}")
+        if r.status_code == 200:
+            data = r.json()
+            log.info(f"  Registros: {len(data)}")
+            if data:
+                log.info(f"  Primeiro: {data[0]}")
+                log.info(f"  Último  : {data[-1]}")
+                log.info(f"  Amostra : {data[-3:]}")
         else:
-            log.info(f"❌ idTabela={tid}: status={r.status_code}")
+            log.warning(f"  Erro: {r.text[:200]}")
     except Exception as e:
-        log.warning(f"⚠️  idTabela={tid}: {e}")
+        log.error(f"  Exceção: {e}")
 
-log.info("")
-log.info("Testando 2406 com diferentes estados (tem tamanho diferente=48,339)")
-for estado in ESTADOS:
-    url = (f"https://unicadata.com.br/xlsPrcProd.php"
-           f"?idioma=1&tipoHistorico=7&idTabela=2406"
-           f"&estado={estado}&produto=Etanol+hidratado+combust%C3%ADvel&frequencia=Di%C3%A1rio")
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        if r.status_code == 200 and r.content[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0"):
-            precos = get_precos(r.content)
-            precos_nz = [(d,p) for d,p in precos if p > 0]
-            log.info(f"  estado='{estado}': {len(r.content):,}b | preços={precos_nz[:3]}")
-    except Exception as e:
-        log.warning(f"  estado='{estado}': {e}")
-
-log.info("")
-log.info("Testando produto=Etanol+anidro e outros produtos no idTabela=2400")
-produtos = [
-    "Etanol+hidratado+combust%C3%ADvel",
-    "Etanol+anidro+combust%C3%ADvel",
-    "Etanol+hidratado+outros+fins",
-]
-for prod in produtos:
-    url = (f"https://unicadata.com.br/xlsPrcProd.php"
-           f"?idioma=1&tipoHistorico=7&idTabela=2400"
-           f"&estado=Paulinia&produto={prod}&frequencia=Di%C3%A1rio")
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        if r.status_code == 200 and r.content[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0"):
-            precos = get_precos(r.content)
-            precos_nz = [(d,p) for d,p in precos if p > 0]
-            log.info(f"  produto={prod[:30]}: preços={precos_nz[:3]}")
-    except Exception as e:
-        log.warning(f"  produto={prod[:30]}: {e}")
+log.info("\n" + "="*70)
+log.info("Teste histórico completo — série 28045 desde 2010")
+log.info("="*70)
+try:
+    url = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.28045/dados?formato=json&dataInicial=01/01/2010&dataFinal=07/04/2026"
+    r = requests.get(url, timeout=30)
+    if r.status_code == 200:
+        data = r.json()
+        log.info(f"Total registros: {len(data)}")
+        log.info(f"Primeiro: {data[0] if data else '—'}")
+        log.info(f"Último  : {data[-1] if data else '—'}")
+    else:
+        log.warning(f"Status {r.status_code}: {r.text[:200]}")
+except Exception as e:
+    log.error(f"Erro: {e}")
 
 log.info("="*70)
