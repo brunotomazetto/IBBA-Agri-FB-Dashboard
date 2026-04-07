@@ -1,93 +1,110 @@
 #!/usr/bin/env python3
 """
-test_sources.py — Testa a URL /series/etanol.aspx?id=103 com Playwright
-Captura todos os requests de rede para achar a API de dados por baixo
+test_sources.py — Testa undetected-chromedriver no CEPEA
 """
-import time, logging
-from playwright.sync_api import sync_playwright
+import time, logging, os
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 log = logging.getLogger(__name__)
 
-TARGET = "https://cepea.esalq.usp.br/br/indicador/series/etanol.aspx?id=103"
+DOWNLOAD_DIR = Path("/tmp/cepea_downloads")
+DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-with sync_playwright() as pw:
-    browser = pw.chromium.launch(
-        headless=True,
-        args=["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu"],
-    )
-    context = browser.new_context(
-        locale="pt-BR",
-        viewport={"width": 1280, "height": 800},
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    )
-    page = context.new_page()
+TARGET = "https://cepea.esalq.usp.br/br/indicador/etanol.aspx"
 
-    # Loga TODOS os requests e responses
-    all_requests  = []
-    all_responses = []
+try:
+    import undetected_chromedriver as uc
+except ImportError:
+    raise SystemExit("pip install undetected-chromedriver")
 
-    def on_request(req):
-        all_requests.append({"url": req.url, "method": req.method})
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-    def on_response(resp):
-        ct  = resp.headers.get("content-type","")
-        all_responses.append({"url": resp.url, "status": resp.status, "ct": ct})
-        # Captura responses JSON ou Excel
-        if any(k in ct for k in ["json","excel","spreadsheet","octet"]):
-            try:
-                body = resp.body()
-                log.info(f"🎯 DADOS [{resp.status}] {resp.url[:100]}")
-                log.info(f"   CT={ct} | {len(body):,} bytes")
-                if "json" in ct:
-                    log.info(f"   JSON snippet: {resp.text()[:300]}")
-            except: pass
+log.info("Iniciando undetected Chrome...")
 
-    page.on("request",  on_request)
-    page.on("response", on_response)
+options = uc.ChromeOptions()
+
+# Configura download automático para a pasta
+prefs = {
+    "download.default_directory": str(DOWNLOAD_DIR),
+    "download.prompt_for_download": False,
+    "download.directory_upgrade": True,
+    "safebrowsing.enabled": True,
+}
+options.add_experimental_option("prefs", prefs)
+
+# Argumentos para ambiente CI (sem GPU, sem sandbox)
+options.add_argument("--no-sandbox")
+options.add_argument("--disable-dev-shm-usage")
+options.add_argument("--disable-gpu")
+options.add_argument("--window-size=1280,800")
+options.add_argument("--lang=pt-BR")
+
+# NÃO headless — roda com display virtual via Xvfb no workflow
+# options.add_argument("--headless")  # comentado propositalmente
+
+try:
+    driver = uc.Chrome(options=options, version_main=None)
+    log.info("Chrome iniciado com sucesso.")
 
     log.info(f"Navegando para {TARGET}")
-    try:
-        page.goto(TARGET, wait_until="domcontentloaded", timeout=60_000)
-        log.info("DOM carregado.")
-    except Exception as e:
-        log.warning(f"goto timeout: {e}")
+    driver.get(TARGET)
 
-    log.info("Aguardando 30s (Turnstile + carregamento de dados)...")
+    log.info("Aguardando 30s para Turnstile resolver...")
     time.sleep(30)
 
-    # Screenshot
-    page.screenshot(path="/tmp/series_screenshot.png", full_page=True)
-    log.info("Screenshot salvo.")
+    # Screenshot do estado atual
+    driver.save_screenshot("/tmp/uc_screenshot_1.png")
+    log.info(f"Screenshot 1 salvo. Title: '{driver.title}'")
+    log.info(f"URL atual: {driver.current_url}")
 
-    # HTML da página
-    html = page.content()
-    with open("/tmp/series_page.html","w") as f:
-        f.write(html)
-    log.info(f"HTML: {len(html):,} chars")
+    # Verifica se passou do Cloudflare
+    page_source = driver.page_source
+    has_cf     = "cloudflare" in page_source.lower() and "confirme" in page_source.lower()
+    has_cepea  = "etanol" in page_source.lower() and "cepea" in page_source.lower() and not has_cf
+    log.info(f"Cloudflare challenge ativo: {has_cf}")
+    log.info(f"Página CEPEA carregada:     {has_cepea}")
 
-    # Links na página
-    links = page.eval_on_selector_all("a[href]", "els => els.map(e => ({text: e.innerText.trim().slice(0,50), href: e.href}))")
-    non_cf = [l for l in links if "cloudflare" not in l["href"]]
-    log.info(f"Links não-Cloudflare: {len(non_cf)}")
-    for l in non_cf[:10]:
-        log.info(f"  {l['text']!r} → {l['href'][:100]}")
+    if has_cepea:
+        log.info("✅ Passou pelo Cloudflare! Procurando link de download...")
+        # Procura o link de download do Excel
+        try:
+            links = driver.find_elements(By.CSS_SELECTOR, "a[href*='widgetpastas'], a[href*='.xls']")
+            log.info(f"Links de download encontrados: {len(links)}")
+            for l in links[:5]:
+                log.info(f"  {l.text!r} → {l.get_attribute('href')}")
 
-    # Requests feitos
-    log.info(f"\nTotal requests: {len(all_requests)}")
-    non_cf_req = [r for r in all_requests if "cloudflare" not in r["url"] and "cdn-cgi" not in r["url"]]
-    log.info(f"Requests não-Cloudflare: {len(non_cf_req)}")
-    for r in non_cf_req:
-        log.info(f"  [{r['method']}] {r['url'][:120]}")
+            if links:
+                log.info(f"Clicando no download: {links[0].get_attribute('href')}")
+                links[0].click()
+                time.sleep(10)  # aguarda download
 
-    # Responses com dados
-    log.info(f"\nResponses com dados (JSON/Excel):")
-    data_resp = [r for r in all_responses if any(k in r["ct"] for k in ["json","excel","spreadsheet","octet"])]
-    for r in data_resp:
-        log.info(f"  [{r['status']}] {r['url'][:120]} | {r['ct'][:60]}")
+                # Verifica arquivos baixados
+                files = list(DOWNLOAD_DIR.iterdir())
+                log.info(f"Arquivos em {DOWNLOAD_DIR}: {[f.name for f in files]}")
+        except Exception as e:
+            log.error(f"Erro ao buscar download: {e}")
+    else:
+        log.warning("❌ Ainda no Cloudflare challenge após 30s")
+        # Tenta mais 30s
+        log.info("Aguardando mais 30s...")
+        time.sleep(30)
+        driver.save_screenshot("/tmp/uc_screenshot_2.png")
+        log.info(f"Screenshot 2. Title: '{driver.title}'")
+        page_source = driver.page_source
+        has_cf2 = "confirme" in page_source.lower()
+        log.info(f"Cloudflare ainda ativo: {has_cf2}")
 
-    context.close()
-    browser.close()
+except Exception as e:
+    log.error(f"Erro: {e}")
+    import traceback
+    traceback.print_exc()
+finally:
+    try:
+        driver.quit()
+    except: pass
 
 log.info("FIM")
