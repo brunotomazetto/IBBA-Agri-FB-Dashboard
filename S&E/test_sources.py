@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-test_sources.py — Testa MAPA/SIMBIOSE e UDOP para preço semanal etanol
-"""
+"""test_sources.py — Navega pelo menu UDOP para achar preço etanol hidratado ao produtor"""
 import time, logging, re
 from pathlib import Path
 
@@ -12,77 +10,63 @@ log = logging.getLogger(__name__)
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 
-def make_driver():
-    options = uc.ChromeOptions()
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1280,900")
-    options.add_argument("--lang=pt-BR")
-    return uc.Chrome(options=options, version_main=None)
+options = uc.ChromeOptions()
+options.add_argument("--no-sandbox")
+options.add_argument("--disable-dev-shm-usage")
+options.add_argument("--disable-gpu")
+options.add_argument("--window-size=1280,900")
+options.add_argument("--lang=pt-BR")
+driver = uc.Chrome(options=options, version_main=None)
 
-def check_page(driver, url, label, wait=8):
-    log.info(f"\n[{label}] {url}")
-    driver.get(url)
-    time.sleep(wait)
-    title = driver.title
-    cf    = "just a moment" in title.lower()
-    log.info(f"  Title: '{title}' | CF: {cf}")
-    driver.save_screenshot(f"/tmp/{label}.png")
-    if not cf:
-        page = driver.page_source
-        # Procura padrões de preço R$/l ou R$/m³
-        precos = re.findall(r'\d+[.,]\d{2,4}', page)
-        # Procura datas recentes
-        datas  = re.findall(r'\d{2}/\d{2}/202[456]', page)
-        log.info(f"  Datas recentes: {list(set(datas))[:8]}")
-        log.info(f"  Valores numéricos amostra: {precos[:10]}")
-        # Links de download
-        links = driver.find_elements(By.CSS_SELECTOR,
-            "a[href*='.xls'], a[href*='.xlsx'], a[href*='.csv'], a[href*='download'], a[href*='api']")
-        log.info(f"  Links download/API: {len(links)}")
-        for l in links[:5]:
-            log.info(f"    '{l.text.strip()[:40]}' → {l.get_attribute('href')[:100]}")
-        return True
-    return False
-
-log.info("="*70)
-
-# ── MAPA / SIMBIOSE ────────────────────────────────────────────────────────────
-log.info("TESTE — MAPA / SIMBIOSE (Ministério da Agricultura)")
-log.info("="*70)
-
-driver = make_driver()
 try:
-    # Portal de biocombustíveis do MAPA
-    urls_mapa = [
-        ("mapa_0", "https://indicadores.agricultura.gov.br/agrostat/index.htm"),
-        ("mapa_1", "https://www.gov.br/agricultura/pt-br/assuntos/sustentabilidade/agroenergia/dados-do-setor"),
-        ("mapa_2", "https://sistemas.agricultura.gov.br/simco/biocombustiveis"),
-    ]
-    for label, url in urls_mapa:
-        check_page(driver, url, label)
-        time.sleep(2)
+    # Abre a home do UDOP e coleta todos os links do menu
+    log.info("Abrindo UDOP home...")
+    driver.get("https://www.udop.com.br")
+    time.sleep(8)
+    driver.save_screenshot("/tmp/udop_home.png")
+
+    # Coleta TODOS os links da página
+    all_links = driver.find_elements(By.TAG_NAME, "a")
+    log.info(f"Total links na home: {len(all_links)}")
+
+    # Filtra links relevantes para etanol/preço/mercado
+    keywords = ["etanol", "preço", "preco", "mercado", "hidratado", "produtor", "usina", "cotação"]
+    relevant = []
+    for l in all_links:
+        href = (l.get_attribute("href") or "").lower()
+        txt  = l.text.strip().lower()
+        if any(k in href or k in txt for k in keywords):
+            relevant.append((l.text.strip()[:50], l.get_attribute("href") or ""))
+
+    log.info(f"\nLinks relevantes ({len(relevant)}):")
+    for txt, href in relevant[:30]:
+        log.info(f"  '{txt}' → {href[:100]}")
+
+    # Testa as URLs mais promissoras
+    log.info("\n--- Testando URLs UDOP candidatas ---")
+    candidates = [h for _, h in relevant if h and "udop.com.br" in h]
+    candidates = list(dict.fromkeys(candidates))  # dedup
+
+    for url in candidates[:10]:
+        log.info(f"\nTestando: {url}")
+        driver.get(url)
+        time.sleep(6)
+        title = driver.title
+        page  = driver.page_source
+
+        # Procura preços de etanol (R$/l ou R$/m³)
+        datas  = re.findall(r'\d{2}/\d{2}/202[456]', page)
+        # Valores entre 1.5 e 5.0 (R$/litro) ou 1500-5000 (R$/m³)
+        precos_l  = re.findall(r'[23][,\.]\d{3,4}', page)  # ~R$2-3/l
+        precos_m3 = re.findall(r'[23]\d{3}[,\.]\d{2}', page)  # ~R$2000-3000/m³
+
+        log.info(f"  Title: '{title[:60]}'")
+        log.info(f"  Datas 2024-2026: {list(set(datas))[:5]}")
+        log.info(f"  Preços ~R$/l: {list(set(precos_l))[:8]}")
+        log.info(f"  Preços ~R$/m³: {list(set(precos_m3))[:5]}")
+        driver.save_screenshot(f"/tmp/udop_cand_{candidates.index(url)}.png")
+
 finally:
     driver.quit()
 
-# ── UDOP ──────────────────────────────────────────────────────────────────────
-log.info("\n" + "="*70)
-log.info("TESTE — UDOP (dados etanol hidratado ao produtor)")
-log.info("="*70)
-
-driver2 = make_driver()
-try:
-    urls_udop = [
-        ("udop_0", "https://www.udop.com.br/index.php/cana/item/etanol"),
-        ("udop_1", "https://www.udop.com.br/index.php/etanol/preco-etanol-hidratado"),
-        ("udop_2", "https://www.udop.com.br/index.php/cana/tabela_consecana_saopaulo"),
-    ]
-    for label, url in urls_udop:
-        check_page(driver2, url, label, wait=10)
-        time.sleep(2)
-finally:
-    driver2.quit()
-
-log.info("\n" + "="*70)
 log.info("FIM")
