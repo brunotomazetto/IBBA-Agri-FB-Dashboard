@@ -8,8 +8,7 @@ Fluxo:
   1. Coleta histórico de preço spot de Açúcar NY11 (USDc/lb)
      → Fonte: Yahoo Finance (SB=F — Sugar No. 11 front-month continuous)
   2. Coleta histórico de preço de Etanol Hidratado Carburante
-     → Fonte: CEPEA/ESALQ — API JSON interna (sem bloqueio de datacenter)
-              Fallback: download da planilha Excel oficial
+     → Fonte: CEPEA/ESALQ via Playwright (browser real — passa pelo WAF)
   3. Salva tudo em commodities.db (SQLite) dentro da pasta S&E
 
 ═══════════════════════════════════════════════════════════════
@@ -21,24 +20,23 @@ FONTES
                   Campo   : Close (USDc/lb)
                   Freq.   : diária (dias úteis)
 
-  ETANOL HIDRATADO → CEPEA/ESALQ
-                  Método 1: API JSON  esalqlog.esalq.usp.br  (preferido)
-                  Método 2: API JSON  cepea.esalq.usp.br/api  (fallback)
-                  Método 3: planilha Excel widgetpastas       (último recurso)
+  ETANOL HIDRATADO → CEPEA/ESALQ via Playwright
+                  O CEPEA bloqueia IPs de datacenter via WAF (Imperva).
+                  Playwright abre um Chromium real que passa pela verificação.
+                  Baixa a planilha Excel do indicador Etanol Hidratado (338).
                   Unidade : R$/litro (à vista, posto usina São Paulo)
                   Freq.   : diária (dias úteis)
 
 ═══════════════════════════════════════════════════════════════
-ESTRUTURA DO BANCO (commodities.db)
+DEPENDÊNCIAS
 ═══════════════════════════════════════════════════════════════
 
-  sugar_ny11   : preços diários NY11 (USDc/lb)
-  etanol_cepea : preços diários etanol hidratado CEPEA (R$/l)
+  pip install requests pandas openpyxl xlrd yfinance playwright
+  playwright install chromium
 
 """
 
 import io
-import json
 import logging
 import sqlite3
 import time
@@ -50,12 +48,17 @@ import requests
 try:
     import pandas as pd
 except ImportError:
-    raise SystemExit("pandas não instalado. Execute: pip install pandas openpyxl xlrd yfinance")
+    raise SystemExit("Execute: pip install pandas openpyxl xlrd yfinance playwright")
 
 try:
     import yfinance as yf
 except ImportError:
-    raise SystemExit("yfinance não instalado. Execute: pip install yfinance")
+    raise SystemExit("Execute: pip install yfinance")
+
+try:
+    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+except ImportError:
+    raise SystemExit("Execute: pip install playwright && playwright install chromium")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -66,27 +69,20 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── Caminhos ──────────────────────────────────────────────────────────────────
-DB_PATH = Path(__file__).parent / "commodities.db"
+DB_PATH      = Path(__file__).parent / "commodities.db"
+DOWNLOAD_DIR = Path(__file__).parent / "_cepea_downloads"
 
 # ── Config NY11 ───────────────────────────────────────────────────────────────
 YF_TICKER     = "SB=F"
 HISTORY_START = "2010-01-01"
 
 # ── Config CEPEA ──────────────────────────────────────────────────────────────
-# Método 1 — API JSON interna usada pelo próprio widget do site CEPEA
-# Retorna série completa em JSON sem autenticação
-CEPEA_JSON_URL_1 = (
-    "https://esalqlog.esalq.usp.br/RecebeIndicadorCepea"
-    "?indicador_id=338&produto_id=17"
-)
-# Método 2 — endpoint alternativo documentado em projetos open-source que
-# consultam o CEPEA (ex: pycepea, agrotools)
-CEPEA_JSON_URL_2 = (
-    "https://www.cepea.esalq.usp.br/br/indicador/etanol/ind_etanol.json.js"
-)
-# Método 3 — planilha Excel (funciona localmente, pode ser bloqueada em CI)
-CEPEA_XLS_URL    = "https://www.cepea.esalq.usp.br/br/widgetpastas/17/indicador/338.aspx"
-CEPEA_REFERER    = "https://www.cepea.esalq.usp.br/br/indicador/etanol.aspx"
+CEPEA_ETANOL_URL = "https://www.cepea.esalq.usp.br/br/indicador/etanol.aspx"
+# Seletor do botão de download da planilha Excel na página do CEPEA
+# (inspecionado via DevTools — link com texto "Excel" ou href widgetpastas)
+CEPEA_DOWNLOAD_SELECTOR = "a[href*='widgetpastas'][href*='338']"
+# Timeout máximo para o browser carregar a página (ms)
+PLAYWRIGHT_TIMEOUT = 60_000
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -164,7 +160,6 @@ def _insert_etanol_rows(
     last: str | None,
     now_str: str,
 ) -> int:
-    """Insere lista de {'data_ref': str, 'preco': float} filtrando já existentes."""
     if last:
         rows = [r for r in rows if r["data_ref"] > last]
     if not rows:
@@ -258,217 +253,177 @@ def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# FETCH — ETANOL CEPEA  (cadeia de métodos)
+# FETCH — ETANOL CEPEA via Playwright
 # ════════════════════════════════════════════════════════════════════════════════
 def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
+    """
+    Usa Playwright (Chromium headless) para:
+      1. Abrir a página do indicador Etanol no CEPEA
+      2. Aguardar o carregamento completo (passa pelo WAF)
+      3. Interceptar o download da planilha Excel
+      4. Parsear o Excel e inserir no banco
+    """
+    log.info("[ETANOL] Iniciando Playwright (Chromium headless)...")
+
     last = _last_date(conn, "etanol_cepea")
     log.info(f"[ETANOL] Último registro no banco: {last or 'nenhum'}")
 
-    # ── Método 1: API JSON esalqlog ───────────────────────────────────────────
-    rows = _cepea_method_json_esalqlog()
-    if rows:
-        log.info(f"[ETANOL] Método 1 (esalqlog JSON): {len(rows)} registros brutos")
-        inserted = _insert_etanol_rows(conn, rows, last, now_str)
-        log.info(f"[ETANOL] {inserted} novas linhas inseridas.")
-        return inserted
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── Método 2: JSON alternativo cepea.esalq.usp.br ────────────────────────
-    log.info("[ETANOL] Método 1 falhou — tentando Método 2 (JSON alternativo)...")
-    rows = _cepea_method_json_alt()
-    if rows:
-        log.info(f"[ETANOL] Método 2 (JSON alt): {len(rows)} registros brutos")
-        inserted = _insert_etanol_rows(conn, rows, last, now_str)
-        log.info(f"[ETANOL] {inserted} novas linhas inseridas.")
-        return inserted
+    xls_content: bytes | None = None
 
-    # ── Método 3: planilha Excel ──────────────────────────────────────────────
-    log.info("[ETANOL] Método 2 falhou — tentando Método 3 (Excel)...")
-    rows = _cepea_method_excel()
-    if rows:
-        log.info(f"[ETANOL] Método 3 (Excel): {len(rows)} registros brutos")
-        inserted = _insert_etanol_rows(conn, rows, last, now_str)
-        log.info(f"[ETANOL] {inserted} novas linhas inseridas.")
-        return inserted
-
-    log.error("[ETANOL] Todos os métodos falharam. Verifique conectividade com o CEPEA.")
-    return 0
-
-
-# ── Método 1 — API JSON esalqlog (usada internamente pelo widget CEPEA) ───────
-def _cepea_method_json_esalqlog() -> list[dict]:
-    """
-    Endpoint JSON interno do CEPEA descoberto via DevTools no site deles.
-    Retorna array de objetos com campos Data e Preco (ou variantes).
-    """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0",
-        "Accept":     "application/json, text/javascript, */*",
-        "Referer":    CEPEA_REFERER,
-        "Origin":     "https://www.cepea.esalq.usp.br",
-    }
     try:
-        resp = requests.get(CEPEA_JSON_URL_1, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        return _parse_cepea_json(data)
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
+            )
+
+            # Contexto com locale pt-BR e download habilitado
+            context = browser.new_context(
+                locale="pt-BR",
+                accept_downloads=True,
+                viewport={"width": 1280, "height": 800},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/123.0.0.0 Safari/537.36"
+                ),
+            )
+
+            page = context.new_page()
+
+            # ── Abre a página do CEPEA ─────────────────────────────────────
+            log.info(f"[ETANOL] Navegando para {CEPEA_ETANOL_URL}")
+            page.goto(CEPEA_ETANOL_URL, wait_until="networkidle", timeout=PLAYWRIGHT_TIMEOUT)
+            log.info("[ETANOL] Página carregada.")
+
+            # Pequena pausa humana
+            time.sleep(3)
+
+            # ── Localiza o link de download do Excel ──────────────────────
+            # Tenta pelo seletor CSS direto; se não achar, busca por texto
+            download_link = None
+            try:
+                download_link = page.locator(CEPEA_DOWNLOAD_SELECTOR).first
+                download_link.wait_for(timeout=10_000)
+                log.info("[ETANOL] Link de download encontrado via seletor CSS.")
+            except Exception:
+                log.info("[ETANOL] Seletor CSS não encontrou — tentando por texto 'Excel'...")
+                try:
+                    download_link = page.get_by_text("Excel", exact=False).first
+                    download_link.wait_for(timeout=10_000)
+                    log.info("[ETANOL] Link de download encontrado via texto 'Excel'.")
+                except Exception:
+                    # Último recurso: pega todos os links e filtra por widgetpastas
+                    log.info("[ETANOL] Buscando links href com 'widgetpastas'...")
+                    hrefs = page.eval_on_selector_all(
+                        "a[href]",
+                        "els => els.map(e => e.href)"
+                    )
+                    xls_hrefs = [h for h in hrefs if "widgetpastas" in h or "indicador" in h]
+                    log.info(f"[ETANOL] Links encontrados: {xls_hrefs}")
+                    if xls_hrefs:
+                        # Usa requests com os cookies do Playwright para baixar
+                        cookies = context.cookies()
+                        xls_content = _download_with_playwright_cookies(
+                            xls_hrefs[0], cookies, CEPEA_ETANOL_URL
+                        )
+
+            # ── Faz o download clicando no link ───────────────────────────
+            if download_link is not None and xls_content is None:
+                log.info("[ETANOL] Clicando no link de download...")
+                with page.expect_download(timeout=PLAYWRIGHT_TIMEOUT) as dl_info:
+                    download_link.click()
+                download = dl_info.value
+                dl_path  = DOWNLOAD_DIR / download.suggested_filename
+                download.save_as(dl_path)
+                log.info(f"[ETANOL] Arquivo baixado: {dl_path} ({dl_path.stat().st_size:,} bytes)")
+                xls_content = dl_path.read_bytes()
+
+            context.close()
+            browser.close()
+
+    except PlaywrightTimeout as exc:
+        log.error(f"[ETANOL] Timeout do Playwright: {exc}")
+        return 0
     except Exception as exc:
-        log.warning(f"[ETANOL] Método 1 falhou: {exc}")
-        return []
+        log.error(f"[ETANOL] Erro no Playwright: {exc}")
+        return 0
 
+    if not xls_content:
+        log.error("[ETANOL] Nenhum conteúdo Excel obtido.")
+        return 0
 
-# ── Método 2 — JSON alternativo ───────────────────────────────────────────────
-def _cepea_method_json_alt() -> list[dict]:
-    """
-    Arquivo .json.js servido pelo CEPEA para o gráfico do indicador.
-    """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0",
-        "Accept":     "application/json, text/javascript, */*",
-        "Referer":    CEPEA_REFERER,
-    }
+    # ── Parse do Excel ────────────────────────────────────────────────────────
+    log.info(f"[ETANOL] Parseando Excel ({len(xls_content):,} bytes)...")
     try:
-        resp = requests.get(CEPEA_JSON_URL_2, headers=headers, timeout=30)
-        resp.raise_for_status()
-        # Remove possível wrapper de função JS: callback({...}) → {...}
-        text = resp.text.strip()
-        if text.startswith("("):
-            text = text[1:]
-        if text.endswith(")"):
-            text = text[:-1]
-        # Tenta também remover prefixo de callback nomeado
-        if "(" in text[:30]:
-            text = text[text.index("(") + 1:]
-            if text.endswith(")"):
-                text = text[:-1]
-        data = json.loads(text)
-        return _parse_cepea_json(data)
+        rows = _parse_cepea_excel(xls_content)
     except Exception as exc:
-        log.warning(f"[ETANOL] Método 2 falhou: {exc}")
-        return []
+        log.error(f"[ETANOL] Falha ao parsear Excel: {exc}")
+        debug = Path(__file__).parent / "debug_cepea.bin"
+        debug.write_bytes(xls_content)
+        log.info(f"[ETANOL] Salvo para debug: {debug}")
+        return 0
+
+    if not rows:
+        log.warning("[ETANOL] Planilha vazia ou não reconhecida.")
+        return 0
+
+    log.info(f"[ETANOL] {len(rows)} linhas lidas da planilha.")
+    inserted = _insert_etanol_rows(conn, rows, last, now_str)
+    log.info(f"[ETANOL] {inserted} novas linhas inseridas.")
+    return inserted
 
 
-# ── Método 3 — Excel via sessão com cookies ───────────────────────────────────
-def _cepea_method_excel() -> list[dict]:
-    """Download da planilha Excel com sessão autenticada por cookies."""
+def _download_with_playwright_cookies(
+    url: str,
+    pw_cookies: list[dict],
+    referer: str,
+) -> bytes | None:
+    """
+    Usa requests com os cookies capturados pelo Playwright para baixar
+    diretamente uma URL que requer sessão autenticada.
+    """
+    log.info(f"[ETANOL] Baixando via cookies Playwright: {url}")
     session = requests.Session()
+    for ck in pw_cookies:
+        session.cookies.set(ck["name"], ck["value"], domain=ck.get("domain", ""))
     session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/123.0.0.0 Safari/537.36"
         ),
-        "Accept-Language": "pt-BR,pt;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection":      "keep-alive",
+        "Referer": referer,
+        "Accept":  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*",
     })
     try:
-        # Obtém cookies visitando a página principal
-        session.get(CEPEA_REFERER, timeout=30)
-        time.sleep(2)
-        resp = session.get(
-            CEPEA_XLS_URL,
-            headers={"Referer": CEPEA_REFERER},
-            timeout=60,
-        )
+        resp = session.get(url, timeout=60)
         resp.raise_for_status()
+        if len(resp.content) > 1000:  # mínimo razoável para um Excel
+            return resp.content
+        log.warning(f"[ETANOL] Resposta muito pequena ({len(resp.content)} bytes), ignorando.")
     except Exception as exc:
-        log.warning(f"[ETANOL] Método 3 (Excel) falhou no download: {exc}")
-        return []
-
-    # Verifica magic bytes
-    is_xlsx = resp.content[:4] == b"PK\x03\x04"
-    is_xls  = resp.content[:4] == b"\xd0\xcf\x11\xe0"
-    if not (is_xlsx or is_xls):
-        log.warning(f"[ETANOL] Método 3: resposta não é Excel ({len(resp.content)} bytes)")
-        debug = Path(__file__).parent / "debug_cepea.bin"
-        debug.write_bytes(resp.content)
-        log.info(f"[ETANOL] Salvo para debug: {debug}")
-        return []
-
-    try:
-        return _parse_cepea_excel(resp.content, is_xlsx)
-    except Exception as exc:
-        log.warning(f"[ETANOL] Método 3: falha ao parsear Excel: {exc}")
-        return []
+        log.warning(f"[ETANOL] Download via cookies falhou: {exc}")
+    return None
 
 
-# ── Parsers ───────────────────────────────────────────────────────────────────
-def _parse_cepea_json(data) -> list[dict]:
-    """
-    Aceita múltiplos formatos de resposta JSON do CEPEA:
-      - Lista de dicts: [{"Data": "01/01/2024", "Preco": 3.5}, ...]
-      - Dict com chave de dados: {"data": [...], "values": [...]}
-      - Lista de listas: [["01/01/2024", 3.5], ...]
-    """
-    rows = []
+# ── Parser do Excel ───────────────────────────────────────────────────────────
+def _parse_cepea_excel(content: bytes) -> list[dict]:
+    """Lê planilha CEPEA e retorna lista de {'data_ref': str, 'preco': float}."""
+    is_xlsx = content[:4] == b"PK\x03\x04"
+    engine  = "openpyxl" if is_xlsx else "xlrd"
+    buf     = io.BytesIO(content)
 
-    # Normaliza para lista
-    if isinstance(data, dict):
-        # Procura a primeira chave que seja lista
-        for key in ("data", "Data", "values", "series", "itens", "items"):
-            if key in data and isinstance(data[key], list):
-                data = data[key]
-                break
-        else:
-            # Tenta a primeira chave com lista
-            for v in data.values():
-                if isinstance(v, list) and len(v) > 10:
-                    data = v
-                    break
+    # Lê sem header para localizar linha de cabeçalho real
+    raw = pd.read_excel(buf, engine=engine, header=None, dtype=str)
 
-    if not isinstance(data, list):
-        log.warning(f"[ETANOL] JSON inesperado: tipo={type(data)}")
-        return []
-
-    for item in data:
-        # Formato dict
-        if isinstance(item, dict):
-            # Chave de data
-            raw_date = None
-            for k in ("Data", "data", "date", "dt", "Dt", "DATE"):
-                if k in item:
-                    raw_date = str(item[k])
-                    break
-            # Chave de preço (preferência: à vista)
-            raw_preco = None
-            for k in ("Preco", "preco", "price", "Price",
-                       "valor", "Valor", "close", "Close",
-                       "AVistaReal", "a_vista_real", "AVista"):
-                if k in item and item[k] not in (None, "", "-"):
-                    raw_preco = item[k]
-                    break
-
-        # Formato lista [data, preco]
-        elif isinstance(item, (list, tuple)) and len(item) >= 2:
-            raw_date  = str(item[0])
-            raw_preco = item[1]
-        else:
-            continue
-
-        data_ref = _parse_date_br(raw_date) if raw_date else None
-        if not data_ref:
-            continue
-        try:
-            preco = float(str(raw_preco).replace(",", "."))
-            if preco <= 0:
-                continue
-        except (ValueError, TypeError):
-            continue
-
-        rows.append({"data_ref": data_ref, "preco": preco})
-
-    # Ordena por data
-    rows.sort(key=lambda r: r["data_ref"])
-    return rows
-
-
-def _parse_cepea_excel(content: bytes, is_xlsx: bool) -> list[dict]:
-    """Lê planilha Excel CEPEA e retorna lista de {'data_ref', 'preco'}."""
-    engine = "openpyxl" if is_xlsx else "xlrd"
-    buf    = io.BytesIO(content)
-    raw    = pd.read_excel(buf, engine=engine, header=None, dtype=str)
-
-    # Localiza linha de cabeçalho
     header_row = 0
     for i, row in raw.iterrows():
         row_str = " ".join(str(v).lower() for v in row.values if pd.notna(v))
@@ -485,8 +440,9 @@ def _parse_cepea_excel(content: bytes, is_xlsx: bool) -> list[dict]:
         (c for c in df.columns if any(k in c for k in ["vista", "valor", "preço", "preco", "r$"])),
         None,
     )
+
     if not col_data or not col_preco:
-        raise ValueError(f"Colunas não encontradas: {list(df.columns)}")
+        raise ValueError(f"Colunas não encontradas. Disponíveis: {list(df.columns)}")
 
     rows = []
     for _, row in df.iterrows():
@@ -556,7 +512,7 @@ def main() -> None:
 
     time.sleep(2)
 
-    log.info("--- Etanol Hidratado CEPEA/ESALQ ---")
+    log.info("--- Etanol Hidratado CEPEA/ESALQ (Playwright) ---")
     n_etanol = fetch_etanol_cepea(conn, now_str)
 
     _summary(conn)
