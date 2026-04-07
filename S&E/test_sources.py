@@ -1,104 +1,104 @@
 #!/usr/bin/env python3
 """
-test_sources.py v3 — Descobre os parâmetros corretos da UNICAdata
-para buscar histórico completo e dados recentes.
+test_sources.py v4 — Varre idTabelas da UNICAdata e testa semanal/histórico completo
 """
-import requests, logging, re
+import io, requests, logging, re
+import pandas as pd
+
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 log = logging.getLogger(__name__)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36",
-    "Accept-Language": "pt-BR,pt;q=0.9",
     "Referer": "https://unicadata.com.br/preco-ao-produtor.php?idMn=42",
 }
 
-def test(label, url):
+def get_xls(url):
+    r = requests.get(url, headers=HEADERS, timeout=20)
+    if r.status_code == 200 and r.content[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0"):
+        return r.content
+    return None
+
+def anos_no_excel(content):
     try:
-        r = requests.get(url, headers=HEADERS, timeout=30)
-        ct = r.headers.get("Content-Type","")
-        is_xls = r.content[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0")
-        log.info(f"[{r.status_code}] {label}")
-        log.info(f"  {len(r.content):,} bytes | XLS={is_xls} | CT={ct[:60]}")
-        if not is_xls:
-            log.info(f"  Snippet: {r.text[:300]}")
-        return r.content if is_xls else None
-    except Exception as e:
-        log.error(f"ERRO [{label}]: {e}")
-        return None
+        raw = pd.read_excel(io.BytesIO(content), header=None, dtype=str)
+        txt = raw.to_string()
+        return sorted(set(re.findall(r'20[12]\d', txt)))
+    except:
+        return []
+
+def datas_no_excel(content):
+    """Extrai datas no formato DD/MM/YYYY do Excel"""
+    try:
+        raw = pd.read_excel(io.BytesIO(content), header=None, dtype=str)
+        datas = []
+        for _, row in raw.iterrows():
+            for v in row:
+                v = str(v).strip()
+                if re.match(r'\d{2}/\d{2}/20\d{2}', v):
+                    datas.append(v)
+        return sorted(set(datas))
+    except:
+        return []
 
 log.info("="*70)
-log.info("TESTE DE PARÂMETROS UNICADATA")
-log.info("="*70)
 
-# 1. Inspeciona o HTML da página para ver quais parâmetros o form usa
-log.info("--- Inspecionando HTML da página diária ---")
-try:
-    r = requests.get(
-        "https://unicadata.com.br/preco-ao-produtor.php"
-        "?idMn=42&tipoHistorico=7&acao=visualizar&idTabela=2405"
-        "&produto=Etanol+hidratado+combust%C3%ADvel&frequencia=Di%C3%A1rio&estado=Paulinia",
-        headers=HEADERS, timeout=30)
-    log.info(f"Página status: {r.status_code} | {len(r.content):,} bytes")
-    # Extrai action do form e campos hidden
-    forms = re.findall(r'<form[^>]*>(.*?)</form>', r.text, re.DOTALL|re.IGNORECASE)
-    for i, f in enumerate(forms[:3]):
-        log.info(f"Form {i}: {f[:500]}")
-    # Procura inputs com data
-    inputs = re.findall(r'<input[^>]+>', r.text, re.IGNORECASE)
-    for inp in inputs:
-        if any(k in inp.lower() for k in ['data', 'date', 'ini', 'fim', 'start', 'end', 'period']):
-            log.info(f"Input relevante: {inp[:200]}")
-    # Procura o link do Excel/XLS no HTML
-    xls_links = re.findall(r'href=["\']([^"\']*xls[^"\']*)["\']', r.text, re.IGNORECASE)
-    log.info(f"Links XLS no HTML: {xls_links[:5]}")
-    # Procura parâmetros dataIni/dataFim
-    params_found = re.findall(r'(data\w*|period\w*|ini\w*|fim\w*)["\s]*[:=]["\s]*([^"&\s]+)', r.text, re.IGNORECASE)
-    log.info(f"Params de data encontrados: {params_found[:10]}")
-except Exception as e:
-    log.error(f"Erro: {e}")
+# ── 1. Testa tabelas próximas à 2405 (diário) para achar versão mais recente
+log.info("--- Varrendo idTabelas ao redor de 2405 (diário) ---")
+BASE_DIARIO = "https://unicadata.com.br/xlsPrcProd.php?idioma=1&tipoHistorico=7&estado=Paulinia&produto=Etanol+hidratado+combust%C3%ADvel&frequencia=Di%C3%A1rio"
+for tid in [2400, 2401, 2402, 2403, 2404, 2405, 2406, 2407, 2408, 2409, 2410,
+            2480, 2485, 2487, 2490, 2500, 2510, 2520, 3000, 3100, 3200]:
+    url = f"{BASE_DIARIO}&idTabela={tid}"
+    c = get_xls(url)
+    if c:
+        anos = anos_no_excel(c)
+        datas = datas_no_excel(c)
+        log.info(f"  idTabela={tid}: {len(c):,} bytes | anos={anos} | datas={datas[-3:] if datas else '—'}")
+    else:
+        pass  # silencioso para tabelas que não retornam Excel
 
 log.info("")
-log.info("--- Testando variações de parâmetros de data ---")
 
-from datetime import date, timedelta
-hoje      = date.today().strftime("%d/%m/%Y")
-ha30dias  = (date.today() - timedelta(days=30)).strftime("%d/%m/%Y")
-ha365dias = (date.today() - timedelta(days=365)).strftime("%d/%m/%Y")
-inicio    = "01/01/2010"
+# ── 2. Testa semanal (idTabela=2487) — talvez seja mais recente que o diário
+log.info("--- Semanal idTabela=2487 ---")
+url_sem = "https://unicadata.com.br/xlsPrcProd.php?idioma=1&tipoHistorico=7&idTabela=2487&estado=S%C3%A3o+Paulo&produto=Etanol+hidratado+combust%C3%ADvel&frequencia=Semanal"
+c = get_xls(url_sem)
+if c:
+    anos = anos_no_excel(c)
+    datas = datas_no_excel(c)
+    log.info(f"  Semanal 2487: {len(c):,} bytes | anos={anos} | datas recentes={datas[-5:]}")
+    raw = pd.read_excel(io.BytesIO(c), header=None, dtype=str)
+    for i, row in raw.head(25).iterrows():
+        vals = [str(v)[:30] for v in row.tolist() if str(v) != 'nan']
+        if vals: log.info(f"  row {i:2d}: {vals}")
 
-base = "https://unicadata.com.br/xlsPrcProd.php?idioma=1&tipoHistorico=7&idTabela=2405&estado=Paulinia&produto=Etanol+hidratado+combust%C3%ADvel&frequencia=Di%C3%A1rio"
+log.info("")
 
-# Testa variações de parâmetros de período
-import urllib.parse
-tests = [
-    ("sem datas (atual)",        base),
-    ("dataIni+dataFim recentes", base + f"&dataIni={urllib.parse.quote(ha30dias)}&dataFim={urllib.parse.quote(hoje)}"),
-    ("inicio+fim",               base + f"&inicio={urllib.parse.quote(ha30dias)}&fim={urllib.parse.quote(hoje)}"),
-    ("de+ate",                   base + f"&de={urllib.parse.quote(ha30dias)}&ate={urllib.parse.quote(hoje)}"),
-    ("startDate+endDate",        base + f"&startDate={urllib.parse.quote(ha30dias)}&endDate={urllib.parse.quote(hoje)}"),
-    ("periodoIni+periodoFim",    base + f"&periodoIni={urllib.parse.quote(ha30dias)}&periodoFim={urllib.parse.quote(hoje)}"),
-    ("dataInicial+dataFinal",    base + f"&dataInicial={urllib.parse.quote(ha30dias)}&dataFinal={urllib.parse.quote(hoje)}"),
-    # Testa histórico completo
-    ("dataIni desde 2010",       base + f"&dataIni={urllib.parse.quote(inicio)}&dataFim={urllib.parse.quote(hoje)}"),
+# ── 3. Testa mensal com diferentes idTabelas para achar histórico mais amplo
+log.info("--- Mensais com diferentes idTabelas ---")
+BASE_MENSAL = "https://unicadata.com.br/xlsPrcProd.php?idioma=1&tipoHistorico=7&estado=S%C3%A3o+Paulo&produto=Etanol+hidratado+combust%C3%ADvel&frequencia=Mensal"
+for tid in [1433, 1434, 1435, 1440, 1450, 1500, 1600, 1700, 1800, 2000, 2100, 2200, 2300, 2400]:
+    url = f"{BASE_MENSAL}&idTabela={tid}"
+    c = get_xls(url)
+    if c:
+        anos = anos_no_excel(c)
+        log.info(f"  idTabela={tid}: {len(c):,} bytes | anos={anos}")
+
+log.info("")
+
+# ── 4. Inspeciona o HTML buscando outros links de XLS na página
+log.info("--- Links XLS em outras páginas da UNICAdata ---")
+pages = [
+    "https://unicadata.com.br/preco-ao-produtor.php?idMn=42&tipoHistorico=7&acao=visualizar&idTabela=2487&produto=Etanol+hidratado+combust%C3%ADvel&frequencia=Semanal&estado=S%C3%A3o+Paulo",
+    "https://unicadata.com.br/listagem.php?IdMn=42",
 ]
+for url in pages:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        links = re.findall(r'href=["\']([^"\']*xlsPrcProd[^"\']*)["\']', r.text, re.IGNORECASE)
+        log.info(f"  {url[-60:]}: {links[:3]}")
+    except Exception as e:
+        log.error(f"  Erro: {e}")
 
-for label, url in tests:
-    content = test(label, url)
-    if content:
-        # Verifica se tem datas recentes no conteúdo
-        import io, pandas as pd
-        try:
-            raw = pd.read_excel(io.BytesIO(content), header=None, dtype=str)
-            # Procura pelo ano atual no conteúdo
-            txt = raw.to_string()
-            anos_encontrados = set(re.findall(r'20[12]\d', txt))
-            log.info(f"  Anos no Excel: {sorted(anos_encontrados)}")
-            log.info(f"  Shape: {raw.shape}")
-        except: pass
-    log.info("")
-
-log.info("="*70)
-log.info("FIM")
 log.info("="*70)
