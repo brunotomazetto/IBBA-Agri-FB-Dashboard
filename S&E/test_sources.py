@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """test_sources.py — Navega UDOP para achar preço etanol hidratado ao produtor"""
-import time, logging, re, subprocess
+import time, logging, re, subprocess, os
 
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
@@ -9,22 +9,20 @@ log = logging.getLogger(__name__)
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 
-# Detecta versão do Chrome instalado e passa para o uc
-result = subprocess.run(["google-chrome", "--version"], capture_output=True, text=True)
-version_str = result.stdout.strip()
-log.info(f"Chrome instalado: {version_str}")
-# Extrai major version (ex: "Google Chrome 146.0.7680.177" → 146)
+# Acha o path real do Chrome e sua versão
+chrome_path = subprocess.run(["which", "google-chrome"], capture_output=True, text=True).stdout.strip()
+version_str = subprocess.run([chrome_path, "--version"], capture_output=True, text=True).stdout.strip()
 major = int(version_str.split()[-1].split(".")[0])
-log.info(f"Major version: {major}")
+log.info(f"Chrome: {chrome_path} | {version_str} | major={major}")
 
 options = uc.ChromeOptions()
+options.binary_location = chrome_path  # força o path correto
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--disable-gpu")
 options.add_argument("--window-size=1280,900")
 options.add_argument("--lang=pt-BR")
 
-# Passa version_main para baixar ChromeDriver compatível
 driver = uc.Chrome(options=options, version_main=major)
 
 try:
@@ -48,7 +46,6 @@ try:
     for txt, href in relevant[:30]:
         log.info(f"  '{txt}' → {href[:100]}")
 
-    # Testa URLs candidatas
     candidates = list(dict.fromkeys([h for _, h in relevant if h and "udop.com.br" in h]))
     log.info(f"\n--- Testando {len(candidates)} URLs candidatas ---")
 
