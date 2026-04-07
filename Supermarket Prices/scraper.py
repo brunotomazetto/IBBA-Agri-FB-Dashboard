@@ -984,6 +984,23 @@ def preencher_gaps(con, hoje):
         if not ultimo:
             continue
 
+        # Re-verifica no banco (outro workflow pode ter inserido dado real)
+        existe_agora = con.execute("""
+            SELECT id FROM precos
+            WHERE supermercado=? AND nome_produto=? AND embalagem=?
+              AND data_coleta=? AND preco_atual IS NOT NULL
+              AND (erro IS NULL OR erro='input_manual')
+        """, (sm, nome, emb, hoje)).fetchone()
+        if existe_agora:
+            continue
+
+        # Remove copiado anterior se existir (evita duplicata)
+        con.execute("""
+            DELETE FROM precos
+            WHERE supermercado=? AND nome_produto=? AND embalagem=?
+              AND data_coleta=? AND erro='copiado_dia_anterior'
+        """, (sm, nome, emb, hoje))
+
         con.execute("""
             INSERT INTO precos
             (data_coleta, horario_coleta, supermercado, categoria, grupo, marca,
