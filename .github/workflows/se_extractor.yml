@@ -2,6 +2,7 @@ name: S&E Daily Extractor
 
 on:
   schedule:
+    # Roda todo dia útil às 22:00 UTC (19:00 BRT / após fechamento NY)
     - cron: "0 22 * * 1-5"
 
   workflow_dispatch:
@@ -14,12 +15,20 @@ on:
         options:
           - "false"
           - "true"
+      carga_historica:
+        description: "Forçar carga histórica mensal UNICA (apenas 1ª vez)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   extract:
-    name: Coleta S&E (NY11 + Etanol CEPEA)
+    name: Coleta S&E (NY11 + Etanol UNICA)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     permissions:
       contents: write
@@ -35,29 +44,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Instalar dependências Python
-        run: |
-          pip install --upgrade pip
-          pip install requests pandas openpyxl xlrd yfinance playwright
-
-      - name: Instalar Chromium (Playwright)
-        run: playwright install chromium --with-deps
+      - name: Instalar dependências
+        run: pip install requests pandas openpyxl xlrd yfinance
 
       - name: Executar extractor_se.py
         run: |
           cd "S&E"
-          python extractor_se.py
-
-      # Faz upload dos arquivos de debug como artefato do Actions
-      # (screenshot + HTML da página CEPEA — visível por 7 dias)
-      - name: Upload debug CEPEA
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-cepea-${{ github.run_id }}
-          path: S&E/_debug/
-          retention-days: 7
-          if-no-files-found: ignore
+          if [ "${{ github.event.inputs.carga_historica }}" = "true" ]; then
+            python extractor_se.py --carga-historica
+          else
+            python extractor_se.py
+          fi
 
       - name: Commit commodities.db
         if: ${{ github.event.inputs.dry_run != 'true' }}
