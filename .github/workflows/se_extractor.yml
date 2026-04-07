@@ -2,7 +2,6 @@ name: S&E Daily Extractor
 
 on:
   schedule:
-    # Roda todo dia útil às 22:00 UTC (19:00 BRT / após fechamento NY)
     - cron: "0 22 * * 1-5"
 
   workflow_dispatch:
@@ -26,36 +25,40 @@ jobs:
       contents: write
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repositório
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # ── 2. Python ────────────────────────────────────────────────────────────
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # ── 3. Dependências Python ────────────────────────────────────────────────
       - name: Instalar dependências Python
         run: |
           pip install --upgrade pip
           pip install requests pandas openpyxl xlrd yfinance playwright
 
-      # ── 4. Playwright — instala o browser Chromium ────────────────────────────
-      # O Chromium headless real é o que passa pelo WAF do CEPEA
       - name: Instalar Chromium (Playwright)
         run: playwright install chromium --with-deps
 
-      # ── 5. Executar extractor ─────────────────────────────────────────────────
       - name: Executar extractor_se.py
         run: |
           cd "S&E"
           python extractor_se.py
 
-      # ── 6. Commit do banco atualizado ─────────────────────────────────────────
+      # Faz upload dos arquivos de debug como artefato do Actions
+      # (screenshot + HTML da página CEPEA — visível por 7 dias)
+      - name: Upload debug CEPEA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-cepea-${{ github.run_id }}
+          path: S&E/_debug/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Commit commodities.db
         if: ${{ github.event.inputs.dry_run != 'true' }}
         run: |
