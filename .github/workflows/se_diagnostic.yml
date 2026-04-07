@@ -5,7 +5,7 @@ on:
 
 jobs:
   test:
-    name: Testa B3 e Novacana
+    name: Testa UDOP
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -28,10 +28,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y xvfb
 
-      - name: Instalar Google Chrome
-        run: |
-          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+      # Instala Chrome e ChromeDriver da mesma versão via setup-chrome
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
 
       - name: Rodar teste
         run: |
