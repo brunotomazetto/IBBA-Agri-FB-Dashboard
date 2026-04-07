@@ -87,7 +87,7 @@ DB_PATH       = Path(__file__).parent / "commodities.db"
 YF_TICKER     = "SB=F"
 HISTORY_START = "2010-01-01"
 UDOP_URL      = "https://www.udop.com.br/indicadores-etanol"
-BCB_PTAX_URL  = "https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)?@dataInicial='{di}'&@dataFinalCotacao='{df}'&$top=1000&$orderby=dataHoraCotacao%20asc&$format=json&$select=cotacaoVenda,dataHoraCotacao"
+BCB_PTAX_BASE = "https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)?@dataInicial='{di}'&@dataFinalCotacao='{df}'&$top=1000&$skip={skip}&$orderby=dataHoraCotacao%20asc&$format=json&$select=cotacaoVenda,dataHoraCotacao"
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -186,8 +186,8 @@ def fetch_sugar_ny11(conn, now_str):
 def fetch_fx_usdbrl(conn, now_str):
     """
     Coleta PTAX venda USD/BRL via API do Banco Central do Brasil.
-    Frequência: diária (dias úteis).
-    Histórico: desde HISTORY_START.
+    Pagina automaticamente em lotes de 1000 até buscar todo o histórico.
+    Frequência: diária (dias úteis). Histórico: desde HISTORY_START.
     """
     log.info("[FX] Buscando PTAX USD/BRL (BCB)...")
     last  = _last_date(conn, "fx_usdbrl")
@@ -196,32 +196,41 @@ def fetch_fx_usdbrl(conn, now_str):
     if start > today:
         log.info("[FX] Já atualizado."); return 0
 
-    # BCB API usa formato MM-DD-YYYY
     di = datetime.strptime(start, "%Y-%m-%d").strftime("%m-%d-%Y")
     df = datetime.strptime(today,  "%Y-%m-%d").strftime("%m-%d-%Y")
-    url = BCB_PTAX_URL.format(di=di, df=df)
-
     log.info(f"[FX] {start} → hoje")
-    try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        data = r.json().get("value", [])
-    except Exception as e:
-        log.error(f"[FX] Falha BCB: {e}"); return 0
 
     inserted = 0
-    for item in data:
-        raw_dt   = item.get("dataHoraCotacao","")[:10]  # "YYYY-MM-DD"
-        ptax     = item.get("cotacaoVenda")
-        if not raw_dt or ptax is None: continue
-        dr = raw_dt  # já em YYYY-MM-DD
-        conn.execute(
-            "INSERT OR IGNORE INTO fx_usdbrl (data_referencia,ano,mes,ptax_venda,updated_at) VALUES(?,?,?,?,?)",
-            (dr, int(dr[:4]), int(dr[5:7]), float(ptax), now_str))
-        if conn.execute("SELECT changes()").fetchone()[0]: inserted += 1
+    skip = 0
+    while True:
+        url = BCB_PTAX_BASE.format(di=di, df=df, skip=skip)
+        try:
+            r = requests.get(url, timeout=30)
+            r.raise_for_status()
+            data = r.json().get("value", [])
+        except Exception as e:
+            log.error(f"[FX] Falha BCB (skip={skip}): {e}"); break
+
+        if not data:
+            break
+
+        for item in data:
+            raw_dt = item.get("dataHoraCotacao","")[:10]
+            ptax   = item.get("cotacaoVenda")
+            if not raw_dt or ptax is None: continue
+            conn.execute(
+                "INSERT OR IGNORE INTO fx_usdbrl (data_referencia,ano,mes,ptax_venda,updated_at) VALUES(?,?,?,?,?)",
+                (raw_dt, int(raw_dt[:4]), int(raw_dt[5:7]), float(ptax), now_str))
+            if conn.execute("SELECT changes()").fetchone()[0]: inserted += 1
+
+        log.info(f"[FX] Página skip={skip}: {len(data)} registros")
+        if len(data) < 1000:
+            break  # última página
+        skip += 1000
+        time.sleep(0.3)
 
     conn.commit()
-    log.info(f"[FX] {inserted} linhas inseridas.")
+    log.info(f"[FX] {inserted} linhas inseridas no total.")
     return inserted
 
 
