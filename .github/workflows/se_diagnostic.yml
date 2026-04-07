@@ -24,15 +24,16 @@ jobs:
         run: pip install undetected-chromedriver selenium
 
       - name: Instalar Xvfb
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y xvfb
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb
 
-      # Instala Chrome e ChromeDriver da mesma versão via setup-chrome
-      - name: Setup Chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
+      # Instala Chrome 147 especificamente para bater com o ChromeDriver
+      - name: Instalar Chrome 147
+        run: |
+          wget -q "https://storage.googleapis.com/chrome-for-testing-public/147.0.7728.0/linux64/chrome-linux64.zip"
+          unzip -q chrome-linux64.zip
+          sudo mv chrome-linux64 /opt/chrome-147
+          sudo ln -sf /opt/chrome-147/chrome /usr/local/bin/google-chrome
+          google-chrome --version
 
       - name: Rodar teste
         run: |
