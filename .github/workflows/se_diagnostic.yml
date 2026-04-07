@@ -7,7 +7,7 @@ jobs:
   test:
     name: Testa fontes de Etanol
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -21,9 +21,23 @@ jobs:
           python-version: "3.11"
 
       - name: Instalar dependências
-        run: pip install requests pandas openpyxl xlrd
+        run: pip install requests pandas openpyxl xlrd playwright
+
+      - name: Instalar Chromium
+        run: playwright install chromium --with-deps
 
       - name: Rodar diagnóstico
         run: |
           cd "S&E"
           python test_sources.py
+
+      - name: Upload artefatos de debug
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-series-${{ github.run_id }}
+          path: |
+            /tmp/series_screenshot.png
+            /tmp/series_page.html
+          retention-days: 3
+          if-no-files-found: ignore
