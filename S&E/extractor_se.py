@@ -180,22 +180,41 @@ def _get_xls_mensal(id_tabela, label=""):
 
 def _parse_diario(content):
     """
-    Layout confirmado: col 4 = data DD/MM/YYYY, col 5 = preço com vírgula.
+    Parser robusto: loga as primeiras 20 linhas e busca data em qualquer coluna.
+    Layout do 2405 confirmado: col 4 = data, col 5 = preço.
+    Layout do 2400 pode ser diferente — busca dinâmica.
     """
     engine = "openpyxl" if content[:4] == b"PK\x03\x04" else "xlrd"
     raw = pd.read_excel(io.BytesIO(content), engine=engine, header=None, dtype=str)
+    log.info(f"[ETANOL] diário shape={raw.shape}")
+    for i, row in raw.head(20).iterrows():
+        vals = [str(v)[:28] for v in row.tolist()]
+        log.info(f"[ETANOL]   row {i:2d}: {vals}")
+
     rows = []
     for _, row in raw.iterrows():
-        if len(row) < 6: continue
-        dr = _parse_date_br(str(row.iloc[4]))
-        if not dr: continue
-        try:
-            p = float(str(row.iloc[5]).replace(",", "."))
-            if p > 0: rows.append({"data_ref": dr, "preco": p})
-        except: continue
+        # Busca data em qualquer coluna
+        for ci in range(len(row)):
+            dr = _parse_date_br(str(row.iloc[ci]))
+            if not dr:
+                continue
+            # Preço = próxima célula numérica positiva
+            for pi in range(ci + 1, min(ci + 4, len(row))):
+                pv = str(row.iloc[pi]).strip().replace(",", ".")
+                try:
+                    p = float(pv)
+                    if p > 0:
+                        rows.append({"data_ref": dr, "preco": p})
+                        break
+                except:
+                    continue
+            break  # encontrou data, vai para próxima linha
+
     rows.sort(key=lambda r: r["data_ref"])
     if rows:
         log.info(f"[ETANOL] diário: {len(rows)} registros | {rows[0]['data_ref']} → {rows[-1]['data_ref']}")
+    else:
+        log.warning("[ETANOL] diário: nenhum registro válido encontrado")
     return rows
 
 
