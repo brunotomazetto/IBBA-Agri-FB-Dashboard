@@ -43,7 +43,7 @@ jobs:
       - name: Instalar dependências
         run: |
           pip install --upgrade pip
-          pip install requests pandas openpyxl xlrd
+          pip install requests pandas openpyxl xlrd yfinance
 
       # ── 4. Executar extractor ─────────────────────────────────────────────────
       - name: Executar extractor_se.py
