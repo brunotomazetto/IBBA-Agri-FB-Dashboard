@@ -5,27 +5,73 @@ extractor_se.py — IBBA Agri Monitor · S&E Dashboard
 Execução diária via GitHub Actions.
 
 Fontes:
-  NY11   → Yahoo Finance (SB=F), diário, sem bloqueio
+  NY11   → Yahoo Finance (SB=F), diário
   Etanol → UDOP (udop.com.br/indicadores-etanol)
              Indicador Diário ESALQ/BM&FBovespa Posto Paulínia (SP)
              Mesma série do CEPEA, sem Cloudflare, sem login
-             Frequência: diária | Unidade: R$/m³ → ÷1000 = R$/litro
-             Acesso via undetected-chromedriver (Xvfb no GitHub Actions)
+             Unidade armazenada: R$/m³ (valor original UDOP × 1000)
+  Câmbio → BCB API (PTAX oficial), diário
+
+═══════════════════════════════════════════════════════════════
+RACIONAL — PREÇO EQUIVALENTE ETANOL vs AÇÚCAR
+═══════════════════════════════════════════════════════════════
+
+O dashboard vai comparar o preço do Açúcar NY11 (USDc/lb) com o
+preço equivalente do Etanol Hidratado convertido para USDc/lb,
+permitindo ver qual produto compensa mais produzir na usina.
+
+Fórmula (replicada do Excel de referência IBBA):
+
+  Etanol_equiv (USDc/lb) =
+    (
+      (Etanol_R$/m³ × ATR_VHP / ATR_Hydrous)
+      + Frete_R$/ton
+      + (Elevação_USD/ton × FX_R$/USD)
+    )
+    ÷ conv_l_ton        [l/ton  → 1.04]
+    ÷ conv_ton_lb       [ton/lb → 22.0]
+    ÷ FX_R$/USD
+
+Parâmetros fixos (podem mudar por safra — ajustar aqui):
+  ATR_VHP      = 1.05    (kg ATR / litro VHP)
+  ATR_Hydrous  = 1.68    (kg ATR / litro hidratado)
+  Frete        = 85.0    (R$/ton)
+  Elevação     = 10.5    (USD/ton — custo FOB/porto)
+  conv_l_ton   = 1.04    (litros por tonelada de etanol)
+  conv_ton_lb  = 22.0    (conversão ton→lb no contexto açúcar)
+
+IMPORTANTE: O preço equivalente NÃO é armazenado no banco.
+É calculado on-the-fly no dashboard usando os parâmetros acima.
+Assim, mudando um parâmetro, todo o histórico se atualiza.
+
+Validação: 18/03/2026 → Etanol=3040 R$/m³, FX=5.20 → 17.14 USDc/lb ✓
+
+═══════════════════════════════════════════════════════════════
+TABELAS DO BANCO (commodities.db)
+═══════════════════════════════════════════════════════════════
+  sugar_ny11    → preço diário NY11 (USDc/lb)
+  etanol_cepea  → preço diário etanol hidratado (R$/m³)
+  fx_usdbrl     → câmbio diário PTAX USD/BRL (R$/USD)
 """
 
-import io, logging, re, sqlite3, subprocess, sys, time
+import logging, sqlite3, subprocess, time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 try:
     import pandas as pd
 except ImportError:
-    raise SystemExit("pip install pandas yfinance undetected-chromedriver selenium")
+    raise SystemExit("pip install pandas yfinance undetected-chromedriver selenium requests")
 
 try:
     import yfinance as yf
 except ImportError:
     raise SystemExit("pip install yfinance")
+
+try:
+    import requests
+except ImportError:
+    raise SystemExit("pip install requests")
 
 try:
     import undetected_chromedriver as uc
@@ -41,6 +87,7 @@ DB_PATH       = Path(__file__).parent / "commodities.db"
 YF_TICKER     = "SB=F"
 HISTORY_START = "2010-01-01"
 UDOP_URL      = "https://www.udop.com.br/indicadores-etanol"
+BCB_PTAX_URL  = "https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)?@dataInicial='{di}'&@dataFinalCotacao='{df}'&$top=1000&$orderby=dataHoraCotacao%20asc&$format=json&$select=cotacaoVenda,dataHoraCotacao"
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -59,12 +106,22 @@ def ensure_schema(conn):
         open_usdclb REAL, high_usdclb REAL, low_usdclb REAL, volume REAL,
         fonte TEXT DEFAULT 'Yahoo/SB=F', updated_at TEXT, UNIQUE(data_referencia));
     CREATE INDEX IF NOT EXISTS idx_sugar_data ON sugar_ny11(data_referencia);
+
     CREATE TABLE IF NOT EXISTS etanol_cepea (
         id INTEGER PRIMARY KEY AUTOINCREMENT, data_referencia TEXT NOT NULL,
-        ano INTEGER, mes INTEGER, preco_brl_l REAL NOT NULL,
+        ano INTEGER, mes INTEGER,
+        preco_brl_m3 REAL NOT NULL,
         fonte TEXT DEFAULT 'UDOP/CEPEA-Paulinia', updated_at TEXT,
         UNIQUE(data_referencia));
     CREATE INDEX IF NOT EXISTS idx_etanol_data ON etanol_cepea(data_referencia);
+
+    CREATE TABLE IF NOT EXISTS fx_usdbrl (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, data_referencia TEXT NOT NULL,
+        ano INTEGER, mes INTEGER,
+        ptax_venda REAL NOT NULL,
+        fonte TEXT DEFAULT 'BCB/PTAX', updated_at TEXT,
+        UNIQUE(data_referencia));
+    CREATE INDEX IF NOT EXISTS idx_fx_data ON fx_usdbrl(data_referencia);
     """)
     conn.commit()
     log.info(f"Schema OK — banco: {DB_PATH}")
@@ -124,15 +181,58 @@ def fetch_sugar_ny11(conn, now_str):
 
 
 # ════════════════════════════════════════════════════════════════════════════════
+# CÂMBIO — BCB PTAX
+# ════════════════════════════════════════════════════════════════════════════════
+def fetch_fx_usdbrl(conn, now_str):
+    """
+    Coleta PTAX venda USD/BRL via API do Banco Central do Brasil.
+    Frequência: diária (dias úteis).
+    Histórico: desde HISTORY_START.
+    """
+    log.info("[FX] Buscando PTAX USD/BRL (BCB)...")
+    last  = _last_date(conn, "fx_usdbrl")
+    start = (datetime.strptime(last, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d") if last else HISTORY_START
+    today = date.today().strftime("%Y-%m-%d")
+    if start > today:
+        log.info("[FX] Já atualizado."); return 0
+
+    # BCB API usa formato MM-DD-YYYY
+    di = datetime.strptime(start, "%Y-%m-%d").strftime("%m-%d-%Y")
+    df = datetime.strptime(today,  "%Y-%m-%d").strftime("%m-%d-%Y")
+    url = BCB_PTAX_URL.format(di=di, df=df)
+
+    log.info(f"[FX] {start} → hoje")
+    try:
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        data = r.json().get("value", [])
+    except Exception as e:
+        log.error(f"[FX] Falha BCB: {e}"); return 0
+
+    inserted = 0
+    for item in data:
+        raw_dt   = item.get("dataHoraCotacao","")[:10]  # "YYYY-MM-DD"
+        ptax     = item.get("cotacaoVenda")
+        if not raw_dt or ptax is None: continue
+        dr = raw_dt  # já em YYYY-MM-DD
+        conn.execute(
+            "INSERT OR IGNORE INTO fx_usdbrl (data_referencia,ano,mes,ptax_venda,updated_at) VALUES(?,?,?,?,?)",
+            (dr, int(dr[:4]), int(dr[5:7]), float(ptax), now_str))
+        if conn.execute("SELECT changes()").fetchone()[0]: inserted += 1
+
+    conn.commit()
+    log.info(f"[FX] {inserted} linhas inseridas.")
+    return inserted
+
+
+# ════════════════════════════════════════════════════════════════════════════════
 # ETANOL — UDOP via undetected-chromedriver
 # ════════════════════════════════════════════════════════════════════════════════
 def make_driver():
-    """Cria driver detectando automaticamente a versão do Chrome instalado."""
     chrome_path = subprocess.run(["which","google-chrome"], capture_output=True, text=True).stdout.strip()
     ver_str     = subprocess.run([chrome_path,"--version"], capture_output=True, text=True).stdout.strip()
     major       = int(ver_str.split()[-1].split(".")[0])
     log.info(f"[ETANOL] Chrome: {ver_str} (major={major})")
-
     opts = uc.ChromeOptions()
     opts.binary_location = chrome_path
     opts.add_argument("--no-sandbox")
@@ -142,33 +242,31 @@ def make_driver():
     opts.add_argument("--lang=pt-BR")
     return uc.Chrome(options=opts, version_main=major)
 
-
 def fetch_etanol_cepea(conn, now_str):
+    """
+    Coleta preço diário do etanol hidratado via UDOP.
+    Armazena em R$/m³ (valor original — não divide por 1000).
+    O dashboard converte para R$/l quando necessário (÷ 1000).
+    """
     last = _last_date(conn, "etanol_cepea")
     log.info(f"[ETANOL] Último no banco: {last or 'nenhum'}")
 
-    driver = None
-    rows   = []
+    driver, rows = None, []
     try:
         driver = make_driver()
         log.info(f"[ETANOL] Navegando para {UDOP_URL}")
         driver.get(UDOP_URL)
         time.sleep(8)
 
-        # Garante que a aba "Diário" e "São Paulo" estão selecionados
-        # (já são o default, mas clica para garantir)
         try:
-            btn_diario = driver.find_element(By.XPATH, "//button[contains(text(),'Diário') or contains(text(),'Di')]")
-            btn_diario.click()
+            driver.find_element(By.XPATH, "//button[contains(text(),'Diário') or contains(text(),'Di')]").click()
             time.sleep(2)
         except: pass
         try:
-            btn_sp = driver.find_element(By.XPATH, "//button[contains(text(),'São Paulo')]")
-            btn_sp.click()
+            driver.find_element(By.XPATH, "//button[contains(text(),'São Paulo')]").click()
             time.sleep(2)
         except: pass
 
-        # Lê a tabela de preços
         tabela = driver.find_element(By.CSS_SELECTOR, "table")
         linhas = tabela.find_elements(By.TAG_NAME, "tr")
         log.info(f"[ETANOL] Linhas na tabela: {len(linhas)}")
@@ -179,17 +277,13 @@ def fetch_etanol_cepea(conn, now_str):
             dr = _parse_date(cels[0])
             if not dr: continue
             try:
-                # Valor está em R$/m³ → divide por 1000 → R$/litro
+                # Valor da tabela UDOP já está em R$/m³ (ex: 2.948,50)
                 val_m3 = float(cels[1].replace(".","").replace(",","."))
                 if val_m3 <= 0: continue
-                preco_l = round(val_m3 / 1000, 6)
-                rows.append({"data_ref": dr, "preco": preco_l})
+                rows.append({"data_ref": dr, "preco_m3": val_m3})
             except: continue
 
-        log.info(f"[ETANOL] {len(rows)} registros lidos da tabela")
-        if rows:
-            log.info(f"[ETANOL] Período: {rows[-1]['data_ref']} → {rows[0]['data_ref']}")
-            log.info(f"[ETANOL] Amostra: {rows[:3]}")
+        log.info(f"[ETANOL] {len(rows)} registros lidos | {rows[-1]['data_ref'] if rows else '—'} → {rows[0]['data_ref'] if rows else '—'}")
 
     except Exception as e:
         log.error(f"[ETANOL] Erro: {e}")
@@ -199,10 +293,8 @@ def fetch_etanol_cepea(conn, now_str):
             except: pass
 
     if not rows:
-        log.error("[ETANOL] Nenhum dado obtido.")
-        return 0
+        log.error("[ETANOL] Nenhum dado obtido."); return 0
 
-    # Insere apenas registros novos
     if last:
         rows = [r for r in rows if r["data_ref"] > last]
     if not rows:
@@ -211,8 +303,8 @@ def fetch_etanol_cepea(conn, now_str):
     inserted = 0
     for r in rows:
         conn.execute(
-            "INSERT OR IGNORE INTO etanol_cepea (data_referencia,ano,mes,preco_brl_l,updated_at) VALUES(?,?,?,?,?)",
-            (r["data_ref"],int(r["data_ref"][:4]),int(r["data_ref"][5:7]),r["preco"],now_str))
+            "INSERT OR IGNORE INTO etanol_cepea (data_referencia,ano,mes,preco_brl_m3,updated_at) VALUES(?,?,?,?,?)",
+            (r["data_ref"], int(r["data_ref"][:4]), int(r["data_ref"][5:7]), r["preco_m3"], now_str))
         if conn.execute("SELECT changes()").fetchone()[0]: inserted += 1
     conn.commit()
     log.info(f"[ETANOL] {inserted} novas linhas inseridas.")
@@ -223,24 +315,25 @@ def fetch_etanol_cepea(conn, now_str):
 # SUMMARY + MAIN
 # ════════════════════════════════════════════════════════════════════════════════
 def _summary(conn):
-    log.info("=" * 60)
+    log.info("=" * 62)
     log.info("RESUMO DO BANCO")
     for table, label, col, unit in [
-        ("sugar_ny11",   "Açúcar NY11",            "preco_usdclb", "USDc/lb"),
-        ("etanol_cepea", "Etanol Hidratado UDOP",   "preco_brl_l",  "R$/l"),
+        ("sugar_ny11",  "Açúcar NY11",       "preco_usdclb", "USDc/lb"),
+        ("etanol_cepea","Etanol (UDOP/CEPEA)","preco_brl_m3", "R$/m³"),
+        ("fx_usdbrl",   "Câmbio PTAX",        "ptax_venda",   "R$/USD"),
     ]:
         r = conn.execute(f"SELECT COUNT(*), MIN(data_referencia), MAX(data_referencia) FROM {table}").fetchone()
         n, dmin, dmax = r
         last = conn.execute(f"SELECT data_referencia, {col} FROM {table} ORDER BY data_referencia DESC LIMIT 1").fetchone()
         ls = f"{last[1]:.4f} {unit}" if last and last[1] else "—"
-        log.info(f"  {label:28}: {n:6} | {dmin or '—'} → {dmax or '—'} | Último: {last[0] if last else '—'} = {ls}")
-    log.info("=" * 60)
+        log.info(f"  {label:26}: {n:6} | {dmin or '—'} → {dmax or '—'} | Último: {last[0] if last else '—'} = {ls}")
+    log.info("=" * 62)
 
 def main():
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log.info("=" * 60)
+    log.info("=" * 62)
     log.info(f"S&E Extractor | Banco: {DB_PATH} | {now_str}")
-    log.info("=" * 60)
+    log.info("=" * 62)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = get_conn()
     ensure_schema(conn)
@@ -248,12 +341,17 @@ def main():
     log.info("--- NY11 ---")
     n1 = fetch_sugar_ny11(conn, now_str)
     time.sleep(1)
+
+    log.info("--- Câmbio PTAX (BCB) ---")
+    n2 = fetch_fx_usdbrl(conn, now_str)
+    time.sleep(1)
+
     log.info("--- Etanol (UDOP/CEPEA) ---")
-    n2 = fetch_etanol_cepea(conn, now_str)
+    n3 = fetch_etanol_cepea(conn, now_str)
 
     _summary(conn)
     conn.close()
-    log.info(f"Fim — NY11: {n1} | Etanol: {n2}")
+    log.info(f"Fim — NY11: {n1} | FX: {n2} | Etanol: {n3}")
 
 if __name__ == "__main__":
     main()
