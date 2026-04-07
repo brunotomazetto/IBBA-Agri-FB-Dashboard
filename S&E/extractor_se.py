@@ -8,7 +8,8 @@ Fluxo:
   1. Coleta histórico de preço spot de Açúcar NY11 (USDc/lb)
      → Fonte: Yahoo Finance (SB=F — Sugar No. 11 front-month continuous)
   2. Coleta histórico de preço de Etanol Hidratado Carburante
-     → Fonte: CEPEA/ESALQ — download da planilha Excel oficial
+     → Fonte: CEPEA/ESALQ — API JSON interna (sem bloqueio de datacenter)
+              Fallback: download da planilha Excel oficial
   3. Salva tudo em commodities.db (SQLite) dentro da pasta S&E
 
 ═══════════════════════════════════════════════════════════════
@@ -16,14 +17,14 @@ FONTES
 ═══════════════════════════════════════════════════════════════
 
   AÇÚCAR NY11  → Yahoo Finance (yfinance)
-                  Ticker  : SB=F  (ICE Sugar No. 11 front-month)
-                  Campo   : Close (preço de fechamento em USDc/lb)
-                  Unidade : USDc/lb
+                  Ticker  : SB=F
+                  Campo   : Close (USDc/lb)
                   Freq.   : diária (dias úteis)
-                  Sem API key — gratuito e sem restrição de acesso
 
-  ETANOL HIDRATADO → CEPEA/ESALQ — Indicador Etanol Hidratado
-                  Produto : 17 / Indicador : 338 (Hidratado Carburante)
+  ETANOL HIDRATADO → CEPEA/ESALQ
+                  Método 1: API JSON  esalqlog.esalq.usp.br  (preferido)
+                  Método 2: API JSON  cepea.esalq.usp.br/api  (fallback)
+                  Método 3: planilha Excel widgetpastas       (último recurso)
                   Unidade : R$/litro (à vista, posto usina São Paulo)
                   Freq.   : diária (dias úteis)
 
@@ -37,6 +38,7 @@ ESTRUTURA DO BANCO (commodities.db)
 """
 
 import io
+import json
 import logging
 import sqlite3
 import time
@@ -66,15 +68,25 @@ log = logging.getLogger(__name__)
 # ── Caminhos ──────────────────────────────────────────────────────────────────
 DB_PATH = Path(__file__).parent / "commodities.db"
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Config NY11 ───────────────────────────────────────────────────────────────
 YF_TICKER     = "SB=F"
 HISTORY_START = "2010-01-01"
 
-CEPEA_DOWNLOAD_URL = "https://www.cepea.esalq.usp.br/br/widgetpastas/17/indicador/338.aspx"
-CEPEA_REFERER_URL  = "https://www.cepea.esalq.usp.br/br/indicador/etanol.aspx"
-
-MAX_RETRIES = 3
-RETRY_DELAY = 5
+# ── Config CEPEA ──────────────────────────────────────────────────────────────
+# Método 1 — API JSON interna usada pelo próprio widget do site CEPEA
+# Retorna série completa em JSON sem autenticação
+CEPEA_JSON_URL_1 = (
+    "https://esalqlog.esalq.usp.br/RecebeIndicadorCepea"
+    "?indicador_id=338&produto_id=17"
+)
+# Método 2 — endpoint alternativo documentado em projetos open-source que
+# consultam o CEPEA (ex: pycepea, agrotools)
+CEPEA_JSON_URL_2 = (
+    "https://www.cepea.esalq.usp.br/br/indicador/etanol/ind_etanol.json.js"
+)
+# Método 3 — planilha Excel (funciona localmente, pode ser bloqueada em CI)
+CEPEA_XLS_URL    = "https://www.cepea.esalq.usp.br/br/widgetpastas/17/indicador/338.aspx"
+CEPEA_REFERER    = "https://www.cepea.esalq.usp.br/br/indicador/etanol.aspx"
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -136,15 +148,55 @@ def _safe_float(val) -> float | None:
         return None
 
 
+def _parse_date_br(raw: str) -> str | None:
+    raw = raw.strip()
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+def _insert_etanol_rows(
+    conn: sqlite3.Connection,
+    rows: list[dict],
+    last: str | None,
+    now_str: str,
+) -> int:
+    """Insere lista de {'data_ref': str, 'preco': float} filtrando já existentes."""
+    if last:
+        rows = [r for r in rows if r["data_ref"] > last]
+    if not rows:
+        log.info("[ETANOL] Dados já atualizados. Nada a inserir.")
+        return 0
+    inserted = 0
+    for row in rows:
+        try:
+            conn.execute(
+                """INSERT OR IGNORE INTO etanol_cepea
+                   (data_referencia, ano, mes, preco_brl_l, updated_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    row["data_ref"],
+                    int(row["data_ref"][:4]),
+                    int(row["data_ref"][5:7]),
+                    float(row["preco"]),
+                    now_str,
+                ),
+            )
+            if conn.execute("SELECT changes()").fetchone()[0]:
+                inserted += 1
+        except Exception as exc:
+            log.warning(f"[ETANOL] Erro ao inserir {row['data_ref']}: {exc}")
+    conn.commit()
+    return inserted
+
+
 # ════════════════════════════════════════════════════════════════════════════════
 # FETCH — AÇÚCAR NY11 (Yahoo Finance · SB=F)
 # ════════════════════════════════════════════════════════════════════════════════
 def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
-    """
-    Coleta histórico do NY11 via yfinance (ticker SB=F).
-    Gratuito, sem API key, sem bloqueio em ambientes CI/CD.
-    Close = preço de fechamento em USDc/lb.
-    """
     log.info("[NY11] Buscando dados Yahoo Finance (SB=F)...")
 
     last  = _last_date(conn, "sugar_ny11")
@@ -155,7 +207,7 @@ def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
     today = date.today().strftime("%Y-%m-%d")
 
     if start > today:
-        log.info("[NY11] Dados já atualizados até hoje. Nada a fazer.")
+        log.info("[NY11] Dados já atualizados até hoje.")
         return 0
 
     log.info(f"[NY11] Buscando de {start} até hoje")
@@ -164,14 +216,13 @@ def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
         ticker = yf.Ticker(YF_TICKER)
         df = ticker.history(start=start, end=today, auto_adjust=False)
     except Exception as exc:
-        log.error(f"[NY11] Falha ao buscar yfinance: {exc}")
+        log.error(f"[NY11] Falha yfinance: {exc}")
         return 0
 
     if df is None or df.empty:
-        log.info("[NY11] Nenhum dado novo retornado.")
+        log.info("[NY11] Nenhum dado novo.")
         return 0
 
-    # Normaliza índice tz-aware → naive date string
     df.index = pd.to_datetime(df.index).tz_localize(None)
 
     inserted = 0
@@ -207,18 +258,98 @@ def fetch_sugar_ny11(conn: sqlite3.Connection, now_str: str) -> int:
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# FETCH — ETANOL HIDRATADO CEPEA/ESALQ
+# FETCH — ETANOL CEPEA  (cadeia de métodos)
 # ════════════════════════════════════════════════════════════════════════════════
 def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
-    """
-    Baixa a planilha Excel do CEPEA (Indicador Etanol Hidratado).
-    Usa sessão com cookies + headers completos de browser para evitar 403.
-    """
-    log.info("[ETANOL] Buscando planilha CEPEA/ESALQ...")
-
     last = _last_date(conn, "etanol_cepea")
     log.info(f"[ETANOL] Último registro no banco: {last or 'nenhum'}")
 
+    # ── Método 1: API JSON esalqlog ───────────────────────────────────────────
+    rows = _cepea_method_json_esalqlog()
+    if rows:
+        log.info(f"[ETANOL] Método 1 (esalqlog JSON): {len(rows)} registros brutos")
+        inserted = _insert_etanol_rows(conn, rows, last, now_str)
+        log.info(f"[ETANOL] {inserted} novas linhas inseridas.")
+        return inserted
+
+    # ── Método 2: JSON alternativo cepea.esalq.usp.br ────────────────────────
+    log.info("[ETANOL] Método 1 falhou — tentando Método 2 (JSON alternativo)...")
+    rows = _cepea_method_json_alt()
+    if rows:
+        log.info(f"[ETANOL] Método 2 (JSON alt): {len(rows)} registros brutos")
+        inserted = _insert_etanol_rows(conn, rows, last, now_str)
+        log.info(f"[ETANOL] {inserted} novas linhas inseridas.")
+        return inserted
+
+    # ── Método 3: planilha Excel ──────────────────────────────────────────────
+    log.info("[ETANOL] Método 2 falhou — tentando Método 3 (Excel)...")
+    rows = _cepea_method_excel()
+    if rows:
+        log.info(f"[ETANOL] Método 3 (Excel): {len(rows)} registros brutos")
+        inserted = _insert_etanol_rows(conn, rows, last, now_str)
+        log.info(f"[ETANOL] {inserted} novas linhas inseridas.")
+        return inserted
+
+    log.error("[ETANOL] Todos os métodos falharam. Verifique conectividade com o CEPEA.")
+    return 0
+
+
+# ── Método 1 — API JSON esalqlog (usada internamente pelo widget CEPEA) ───────
+def _cepea_method_json_esalqlog() -> list[dict]:
+    """
+    Endpoint JSON interno do CEPEA descoberto via DevTools no site deles.
+    Retorna array de objetos com campos Data e Preco (ou variantes).
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0",
+        "Accept":     "application/json, text/javascript, */*",
+        "Referer":    CEPEA_REFERER,
+        "Origin":     "https://www.cepea.esalq.usp.br",
+    }
+    try:
+        resp = requests.get(CEPEA_JSON_URL_1, headers=headers, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        return _parse_cepea_json(data)
+    except Exception as exc:
+        log.warning(f"[ETANOL] Método 1 falhou: {exc}")
+        return []
+
+
+# ── Método 2 — JSON alternativo ───────────────────────────────────────────────
+def _cepea_method_json_alt() -> list[dict]:
+    """
+    Arquivo .json.js servido pelo CEPEA para o gráfico do indicador.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0",
+        "Accept":     "application/json, text/javascript, */*",
+        "Referer":    CEPEA_REFERER,
+    }
+    try:
+        resp = requests.get(CEPEA_JSON_URL_2, headers=headers, timeout=30)
+        resp.raise_for_status()
+        # Remove possível wrapper de função JS: callback({...}) → {...}
+        text = resp.text.strip()
+        if text.startswith("("):
+            text = text[1:]
+        if text.endswith(")"):
+            text = text[:-1]
+        # Tenta também remover prefixo de callback nomeado
+        if "(" in text[:30]:
+            text = text[text.index("(") + 1:]
+            if text.endswith(")"):
+                text = text[:-1]
+        data = json.loads(text)
+        return _parse_cepea_json(data)
+    except Exception as exc:
+        log.warning(f"[ETANOL] Método 2 falhou: {exc}")
+        return []
+
+
+# ── Método 3 — Excel via sessão com cookies ───────────────────────────────────
+def _cepea_method_excel() -> list[dict]:
+    """Download da planilha Excel com sessão autenticada por cookies."""
     session = requests.Session()
     session.headers.update({
         "User-Agent": (
@@ -226,108 +357,118 @@ def fetch_etanol_cepea(conn: sqlite3.Connection, now_str: str) -> int:
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/123.0.0.0 Safari/537.36"
         ),
-        "Accept": (
-            "text/html,application/xhtml+xml,application/xml;q=0.9,"
-            "image/avif,image/webp,image/apng,*/*;q=0.8"
-        ),
-        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Language": "pt-BR,pt;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection":      "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
     })
-
-    # Passo 1 — visita a página de indicador para pegar cookies de sessão
     try:
-        log.info("[ETANOL] Obtendo cookies de sessão...")
-        session.get(CEPEA_REFERER_URL, timeout=30)
+        # Obtém cookies visitando a página principal
+        session.get(CEPEA_REFERER, timeout=30)
         time.sleep(2)
-    except Exception as exc:
-        log.warning(f"[ETANOL] Aviso ao obter cookies (continuando): {exc}")
-
-    # Passo 2 — download do Excel com Referer correto
-    try:
-        log.info("[ETANOL] Baixando planilha Excel...")
         resp = session.get(
-            CEPEA_DOWNLOAD_URL,
-            headers={"Referer": CEPEA_REFERER_URL},
+            CEPEA_XLS_URL,
+            headers={"Referer": CEPEA_REFERER},
             timeout=60,
         )
         resp.raise_for_status()
     except Exception as exc:
-        log.error(f"[ETANOL] Falha ao baixar planilha: {exc}")
-        return 0
+        log.warning(f"[ETANOL] Método 3 (Excel) falhou no download: {exc}")
+        return []
 
-    content_type = resp.headers.get("Content-Type", "")
-    log.info(f"[ETANOL] Content-Type: {content_type} | Tamanho: {len(resp.content):,} bytes")
-
-    # Verifica magic bytes para confirmar que é um Excel
+    # Verifica magic bytes
     is_xlsx = resp.content[:4] == b"PK\x03\x04"
     is_xls  = resp.content[:4] == b"\xd0\xcf\x11\xe0"
+    if not (is_xlsx or is_xls):
+        log.warning(f"[ETANOL] Método 3: resposta não é Excel ({len(resp.content)} bytes)")
+        debug = Path(__file__).parent / "debug_cepea.bin"
+        debug.write_bytes(resp.content)
+        log.info(f"[ETANOL] Salvo para debug: {debug}")
+        return []
 
-    if not (is_xlsx or is_xls or "spreadsheet" in content_type or "excel" in content_type):
-        log.error(
-            f"[ETANOL] Resposta não é Excel. "
-            f"Primeiros 200 bytes: {resp.content[:200]}"
-        )
-        debug_path = Path(__file__).parent / "debug_cepea_response.bin"
-        debug_path.write_bytes(resp.content)
-        log.info(f"[ETANOL] Arquivo salvo para debug: {debug_path}")
-        return 0
-
-    # Parse da planilha
     try:
-        df = _parse_cepea_excel(resp.content, is_xlsx)
+        return _parse_cepea_excel(resp.content, is_xlsx)
     except Exception as exc:
-        log.error(f"[ETANOL] Falha ao parsear Excel: {exc}")
-        return 0
+        log.warning(f"[ETANOL] Método 3: falha ao parsear Excel: {exc}")
+        return []
 
-    if df is None or df.empty:
-        log.warning("[ETANOL] Planilha vazia ou não reconhecida.")
-        return 0
 
-    log.info(f"[ETANOL] {len(df)} linhas lidas da planilha.")
+# ── Parsers ───────────────────────────────────────────────────────────────────
+def _parse_cepea_json(data) -> list[dict]:
+    """
+    Aceita múltiplos formatos de resposta JSON do CEPEA:
+      - Lista de dicts: [{"Data": "01/01/2024", "Preco": 3.5}, ...]
+      - Dict com chave de dados: {"data": [...], "values": [...]}
+      - Lista de listas: [["01/01/2024", 3.5], ...]
+    """
+    rows = []
 
-    if last:
-        df = df[df["data_ref"] > last]
+    # Normaliza para lista
+    if isinstance(data, dict):
+        # Procura a primeira chave que seja lista
+        for key in ("data", "Data", "values", "series", "itens", "items"):
+            if key in data and isinstance(data[key], list):
+                data = data[key]
+                break
+        else:
+            # Tenta a primeira chave com lista
+            for v in data.values():
+                if isinstance(v, list) and len(v) > 10:
+                    data = v
+                    break
 
-    if df.empty:
-        log.info("[ETANOL] Dados já atualizados. Nada a inserir.")
-        return 0
+    if not isinstance(data, list):
+        log.warning(f"[ETANOL] JSON inesperado: tipo={type(data)}")
+        return []
 
-    inserted = 0
-    for _, row in df.iterrows():
-        data_ref = row["data_ref"]
-        preco    = row["preco"]
-        if not data_ref or preco is None:
+    for item in data:
+        # Formato dict
+        if isinstance(item, dict):
+            # Chave de data
+            raw_date = None
+            for k in ("Data", "data", "date", "dt", "Dt", "DATE"):
+                if k in item:
+                    raw_date = str(item[k])
+                    break
+            # Chave de preço (preferência: à vista)
+            raw_preco = None
+            for k in ("Preco", "preco", "price", "Price",
+                       "valor", "Valor", "close", "Close",
+                       "AVistaReal", "a_vista_real", "AVista"):
+                if k in item and item[k] not in (None, "", "-"):
+                    raw_preco = item[k]
+                    break
+
+        # Formato lista [data, preco]
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            raw_date  = str(item[0])
+            raw_preco = item[1]
+        else:
+            continue
+
+        data_ref = _parse_date_br(raw_date) if raw_date else None
+        if not data_ref:
             continue
         try:
-            conn.execute(
-                """INSERT OR IGNORE INTO etanol_cepea
-                   (data_referencia, ano, mes, preco_brl_l, updated_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (data_ref, int(data_ref[:4]), int(data_ref[5:7]), float(preco), now_str),
-            )
-            if conn.execute("SELECT changes()").fetchone()[0]:
-                inserted += 1
-        except Exception as exc:
-            log.warning(f"[ETANOL] Erro ao inserir {data_ref}: {exc}")
+            preco = float(str(raw_preco).replace(",", "."))
+            if preco <= 0:
+                continue
+        except (ValueError, TypeError):
+            continue
 
-    conn.commit()
-    log.info(f"[ETANOL] {inserted} novas linhas inseridas.")
-    return inserted
+        rows.append({"data_ref": data_ref, "preco": preco})
+
+    # Ordena por data
+    rows.sort(key=lambda r: r["data_ref"])
+    return rows
 
 
-def _parse_cepea_excel(content: bytes, is_xlsx: bool) -> "pd.DataFrame | None":
-    """
-    Lê planilha CEPEA e retorna DataFrame com ['data_ref', 'preco'].
-    Tolerante a cabeçalhos descritivos e variações de layout.
-    """
+def _parse_cepea_excel(content: bytes, is_xlsx: bool) -> list[dict]:
+    """Lê planilha Excel CEPEA e retorna lista de {'data_ref', 'preco'}."""
     engine = "openpyxl" if is_xlsx else "xlrd"
     buf    = io.BytesIO(content)
+    raw    = pd.read_excel(buf, engine=engine, header=None, dtype=str)
 
-    # Lê sem header para localizar linha de cabeçalho real
-    raw = pd.read_excel(buf, engine=engine, header=None, dtype=str)
-
+    # Localiza linha de cabeçalho
     header_row = 0
     for i, row in raw.iterrows():
         row_str = " ".join(str(v).lower() for v in row.values if pd.notna(v))
@@ -344,10 +485,8 @@ def _parse_cepea_excel(content: bytes, is_xlsx: bool) -> "pd.DataFrame | None":
         (c for c in df.columns if any(k in c for k in ["vista", "valor", "preço", "preco", "r$"])),
         None,
     )
-
     if not col_data or not col_preco:
-        log.error(f"[ETANOL] Colunas não identificadas. Disponíveis: {list(df.columns)}")
-        return None
+        raise ValueError(f"Colunas não encontradas: {list(df.columns)}")
 
     rows = []
     for _, row in df.iterrows():
@@ -362,19 +501,8 @@ def _parse_cepea_excel(content: bytes, is_xlsx: bool) -> "pd.DataFrame | None":
             continue
         rows.append({"data_ref": data_ref, "preco": preco})
 
-    if not rows:
-        return None
-
-    return pd.DataFrame(rows).sort_values("data_ref").reset_index(drop=True)
-
-
-def _parse_date_br(raw: str) -> "str | None":
-    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
-        except ValueError:
-            continue
-    return None
+    rows.sort(key=lambda r: r["data_ref"])
+    return rows
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -388,7 +516,7 @@ def _summary(conn: sqlite3.Connection) -> None:
         ("etanol_cepea", "Etanol Hidratado CEPEA", "preco_brl_l",  "R$/l"),
     ]:
         try:
-            r    = conn.execute(
+            r = conn.execute(
                 f"SELECT COUNT(*), MIN(data_referencia), MAX(data_referencia) FROM {table}"
             ).fetchone()
             n, dt_min, dt_max = r
