@@ -37,17 +37,21 @@ jobs:
           google-chrome --version
 
       - name: Run extractor.py
+        env:
+          SCRIPT_DIR: "Sugar and Ethanol"
         run: |
           Xvfb :99 -screen 0 1280x900x24 &
           export DISPLAY=:99
           sleep 2
-          python "S&E/extractor.py"
+          python "$SCRIPT_DIR/extractor.py"
 
       - name: Commit commodities.db
+        env:
+          SCRIPT_DIR: "Sugar and Ethanol"
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add 'S&E/commodities.db'
+          git add "$SCRIPT_DIR/commodities.db"
           git diff --staged --quiet || \
             git commit -m "chore: data update [$(date -u '+%Y-%m-%d %H:%M UTC')]"
           git pull --rebase origin main
