@@ -4,7 +4,7 @@ on:
   schedule:
     # Roda todo dia de 1 a 10 de cada mês às 11h UTC (8h Brasília)
     - cron: "0 11 1-10 * *"
-  workflow_dispatch: # permite rodar manualmente pelo GitHub
+  workflow_dispatch:
 
 jobs:
   update:
@@ -23,12 +23,12 @@ jobs:
         run: pip install requests pandas
 
       - name: Roda extractor
-        run: python secex/extractor_secex.py
+        run: python "Agri Monitor/secex/extractor_secex.py"
 
       - name: Commit e push do .db atualizado
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add secex/secex.db
+          git add "Agri Monitor/secex/secex.db"
           git diff --cached --quiet || git commit -m "chore: atualiza secex.db $(date +'%Y-%m')"
           git push
