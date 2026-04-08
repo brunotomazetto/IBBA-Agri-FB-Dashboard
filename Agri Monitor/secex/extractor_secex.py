@@ -1,36 +1,35 @@
 import requests
 import pandas as pd
 import sqlite3
-import json
 import io
 import os
 from datetime import datetime
 
 # ── Configurações ──────────────────────────────────────────────────────────────
-DB_PATH  = "secex/secex.db"
+DB_PATH  = "Agri Monitor/secex/secex.db"
 BASE_URL = "https://balanca.economia.gov.br/balanca/bd/comexstat-bd/ncm/EXP_{ano}.csv"
 
 NCM_CONFIG = [
-    {"ncm": 12011000, "produto": "Soja para semeadura",        "categoria": "Soja"},
-    {"ncm": 12019000, "produto": "Soja em grão (outras)",      "categoria": "Soja"},
-    {"ncm": 10051000, "produto": "Milho para semeadura",       "categoria": "Milho"},
-    {"ncm": 10059010, "produto": "Milho em grão p/ moagem",    "categoria": "Milho"},
-    {"ncm": 10059090, "produto": "Milho em grão (outros)",     "categoria": "Milho"},
-    {"ncm": 52010010, "produto": "Algodão não cardado cru",    "categoria": "Algodão"},
-    {"ncm": 52010020, "produto": "Algodão não cardado branq.", "categoria": "Algodão"},
-    {"ncm": 52010090, "produto": "Algodão não cardado outros", "categoria": "Algodão"},
-    {"ncm": 52030000, "produto": "Algodão cardado ou penteado","categoria": "Algodão"},
-    {"ncm": 17011300, "produto": "Açúcar de cana industrial",  "categoria": "Açúcar"},
-    {"ncm": 17011400, "produto": "Açúcar de cana outros",      "categoria": "Açúcar"},
-    {"ncm": 17019900, "produto": "Outros açúcares",            "categoria": "Açúcar"},
+    {"ncm": 12011000, "produto": "Soja para semeadura",         "categoria": "Soja"},
+    {"ncm": 12019000, "produto": "Soja em grão (outras)",       "categoria": "Soja"},
+    {"ncm": 10051000, "produto": "Milho para semeadura",        "categoria": "Milho"},
+    {"ncm": 10059010, "produto": "Milho em grão p/ moagem",     "categoria": "Milho"},
+    {"ncm": 10059090, "produto": "Milho em grão (outros)",      "categoria": "Milho"},
+    {"ncm": 52010010, "produto": "Algodão não cardado cru",     "categoria": "Algodão"},
+    {"ncm": 52010020, "produto": "Algodão não cardado branq.",  "categoria": "Algodão"},
+    {"ncm": 52010090, "produto": "Algodão não cardado outros",  "categoria": "Algodão"},
+    {"ncm": 52030000, "produto": "Algodão cardado ou penteado", "categoria": "Algodão"},
+    {"ncm": 17011300, "produto": "Açúcar de cana industrial",   "categoria": "Açúcar"},
+    {"ncm": 17011400, "produto": "Açúcar de cana outros",       "categoria": "Açúcar"},
+    {"ncm": 17019900, "produto": "Outros açúcares",             "categoria": "Açúcar"},
 ]
 
-ncm_list      = [item["ncm"]      for item in NCM_CONFIG]
+ncm_list      = [item["ncm"]                   for item in NCM_CONFIG]
 ncm_produto   = {item["ncm"]: item["produto"]   for item in NCM_CONFIG}
 ncm_categoria = {item["ncm"]: item["categoria"] for item in NCM_CONFIG}
 
 # ── Inicializa banco ───────────────────────────────────────────────────────────
-os.makedirs("secex", exist_ok=True)
+os.makedirs("Agri Monitor/secex", exist_ok=True)
 
 conn = sqlite3.connect(DB_PATH)
 conn.execute("""
@@ -48,7 +47,7 @@ conn.execute("""
 """)
 conn.commit()
 
-# ── Descobre a partir de qual ano buscar ───────────────────────────────────────
+# ── Descobre a partir de qual ano/mês buscar ───────────────────────────────────
 cursor = conn.execute("""
     SELECT co_ano, co_mes FROM exportacoes
     ORDER BY co_ano DESC, co_mes DESC
@@ -59,15 +58,6 @@ row = cursor.fetchone()
 if row:
     ultimo_ano, ultimo_mes = row
     print(f"Banco existente — último dado: {ultimo_mes}/{ultimo_ano}")
-    anos = list(range(ultimo_ano, datetime.now().year + 1))
-else:
-    print("Banco vazio — carga histórica completa desde 1997.")
-    anos = list(range(1997, datetime.now().year + 1))
-row = cursor.fetchone()
-
-if row:
-    ultimo_ano = row[0]
-    print(f"Banco existente — buscando a partir de {ultimo_ano} (reprocessa ano corrente).")
     anos = list(range(ultimo_ano, datetime.now().year + 1))
 else:
     print("Banco vazio — carga histórica completa desde 1997.")
@@ -109,10 +99,10 @@ for ano in anos:
         df_agg["categoria"]  = df_agg["CO_NCM"].map(ncm_categoria)
         df_agg["produto"]    = df_agg["CO_NCM"].map(ncm_produto)
         df_agg["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        df_agg.columns = [c.lower() for c in df_agg.columns]
-        df_agg = df_agg[["co_ano", "co_mes", "co_ncm", "categoria", "produto", "vl_fob", "kg_liquido", "updated_at"]]
+        df_agg.columns       = [c.lower() for c in df_agg.columns]
+        df_agg               = df_agg[["co_ano", "co_mes", "co_ncm", "categoria", "produto", "vl_fob", "kg_liquido", "updated_at"]]
 
-        # INSERT OR REPLACE respeita a PRIMARY KEY — não duplica
+        # Usa tabela temporária para INSERT OR REPLACE sem erro de duplicata
         df_agg.to_sql("exportacoes_temp", conn, if_exists="replace", index=False)
         conn.execute("""
             INSERT OR REPLACE INTO exportacoes
