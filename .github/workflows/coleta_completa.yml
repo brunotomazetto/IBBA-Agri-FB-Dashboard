@@ -1,6 +1,8 @@
 name: Coleta Completa
 
 on:
+  schedule:
+    - cron: '0 6 * * *'  # 03:00 BRT
   workflow_dispatch:
 
 jobs:
@@ -19,8 +21,14 @@ jobs:
         run: |
           pip install playwright
           playwright install chromium --with-deps
-      - name: Coletar todas as categorias
-        run: python "Supermarket Prices/scraper.py" Cervejas Carnes Biscoitos Massas Mercearia
+      - name: Coletar Mercearia
+        run: python "Supermarket Prices/scraper.py" Mercearia
+      - name: Coletar Cervejas
+        run: python "Supermarket Prices/scraper.py" Cervejas
+      - name: Coletar Carnes
+        run: python "Supermarket Prices/scraper.py" Carnes
+      - name: Coletar Biscoitos e Massas
+        run: python "Supermarket Prices/scraper.py" Biscoitos Massas
       - name: Gerar dashboard
         run: python "Supermarket Prices/gerar_dashboard.py"
       - name: Commit e push
