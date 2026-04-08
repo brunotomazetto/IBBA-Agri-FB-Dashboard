@@ -1,4 +1,4 @@
-name: IBBA Daily Extractor
+name: S&E Extractor
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   extract:
-    name: Unified Extractor (S&E · Fuel · Supply/Demand)
+    name: S&E · Fuel · Supply/Demand
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -41,14 +41,13 @@ jobs:
           Xvfb :99 -screen 0 1280x900x24 &
           export DISPLAY=:99
           sleep 2
-          cd "S&E"
-          python extractor.py
+          python "S&E/extractor.py"
 
       - name: Commit commodities.db
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "S&E/commodities.db"
+          git add 'S&E/commodities.db'
           git diff --staged --quiet || \
             git commit -m "chore: data update [$(date -u '+%Y-%m-%d %H:%M UTC')]"
           git pull --rebase origin main
