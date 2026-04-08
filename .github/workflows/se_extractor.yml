@@ -1,21 +1,21 @@
-name: S&E Daily Extractor
+name: IBBA Daily Extractor
 
 on:
   schedule:
-    - cron: "0 22 * * 1-5"
+    - cron: "0 22 * * 1-5"   # Mon–Fri 22h UTC (19h BRT)
   workflow_dispatch:
 
 jobs:
   extract:
-    name: Coleta S&E (NY11 + Etanol UDOP)
+    name: Unified Extractor (S&E · Fuel · Supply/Demand)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     permissions:
       contents: write
 
     steps:
-      - name: Checkout repositório
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -25,10 +25,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Instalar dependências
-        run: pip install pandas yfinance undetected-chromedriver selenium
+      - name: Install Python dependencies
+        run: pip install pandas yfinance requests openpyxl undetected-chromedriver selenium
 
-      - name: Instalar Xvfb e Chrome
+      - name: Install Chrome + Xvfb
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y xvfb
@@ -36,13 +36,13 @@ jobs:
           sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
           google-chrome --version
 
-      - name: Executar extractor_se.py
+      - name: Run extractor.py
         run: |
           Xvfb :99 -screen 0 1280x900x24 &
           export DISPLAY=:99
           sleep 2
           cd "S&E"
-          python extractor_se.py
+          python extractor.py
 
       - name: Commit commodities.db
         run: |
@@ -50,6 +50,6 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "S&E/commodities.db"
           git diff --staged --quiet || \
-            git commit -m "chore: atualiza commodities.db [$(date -u '+%Y-%m-%d %H:%M UTC')]"
+            git commit -m "chore: data update [$(date -u '+%Y-%m-%d %H:%M UTC')]"
           git pull --rebase origin main
           git push
