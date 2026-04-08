@@ -336,7 +336,7 @@ select.map-select:focus{border-color:var(--orange);}
     <div id="map-def" class="split-map"></div>
     <div class="split-legend map-legend">
       <div>
-        <div class="legend-gradient" style="background:linear-gradient(to right,#1B6CA8,#fff,#C0392B);border:1px solid #eee;"></div>
+        <div class="legend-gradient" style="background:linear-gradient(to right,#1B6CA8,#ADD8E6,#FAB4B4,#C0392B);"></div>
         <div class="legend-ticks"><span>Surplus</span><span>~0</span><span>Deficit</span></div>
       </div>
       <div style="font-size:11px;color:var(--gray-mid);">±300k m³ · Click state → chart</div>
@@ -1121,16 +1121,17 @@ function renderDefMap(){
 
   // Color scale: blue (big surplus) → white (~0) → red (big deficit)
   // Capped at ±300k m³ for visual clarity
+  // Scale: dark blue (big surplus) → light blue (small surplus) → light red (small deficit) → dark red (big deficit)
   function defColor(s){
     const t=Math.max(-1,Math.min(1, s/300000)); // -1=max deficit, +1=max surplus
     if(t>=0){
-      // white → blue
+      // light blue (t=0) → dark blue (t=1): rgb(173,216,230) → rgb(27,108,168)
       const u=t;
-      return `rgb(${Math.round(255-(255-27)*u)},${Math.round(255-(255-108)*u)},${Math.round(255-(255-168)*u)})`;
+      return `rgb(${Math.round(173-(173-27)*u)},${Math.round(216-(216-108)*u)},${Math.round(230-(230-168)*u)})`;
     } else {
-      // white → red
+      // light red (t=0) → dark red (t=-1): rgb(250,180,180) → rgb(192,57,43)
       const u=-t;
-      return `rgb(${Math.round(255-(255-192)*u)},${Math.round(255-(255-57)*u)},${Math.round(255-(255-43)*u)})`;
+      return `rgb(${Math.round(250-(250-192)*u)},${Math.round(180-(180-57)*u)},${Math.round(180-(180-43)*u)})`;
     }
   }
   function defLblColor(s){
