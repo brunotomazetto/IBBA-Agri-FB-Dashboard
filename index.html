@@ -413,13 +413,37 @@ async function loadUserAndData(email){
   renderAll();
 }
 
+/* ── Hardcoded modules (no Supabase entry required) ─────────────────
+   Add self-contained GitHub-hosted modules here. They are merged with
+   the Supabase dashboards list; duplicates (same id) are deduplicated. */
+const STATIC_DASHBOARDS = [
+  {
+    id: 6,
+    sector: 'fnb',
+    subsector: 'beef',
+    title: 'BZ Beef Spread Tracker',
+    description: 'Weekly and monthly SECEX beef export price vs. CEPEA cattle price spread in BRL/kg. Covers NCM 0201 + 0202 with BCB PTAX FX conversion.',
+    source: 'MDIC · CEPEA/ESALQ · BCB',
+    tags: ['Brazil', 'Beef', 'Spread', 'SECEX', 'CEPEA'],
+    visible_to_all: true,
+    coming_soon: false,
+    display_order: 6,
+    note: null,
+    footer: null,
+  },
+];
+
 async function loadAllData(){
   const [dashRes, teamRes, usersRes] = await Promise.all([
     sb.from('dashboards').select('*').order('display_order'),
     sb.from('team_settings').select('*').eq('id',1).single(),
     sb.from('portal_users').select('*'),
   ]);
-  if(dashRes.data)  STATE.dashboards   = dashRes.data;
+  // Merge Supabase dashboards with hardcoded static modules
+  const supabaseDashes = dashRes.data || [];
+  const supabaseIds    = new Set(supabaseDashes.map(d => d.id));
+  const merged = [...supabaseDashes, ...STATIC_DASHBOARDS.filter(d => !supabaseIds.has(d.id))];
+  STATE.dashboards   = merged;
   if(teamRes.data)  STATE.teamSettings = teamRes.data;
   if(usersRes.data) STATE.portalUsers  = usersRes.data;
   // Ensure analysts is always array
@@ -548,6 +572,7 @@ const DASH_MODULES = {
   3: 'Agri Monitor/secex/dashboard_secex.html',
   4: 'Sugar and Ethanol/se_dashboard.html',
   5: 'Beef/U.S. Tracker/beef_margin_dashboard.html',
+  6: 'Beef/BZ Tracker/beef_bz_dashboard.html',
   7: 'Chicken/U.S. Tracker/chicken_margin_dashboard.html',
   8: 'Supermarket%20Prices/supermarket_prices.html',
 };
