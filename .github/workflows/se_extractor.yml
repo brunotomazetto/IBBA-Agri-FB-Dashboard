@@ -4,6 +4,13 @@ on:
   schedule:
     - cron: "0 22 * * 1-5"   # Mon–Fri 22h UTC (19h BRT)
   workflow_dispatch:
+    inputs:
+      force_all:
+        description: "Force all sections regardless of schedule (true/false)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
 
 jobs:
   extract:
@@ -43,7 +50,7 @@ jobs:
           Xvfb :99 -screen 0 1280x900x24 &
           export DISPLAY=:99
           sleep 2
-          python "$SCRIPT_DIR/extractor.py"
+          python "$SCRIPT_DIR/extractor.py" ${{ github.event.inputs.force_all == 'true' && '--force-all' || '' }}
 
       - name: Commit commodities.db
         env:
