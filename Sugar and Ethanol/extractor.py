@@ -52,13 +52,15 @@ HISTORY_START = "2010-01-01"
 TODAY         = date.today()
 NOW_STR       = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+FORCE_ALL = False  # overridden in main() if --force-all passed
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Schedule helpers — silent skip if not the right day
 # ─────────────────────────────────────────────────────────────────────────────
 
 def is_weekday()  -> bool: return TODAY.weekday() < 5           # Mon–Fri
-def is_thursday() -> bool: return TODAY.weekday() == 3          # Thu
-def is_month_5th()-> bool: return TODAY.day == 5                # 5th of month
+def is_thursday() -> bool: return FORCE_ALL or TODAY.weekday() == 3
+def is_month_5th()-> bool: return FORCE_ALL or TODAY.day == 5
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -899,15 +901,17 @@ def summary(conn):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    # Support --dashboard-only flag to regenerate dashboard without scraping
+    # Support --dashboard-only and --force-all flags
     dashboard_only = "--dashboard-only" in sys.argv
+    global FORCE_ALL
+    FORCE_ALL      = "--force-all" in sys.argv
 
     log.info("=" * 60)
     if dashboard_only:
         log.info(f"IBBA Extractor | DASHBOARD-ONLY MODE | {NOW_STR}")
     else:
         log.info(f"IBBA Extractor | {TODAY} ({TODAY.strftime('%A')}) | {NOW_STR}")
-        log.info(f"  Weekday: {is_weekday()} | Thursday: {is_thursday()} | 5th: {is_month_5th()}")
+        log.info(f"  Weekday: {is_weekday()} | Thursday: {is_thursday()} | 5th: {is_month_5th()} | Force: {FORCE_ALL}")
     log.info("=" * 60)
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
