@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Brazil Beef Spread Tracker — Itaú BBA</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --orange:#FF5500;--black:#1A1A1A;--gray-dark:#333;--gray-mid:#888;
+  --gray-light:#F4F4F4;--border:#E5E5E5;--white:#fff;
+  --blue:#2980B9;--green:#27AE60;--red:#C0392B;
+  --font:'Segoe UI',Helvetica,Arial,sans-serif;
+}
+html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-dark);
+  min-height:100%;overflow-y:auto;font-size:13px;}
+
+/* ── TOP BAR ── */
+.top-bar{background:var(--white);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;height:48px;flex-shrink:0;gap:14px;}
+.back-btn{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--gray-mid);
+  cursor:pointer;padding:5px 10px;border-radius:4px;border:1px solid var(--border);
+  background:none;transition:all .15s;white-space:nowrap;}
+.back-btn:hover{color:var(--gray-dark);border-color:#ccc;}
+.back-btn svg{width:14px;height:14px;}
+.top-bar-divider{width:1px;height:22px;background:var(--border);}
+.top-title{font-size:15px;font-weight:700;color:var(--black);}
+.top-sub{font-size:11.5px;color:var(--gray-mid);}
+.top-latest{margin-left:auto;font-size:11px;color:var(--gray-mid);
+  background:#F9F9F9;border:1px solid var(--border);border-radius:4px;
+  padding:4px 10px;white-space:nowrap;}
+.top-latest strong{color:var(--orange);}
+
+/* ── ORANGE RULE ── */
+.orange-rule{height:3px;background:var(--orange);flex-shrink:0;}
+
+/* ── VIEW CONTROLS ── */
+.controls-bar{background:var(--white);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:flex-end;
+  padding:0 20px;height:40px;gap:16px;flex-shrink:0;}
+.view-label{font-size:11px;font-weight:700;color:var(--gray-mid);
+  text-transform:uppercase;letter-spacing:.5px;}
+.view-btns{display:flex;gap:4px;}
+.view-btn{padding:4px 12px;font-size:12px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:none;color:var(--gray-mid);
+  font-family:var(--font);transition:all .15s;}
+.view-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
+.view-btn:hover:not(.active){border-color:#ccc;color:var(--gray-dark);}
+
+/* ── MAIN LAYOUT ── */
+.main-wrap{display:flex;flex-direction:column;}
+
+/* ── CHARTS ROW ── */
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;
+  padding:12px 16px 8px;flex-shrink:0;}
+.chart-card{background:var(--white);border:1px solid var(--border);border-radius:8px;
+  padding:14px 16px 10px;display:flex;flex-direction:column;}
+.chart-card-header{display:flex;justify-content:space-between;align-items:flex-start;
+  margin-bottom:10px;}
+.chart-title{font-size:12.5px;font-weight:700;color:var(--black);}
+.chart-stat{font-size:11px;color:var(--gray-mid);text-align:right;}
+.chart-stat strong{color:var(--orange);}
+.chart-wrap{flex:1;min-height:0;position:relative;height:220px;}
+
+/* ── TABLE SECTION ── */
+.table-section{background:var(--white);border-top:1px solid var(--border);
+  display:flex;flex-direction:column;min-height:300px;margin:0 0 0 0;}
+.table-tabs{display:flex;align-items:center;padding:8px 16px 0;
+  border-bottom:1px solid var(--border);background:var(--white);flex-shrink:0;gap:4px;}
+.tab-btn{padding:5px 14px;font-size:12px;border:1px solid var(--border);
+  border-radius:4px 4px 0 0;cursor:pointer;font-family:var(--font);
+  background:none;color:var(--gray-mid);transition:all .12s;}
+.tab-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
+.table-wrap{overflow:auto;max-height:380px;}
+.table-wrap::-webkit-scrollbar{width:5px;height:5px;}
+.table-wrap::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px;}
+table{width:100%;border-collapse:collapse;font-size:11.5px;}
+thead tr{background:#FAFAFA;border-bottom:2px solid var(--border);}
+th{padding:7px 9px;text-align:right;font-weight:700;font-size:10.5px;
+  color:var(--gray-mid);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;
+  position:sticky;top:0;background:#FAFAFA;z-index:1;}
+th:first-child{text-align:left;}
+td{padding:5px 9px;text-align:right;border-bottom:1px solid #F5F5F5;
+  color:var(--gray-dark);white-space:nowrap;}
+td:first-child{text-align:left;font-weight:600;color:var(--black);}
+tr:hover td{background:#FFF8F5;}
+.td-spread{font-weight:700;color:var(--orange);}
+.td-na{color:#ccc;font-size:10.5px;}
+.td-pos{color:var(--green);font-weight:600;}
+.td-neg{color:var(--red);font-weight:600;}
+
+/* ── NOTE BAR ── */
+.note-bar{background:#FFFBF8;border-top:1px solid #FFD9C8;
+  padding:5px 20px;font-size:10.5px;color:var(--gray-mid);flex-shrink:0;}
+.note-bar em{color:var(--orange);}
+
+/* ── LOADING OVERLAY ── */
+#loading{position:fixed;inset:0;background:rgba(255,255,255,.92);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:999;}
+.spinner{width:36px;height:36px;border:3px solid #eee;
+  border-top-color:var(--orange);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+#loading p{font-size:13px;color:var(--gray-mid);}
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <p>Loading beef_bz.db…</p>
+</div>
+
+<!-- TOP BAR -->
+<div class="top-bar">
+  <button class="back-btn" onclick="goBack()">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M10 3L5 8l5 5"/>
+    </svg>
+    Back
+  </button>
+  <div class="top-bar-divider"></div>
+  <div>
+    <div class="top-title">🇧🇷 Brazil Beef Export Spread Tracker</div>
+    <div class="top-sub">SECEX export price ÷ CEPEA Boi Gordo — NCM 0201 + 0202 · BRL/kg spread</div>
+  </div>
+  <div class="top-latest">Latest: <strong id="latest-period">—</strong></div>
+</div>
+<div class="orange-rule"></div>
+
+<!-- VIEW CONTROLS -->
+<div class="controls-bar">
+  <span class="view-label">VIEW:</span>
+  <div class="view-btns">
+    <button class="view-btn" data-view="all" onclick="setView('all')">All</button>
+    <button class="view-btn active" data-view="3y" onclick="setView('3y')">Last 3 Years</button>
+    <button class="view-btn" data-view="1y" onclick="setView('1y')">Last 12 Months</button>
+  </div>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="main-wrap">
+
+  <!-- CHARTS ROW -->
+  <div class="charts-row">
+    <!-- LEFT: Spread over time + rolling avg -->
+    <div class="chart-card">
+      <div class="chart-card-header">
+        <div class="chart-title">Beef Export Spread — BRL/kg ÷ CEPEA R$/kg</div>
+        <div class="chart-stat">Solid = Spread &nbsp;·&nbsp; Dashed = <em id="avg-label">12M Rolling Avg</em></div>
+      </div>
+      <div class="chart-wrap"><canvas id="spreadChart"></canvas></div>
+    </div>
+    <!-- RIGHT: Export price vs Cattle price -->
+    <div class="chart-card">
+      <div class="chart-card-header">
+        <div class="chart-title">Export Price vs. Cattle Price</div>
+        <div class="chart-stat">
+          <span style="color:var(--orange)">■</span> SECEX BRL/kg (left)
+          &nbsp;·&nbsp;
+          <span style="color:var(--blue)">■</span> CEPEA R$/kg (right)
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- TABLE SECTION -->
+  <div class="table-section">
+    <div class="table-tabs">
+      <button class="tab-btn active" data-tab="monthly" onclick="setTab('monthly')">Monthly</button>
+      <button class="tab-btn" data-tab="weekly" onclick="setTab('weekly')">Weekly</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead id="table-head"></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="note-bar">
+    Sources: <em>SECEX/MDIC</em> — NCM 0201 (fresh/chilled) + 0202 (frozen) · <em>CEPEA/ESALQ</em> Boi Gordo (R$/arroba ÷ 15 = R$/kg) · <em>BCB PTAX</em> BRL/USD daily · Spread = SECEX BRL/kg ÷ CEPEA R$/kg
+  </div>
+
+</div><!-- main-wrap -->
+
+<script>
+// ─── GLOBALS ─────────────────────────────────────────────────────────────────
+let MONTHLY = [];    // rows from monthly table
+let WEEKLY  = [];    // rows from weekly table
+let charts  = {};
+let currentView = '3y';   // 'all' | '3y' | '1y'
+let currentTab  = 'monthly'; // 'monthly' | 'weekly'
+
+// ─── NAVIGATION ──────────────────────────────────────────────────────────────
+function goBack() {
+  if (window.parent && window.parent !== window) {
+    window.parent.postMessage({ action: 'closeDash' }, '*');
+  } else {
+    window.history.back();
+  }
+}
+
+// ─── LOAD DATABASE ───────────────────────────────────────────────────────────
+async function loadDB() {
+  const loadEl = document.getElementById('loading');
+  try {
+    const SQL  = await initSqlJs({
+      locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}`
+    });
+    const resp = await fetch('beef_bz.db');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: beef_bz.db not found`);
+    const buf  = await resp.arrayBuffer();
+    const db   = new SQL.Database(new Uint8Array(buf));
+
+    // ── monthly ───────────────────────────────────────────────────────────────
+    const mStmt = db.exec(`
+      SELECT period, year, month, secex_usd_kg, fx, secex_brl_kg, cepea_r_kg, spread
+      FROM monthly ORDER BY year ASC, month ASC
+    `);
+    if (mStmt.length) {
+      const cols = mStmt[0].columns;
+      MONTHLY = mStmt[0].values.map(r => {
+        const o = {}; cols.forEach((c, i) => { o[c] = r[i]; }); return o;
+      });
+    }
+
+    // ── weekly ────────────────────────────────────────────────────────────────
+    const wStmt = db.exec(`
+      SELECT start_date, end_date, secex_usd_kg, fx, secex_brl_kg, cepea_r_kg, spread
+      FROM weekly ORDER BY start_date ASC
+    `);
+    if (wStmt.length) {
+      const cols = wStmt[0].columns;
+      WEEKLY = wStmt[0].values.map(r => {
+        const o = {}; cols.forEach((c, i) => { o[c] = r[i]; }); return o;
+      });
+    }
+
+    db.close();
+    loadEl.style.display = 'none';
+
+    // Latest label: most recent monthly period with spread
+    const latestM = MONTHLY.filter(r => r.spread != null).slice(-1)[0];
+    if (latestM) document.getElementById('latest-period').textContent = latestM.period;
+
+    render();
+  } catch(e) {
+    loadEl.innerHTML = `<div style="text-align:center;padding:40px">
+      <div style="font-size:14px;color:#c00;margin-bottom:8px;">⚠ Failed to load beef_bz.db</div>
+      <div style="font-size:12px;color:#888;">${e.message}</div>
+    </div>`;
+  }
+}
+
+// ─── VIEW / TAB CONTROLS ─────────────────────────────────────────────────────
+function setView(v) {
+  currentView = v;
+  document.querySelectorAll('.view-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === v));
+  render();
+}
+
+function setTab(t) {
+  currentTab = t;
+  document.querySelectorAll('.tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === t));
+  const n = t === 'monthly' ? MONTHLY.length : WEEKLY.length;
+  document.getElementById('avg-label').textContent =
+    t === 'monthly' ? '12M Rolling Avg' : '4-Week Rolling Avg';
+  renderCharts();
+  renderTable();
+}
+
+// ─── FILTER BY VIEW WINDOW ───────────────────────────────────────────────────
+function filterMonthly(rows) {
+  if (currentView === 'all') return rows;
+  const withData = rows.filter(r => r.spread != null);
+  if (!withData.length) return rows;
+  const last = withData[withData.length - 1];
+  const ly = last.year, lm = last.month;
+  if (currentView === '3y') {
+    const cy = ly - 3;
+    return rows.filter(r => r.year > cy || (r.year === cy && r.month >= lm));
+  }
+  if (currentView === '1y') {
+    const cy = ly - 1;
+    return rows.filter(r => r.year > cy || (r.year === cy && r.month >= lm));
+  }
+  return rows;
+}
+
+function filterWeekly(rows) {
+  if (currentView === 'all') return rows;
+  if (!rows.length) return rows;
+  const lastDate = new Date(rows[rows.length - 1].start_date);
+  const cutoff   = new Date(lastDate);
+  if (currentView === '3y') cutoff.setFullYear(cutoff.getFullYear() - 3);
+  if (currentView === '1y') cutoff.setFullYear(cutoff.getFullYear() - 1);
+  return rows.filter(r => new Date(r.start_date) >= cutoff);
+}
+
+function filterRows() {
+  return currentTab === 'monthly' ? filterMonthly(MONTHLY) : filterWeekly(WEEKLY);
+}
+
+// ─── ROLLING AVERAGE ─────────────────────────────────────────────────────────
+function rollingAvg(vals, n) {
+  return vals.map((_, i) => {
+    const slice = vals.slice(Math.max(0, i - n + 1), i + 1).filter(v => v != null);
+    return slice.length ? slice.reduce((s, v) => s + v, 0) / slice.length : null;
+  });
+}
+
+// ─── CHARTS ──────────────────────────────────────────────────────────────────
+function renderCharts() {
+  const rows   = filterRows();
+  const n      = currentTab === 'monthly' ? 12 : 4;
+  const labelK = currentTab === 'monthly' ? 'period' : 'start_date';
+
+  const labels   = rows.map(r => r[labelK]);
+  const spreads  = rows.map(r => r.spread);
+  const ravg     = rollingAvg(spreads, n);
+  const exports_ = rows.map(r => r.secex_brl_kg);
+  const cattle   = rows.map(r => r.cepea_r_kg);
+
+  const ptRadius = rows.length > 60 ? 0 : 2;
+
+  // ── Chart 1: Spread + Rolling Avg ────────────────────────────────────────
+  if (charts.spread) charts.spread.destroy();
+  charts.spread = new Chart(document.getElementById('spreadChart').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Spread (×)',
+          data: spreads,
+          borderColor: '#FF5500',
+          backgroundColor: 'rgba(255,85,0,0.07)',
+          borderWidth: 1.8,
+          pointRadius: ptRadius,
+          pointHoverRadius: 4,
+          fill: true,
+          tension: 0.3,
+          order: 2,
+        },
+        {
+          label: `${n}-period Rolling Avg`,
+          data: ravg,
+          borderColor: '#FF9966',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          borderDash: [5, 3],
+          pointRadius: 0,
+          tension: 0.4,
+          order: 1,
+        },
+      ],
+    },
+    options: chartOpts({
+      yCallback: v => v.toFixed(2) + '×',
+      tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(3) ?? '—'}×`,
+    }),
+  });
+
+  // ── Chart 2: Export BRL/kg vs CEPEA R$/kg (dual Y) ───────────────────────
+  if (charts.price) charts.price.destroy();
+  charts.price = new Chart(document.getElementById('priceChart').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'SECEX Export (R$/kg)',
+          data: exports_,
+          borderColor: '#FF5500',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: ptRadius,
+          pointHoverRadius: 4,
+          tension: 0.3,
+          yAxisID: 'y',
+        },
+        {
+          label: 'CEPEA Cattle (R$/kg)',
+          data: cattle,
+          borderColor: '#2980B9',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: ptRadius,
+          pointHoverRadius: 4,
+          tension: 0.3,
+          yAxisID: 'y2',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          display: false,
+        },
+        tooltip: {
+          backgroundColor: '#333',
+          titleColor: '#ccc',
+          bodyColor: '#eee',
+          borderColor: '#555',
+          borderWidth: 1,
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: R$ ${ctx.parsed.y?.toFixed(2) ?? '—'}/kg`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: '#999', font: { size: 9, family: 'Arial' }, maxTicksLimit: 10, maxRotation: 0 },
+          grid:  { color: 'rgba(0,0,0,0.04)' },
+        },
+        y: {
+          position: 'left',
+          title: { display: true, text: 'Export R$/kg', color: '#FF5500', font: { size: 9 } },
+          ticks: { color: '#FF5500', font: { size: 9 }, callback: v => 'R$' + v.toFixed(1) },
+          grid:  { color: 'rgba(0,0,0,0.05)' },
+        },
+        y2: {
+          position: 'right',
+          title: { display: true, text: 'Cattle R$/kg', color: '#2980B9', font: { size: 9 } },
+          ticks: { color: '#2980B9', font: { size: 9 }, callback: v => 'R$' + v.toFixed(1) },
+          grid:  { drawOnChartArea: false },
+        },
+      },
+    },
+  });
+}
+
+function chartOpts({ yCallback, tooltipCallback }) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: '#333',
+        titleColor: '#ccc',
+        bodyColor: '#eee',
+        borderColor: '#555',
+        borderWidth: 1,
+        callbacks: { label: tooltipCallback },
+      },
+    },
+    scales: {
+      x: {
+        ticks: { color: '#999', font: { size: 9, family: 'Arial' }, maxTicksLimit: 10, maxRotation: 0 },
+        grid:  { color: 'rgba(0,0,0,0.04)' },
+      },
+      y: {
+        ticks: { color: '#999', font: { size: 9, family: 'Arial' }, callback: yCallback },
+        grid:  { color: 'rgba(0,0,0,0.05)' },
+      },
+    },
+  };
+}
+
+// ─── TABLE ────────────────────────────────────────────────────────────────────
+function fmt(v, dec=2, prefix='') {
+  if (v == null) return '<span class="td-na">—</span>';
+  return prefix + v.toFixed(dec);
+}
+
+function renderTable() {
+  const rows    = filterRows().slice().reverse(); // most recent first
+  const head    = document.getElementById('table-head');
+  const body    = document.getElementById('table-body');
+
+  if (currentTab === 'monthly') {
+    head.innerHTML = `<tr>
+      <th style="text-align:left;">Period</th>
+      <th>SECEX<br><span style="font-weight:400;font-size:9.5px;">USD/kg</span></th>
+      <th>FX<br><span style="font-weight:400;font-size:9.5px;">BRL/USD</span></th>
+      <th>Export<br><span style="font-weight:400;font-size:9.5px;">R$/kg</span></th>
+      <th>CEPEA<br><span style="font-weight:400;font-size:9.5px;">R$/kg</span></th>
+      <th>Spread<br><span style="font-weight:400;font-size:9.5px;">(×)</span></th>
+    </tr>`;
+    body.innerHTML = rows.map(r => {
+      const sp = r.spread != null
+        ? `<span class="td-spread">${r.spread.toFixed(3)}×</span>` : '<span class="td-na">—</span>';
+      return `<tr>
+        <td>${r.period ?? '—'}</td>
+        <td>${fmt(r.secex_usd_kg, 3)}</td>
+        <td>${fmt(r.fx, 3)}</td>
+        <td>${fmt(r.secex_brl_kg, 2, 'R$')}</td>
+        <td>${fmt(r.cepea_r_kg, 2, 'R$')}</td>
+        <td>${sp}</td>
+      </tr>`;
+    }).join('');
+
+  } else {
+    head.innerHTML = `<tr>
+      <th style="text-align:left;">Start</th>
+      <th>End</th>
+      <th>SECEX<br><span style="font-weight:400;font-size:9.5px;">USD/kg</span></th>
+      <th>FX<br><span style="font-weight:400;font-size:9.5px;">BRL/USD</span></th>
+      <th>Export<br><span style="font-weight:400;font-size:9.5px;">R$/kg</span></th>
+      <th>CEPEA<br><span style="font-weight:400;font-size:9.5px;">R$/kg</span></th>
+      <th>Spread<br><span style="font-weight:400;font-size:9.5px;">(×)</span></th>
+    </tr>`;
+    body.innerHTML = rows.map(r => {
+      const sp = r.spread != null
+        ? `<span class="td-spread">${r.spread.toFixed(3)}×</span>` : '<span class="td-na">—</span>';
+      return `<tr>
+        <td>${r.start_date ?? '—'}</td>
+        <td>${r.end_date ?? '—'}</td>
+        <td>${fmt(r.secex_usd_kg, 3)}</td>
+        <td>${fmt(r.fx, 3)}</td>
+        <td>${fmt(r.secex_brl_kg, 2, 'R$')}</td>
+        <td>${fmt(r.cepea_r_kg, 2, 'R$')}</td>
+        <td>${sp}</td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+// ─── FULL RENDER ─────────────────────────────────────────────────────────────
+function render() {
+  renderCharts();
+  renderTable();
+}
+
+// ─── BOOT ────────────────────────────────────────────────────────────────────
+loadDB();
+</script>
+</body>
+</html>
