@@ -43,11 +43,13 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .view-label{font-size:11px;font-weight:700;color:var(--gray-mid);
   text-transform:uppercase;letter-spacing:.5px;}
 .view-btns{display:flex;gap:4px;}
-.view-btn{padding:4px 12px;font-size:12px;border-radius:4px;cursor:pointer;
+.view-btn,.season-btn{padding:4px 12px;font-size:12px;border-radius:4px;cursor:pointer;
   border:1px solid var(--border);background:none;color:var(--gray-mid);
   font-family:var(--font);transition:all .15s;}
-.view-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
-.view-btn:hover:not(.active){border-color:#ccc;color:var(--gray-dark);}
+.view-btn.active,.season-btn.active{background:var(--orange);color:white;
+  border-color:var(--orange);font-weight:700;}
+.view-btn:hover:not(.active),.season-btn:hover:not(.active){border-color:#ccc;color:var(--gray-dark);}
+.season-btn{padding:3px 9px;font-size:11px;}
 
 /* ── MAIN LAYOUT ── */
 .main-wrap{display:flex;flex-direction:column;}
@@ -58,38 +60,41 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .chart-card{background:var(--white);border:1px solid var(--border);border-radius:8px;
   padding:14px 16px 10px;display:flex;flex-direction:column;}
 .chart-card-header{display:flex;justify-content:space-between;align-items:flex-start;
-  margin-bottom:10px;}
+  margin-bottom:10px;gap:10px;}
 .chart-title{font-size:12.5px;font-weight:700;color:var(--black);}
-.chart-stat{font-size:11px;color:var(--gray-mid);text-align:right;}
+.chart-stat{font-size:11px;color:var(--gray-mid);text-align:right;flex-shrink:0;}
 .chart-stat strong{color:var(--orange);}
-.chart-wrap{flex:1;min-height:0;position:relative;height:220px;}
+.chart-wrap{flex:1;min-height:0;position:relative;height:210px;}
+
+/* ── SEASONALITY SECTION ── */
+.season-section{padding:0 16px 8px;}
+.season-section .chart-card{min-height:0;}
+.season-section .chart-wrap{height:250px;}
 
 /* ── TABLE SECTION ── */
 .table-section{background:var(--white);border-top:1px solid var(--border);
-  display:flex;flex-direction:column;min-height:300px;}
+  display:flex;flex-direction:column;min-height:260px;}
 .table-tabs{display:flex;align-items:center;padding:8px 16px 0;
   border-bottom:1px solid var(--border);background:var(--white);flex-shrink:0;gap:4px;}
 .tab-btn{padding:5px 14px;font-size:12px;border:1px solid var(--border);
   border-radius:4px 4px 0 0;cursor:pointer;font-family:var(--font);
   background:none;color:var(--gray-mid);transition:all .12s;}
 .tab-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
-.table-wrap{overflow:auto;max-height:380px;}
+.table-wrap{overflow:auto;max-height:340px;}
 .table-wrap::-webkit-scrollbar{width:5px;height:5px;}
 .table-wrap::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px;}
 table{width:100%;border-collapse:collapse;font-size:11.5px;table-layout:fixed;}
 thead tr{background:#FAFAFA;border-bottom:2px solid var(--border);}
-th{padding:7px 9px;text-align:right;font-weight:700;font-size:10.5px;
+th{padding:7px 8px;text-align:right;font-weight:700;font-size:10.5px;
   color:var(--gray-mid);text-transform:uppercase;letter-spacing:.3px;
   position:sticky;top:0;background:#FAFAFA;z-index:1;overflow:hidden;}
 th:first-child{text-align:left;}
-td{padding:5px 9px;text-align:right;border-bottom:1px solid #F5F5F5;
+td{padding:5px 8px;text-align:right;border-bottom:1px solid #F5F5F5;
   color:var(--gray-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 td:first-child{text-align:left;font-weight:600;color:var(--black);}
 tr:hover td{background:#FFF8F5;}
 .td-spread{font-weight:700;color:var(--orange);}
 .td-na{color:#ccc;font-size:10.5px;}
-.td-pos{color:var(--green);font-weight:600;}
-.td-neg{color:var(--red);font-weight:600;}
 
 /* ── NOTE BAR ── */
 .note-bar{background:#FFFBF8;border-top:1px solid #FFD9C8;
@@ -125,13 +130,13 @@ tr:hover td{background:#FFF8F5;}
     <div class="top-title">🇧🇷 Brazil Beef Export Spread Tracker</div>
     <div class="top-sub">Export Price ÷ Cattle Cost — NCM 0201 + 0202 · BRL/kg spread</div>
   </div>
-  <div class="top-latest">Latest: <strong id="latest-period">—</strong></div>
+  <div class="top-latest">Latest monthly: <strong id="latest-period">—</strong></div>
 </div>
 <div class="orange-rule"></div>
 
-<!-- VIEW CONTROLS -->
+<!-- VIEW CONTROLS (charts 1 & 2 only) -->
 <div class="controls-bar">
-  <span class="view-label">VIEW:</span>
+  <span class="view-label">CHART VIEW:</span>
   <div class="view-btns">
     <button class="view-btn" data-view="all" onclick="setView('all')">All</button>
     <button class="view-btn active" data-view="3y" onclick="setView('3y')">Last 3 Years</button>
@@ -144,36 +149,62 @@ tr:hover td{background:#FFF8F5;}
 <!-- MAIN CONTENT -->
 <div class="main-wrap">
 
-  <!-- CHARTS ROW -->
+  <!-- CHARTS ROW: spread + price -->
   <div class="charts-row">
-    <!-- LEFT: Spread over time + rolling avg -->
     <div class="chart-card">
       <div class="chart-card-header">
         <div class="chart-title">Beef Export Spread — Export Price ÷ Cattle Cost</div>
-        <div class="chart-stat">Solid = Spread &nbsp;·&nbsp; Dashed = <em id="avg-label">12M Rolling Avg</em></div>
+        <div class="chart-stat">
+          Solid = Spread &nbsp;·&nbsp; Dashed = Period Avg &nbsp;·&nbsp;
+          Avg: <strong id="avg-display">—×</strong>
+        </div>
       </div>
       <div class="chart-wrap"><canvas id="spreadChart"></canvas></div>
     </div>
-    <!-- RIGHT: Export price vs Cattle price -->
     <div class="chart-card">
       <div class="chart-card-header">
-        <div class="chart-title">Export Price vs. Cattle Cost</div>
+        <div class="chart-title">Export Price vs. Cattle Cost (BRL/kg)</div>
         <div class="chart-stat">
-          <span style="color:var(--orange)">■</span> Export Price BRL/kg (left)
-          &nbsp;·&nbsp;
-          <span style="color:var(--gray-dark)">■</span> Cattle Cost BRL/kg (right)
+          <span style="color:var(--orange)">■</span> Export Price &nbsp;·&nbsp;
+          <span style="color:var(--gray-dark)">■</span> Cattle Cost
         </div>
       </div>
       <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
     </div>
   </div>
 
-  <!-- TABLE SECTION -->
+  <!-- SEASONALITY CHART (full width, independent filter) -->
+  <div class="season-section">
+    <div class="chart-card">
+      <div class="chart-card-header">
+        <div>
+          <div class="chart-title">Seasonal Spread Pattern — Monthly by Year</div>
+          <div style="font-size:10.5px;color:var(--gray-mid);margin-top:3px;">
+            Each line = one year &nbsp;·&nbsp;
+            <span style="color:var(--orange);font-weight:700;">—</span> = current year &nbsp;·&nbsp;
+            <span style="background:rgba(255,85,0,0.15);padding:0 4px;border-radius:2px;">shading</span> = max/min band for selected period
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+          <span style="font-size:10.5px;font-weight:700;color:var(--gray-mid);">BAND:</span>
+          <div style="display:flex;gap:3px;">
+            <button class="season-btn" data-sy="5" onclick="setSeasonYears(5)">5Y</button>
+            <button class="season-btn active" data-sy="10" onclick="setSeasonYears(10)">10Y</button>
+            <button class="season-btn" data-sy="15" onclick="setSeasonYears(15)">15Y</button>
+            <button class="season-btn" data-sy="0" onclick="setSeasonYears(0)">All</button>
+          </div>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="seasonChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- TABLE SECTION — full history, no view filtering -->
   <div class="table-section">
     <div class="table-tabs">
-      <button class="tab-btn active" data-tab="monthly" onclick="setTab('monthly')">Monthly</button>
+      <button class="tab-btn active" data-tab="quarterly" onclick="setTab('quarterly')">Quarterly</button>
+      <button class="tab-btn" data-tab="monthly" onclick="setTab('monthly')">Monthly</button>
       <button class="tab-btn" data-tab="weekly" onclick="setTab('weekly')">Weekly</button>
-      <button class="tab-btn" data-tab="quarterly" onclick="setTab('quarterly')">Quarterly</button>
     </div>
     <div class="table-wrap">
       <table>
@@ -184,19 +215,25 @@ tr:hover td{background:#FFF8F5;}
   </div>
 
   <div class="note-bar">
-    Sources: <em>SECEX/MDIC</em> — NCM 0201 (fresh/chilled) + 0202 (frozen) · <em>CEPEA/ESALQ</em> Boi Gordo (BRL/arroba ÷ 15 = BRL/kg) · <em>BCB PTAX</em> BRL/USD daily · Spread = Export Price BRL/kg ÷ Cattle Cost BRL/kg
+    Sources: <em>SECEX/MDIC</em> — NCM 0201+0202 · <em>CEPEA/ESALQ</em> Boi Gordo (BRL/arroba ÷ 15 = BRL/kg) · <em>BCB PTAX</em> BRL/USD · Spread = Export BRL/kg ÷ Cattle BRL/kg · Vol = total export volume (000 t) · Table = full history; chart view filter applies to top two charts only
   </div>
 
 </div><!-- main-wrap -->
 
 <script>
 // ─── GLOBALS ─────────────────────────────────────────────────────────────────
-let MONTHLY    = [];   // rows from monthly table
-let WEEKLY     = [];   // rows from weekly table
+let MONTHLY    = [];   // [{period, year, month, secex_usd_kg, fx, secex_brl_kg, cepea_r_kg, spread, vol_tons}]
+let WEEKLY     = [];   // [{start_date, end_date, secex_usd_kg, fx, secex_brl_kg, cepea_r_kg, spread}]
 let QUARTERLY  = [];   // computed from MONTHLY
-let charts     = {};
-let currentView = '3y';     // 'all' | '3y' | '1y' | '3m' | '1m'
-let currentTab  = 'monthly'; // 'monthly' | 'weekly' | 'quarterly'
+let SEASONALITY = {};  // { year: [Jan..Dec] spread values }
+
+let charts       = {};
+let currentView  = '3y';       // affects charts 1 & 2 only
+let currentTab   = 'quarterly'; // table tab
+let seasonYears  = 10;          // 0 = all
+
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const VIEW_MONTHS  = { all: null, '3y': 36, '1y': 12, '3m': 3, '1m': 1 };
 
 // ─── NAVIGATION ──────────────────────────────────────────────────────────────
 function goBack() {
@@ -208,68 +245,71 @@ function goBack() {
 }
 
 // ─── QUARTERLY AGGREGATION ───────────────────────────────────────────────────
-// Groups MONTHLY rows into quarters, averaging all numeric fields.
-// Label format: "1Q25", "2Q25", etc.
 function buildQuarterly(monthly) {
   const map = {};
   monthly.forEach(r => {
-    if (r.spread == null) return; // skip rows without spread
-    const q = Math.ceil(r.month / 3);
+    if (r.spread == null) return;
+    const q   = Math.ceil(r.month / 3);
     const yr2 = String(r.year).slice(-2);
     const key = `${q}Q${yr2}`;
-    if (!map[key]) {
-      map[key] = {
-        period: key,
-        year: r.year,
-        quarter: q,
-        year_q: r.year * 10 + q, // sortable key
-        secex_usd_kg: [],
-        fx: [],
-        secex_brl_kg: [],
-        cepea_r_kg: [],
-        spread: [],
-      };
-    }
-    const entry = map[key];
-    if (r.secex_usd_kg != null) entry.secex_usd_kg.push(r.secex_usd_kg);
-    if (r.fx            != null) entry.fx.push(r.fx);
-    if (r.secex_brl_kg  != null) entry.secex_brl_kg.push(r.secex_brl_kg);
-    if (r.cepea_r_kg    != null) entry.cepea_r_kg.push(r.cepea_r_kg);
-    if (r.spread        != null) entry.spread.push(r.spread);
+    if (!map[key]) map[key] = {
+      period: key, year: r.year, quarter: q, year_q: r.year * 10 + q,
+      _usd: [], _fx: [], _brl: [], _cattle: [], _spread: [], _vol: []
+    };
+    const e = map[key];
+    if (r.secex_usd_kg != null) e._usd.push(r.secex_usd_kg);
+    if (r.fx            != null) e._fx.push(r.fx);
+    if (r.secex_brl_kg  != null) e._brl.push(r.secex_brl_kg);
+    if (r.cepea_r_kg    != null) e._cattle.push(r.cepea_r_kg);
+    if (r.spread        != null) e._spread.push(r.spread);
+    if (r.vol_tons      != null) e._vol.push(r.vol_tons);
   });
-
   const avg = arr => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
-
+  const sum = arr => arr.length ? arr.reduce((s, v) => s + v, 0) : null;
   return Object.values(map)
     .sort((a, b) => a.year_q - b.year_q)
     .map(e => ({
       period:       e.period,
       year:         e.year,
       quarter:      e.quarter,
-      secex_usd_kg: avg(e.secex_usd_kg),
-      fx:           avg(e.fx),
-      secex_brl_kg: avg(e.secex_brl_kg),
-      cepea_r_kg:   avg(e.cepea_r_kg),
-      spread:       avg(e.spread),
+      secex_usd_kg: avg(e._usd),
+      fx:           avg(e._fx),
+      secex_brl_kg: avg(e._brl),
+      cepea_r_kg:   avg(e._cattle),
+      spread:       avg(e._spread),
+      vol_tons:     sum(e._vol),   // quarterly volume = sum of months
     }));
+}
+
+// ─── SEASONALITY BUILD ───────────────────────────────────────────────────────
+function buildSeasonality(monthly) {
+  const result = {};
+  monthly.forEach(r => {
+    if (!result[r.year]) result[r.year] = new Array(12).fill(null);
+    if (r.spread != null) result[r.year][r.month - 1] = r.spread;
+  });
+  return result;
 }
 
 // ─── LOAD DATABASE ───────────────────────────────────────────────────────────
 async function loadDB() {
   const loadEl = document.getElementById('loading');
   try {
-    const SQL  = await initSqlJs({
-      locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}`
-    });
+    const SQL  = await initSqlJs({ locateFile: f =>
+      `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}` });
     const resp = await fetch('beef_bz.db');
     if (!resp.ok) throw new Error(`HTTP ${resp.status}: beef_bz.db not found`);
     const buf  = await resp.arrayBuffer();
     const db   = new SQL.Database(new Uint8Array(buf));
 
-    // ── monthly ───────────────────────────────────────────────────────────────
+    // ── monthly (with volume via join) ────────────────────────────────────────
     const mStmt = db.exec(`
-      SELECT period, year, month, secex_usd_kg, fx, secex_brl_kg, cepea_r_kg, spread
-      FROM monthly ORDER BY year ASC, month ASC
+      SELECT m.period, m.year, m.month,
+             m.secex_usd_kg, m.fx, m.secex_brl_kg, m.cepea_r_kg, m.spread,
+             s.vol_tons
+      FROM monthly m
+      LEFT JOIN _secex_raw s ON m.year = s.year AND m.month = s.month
+      ORDER BY m.year ASC, m.month ASC
     `);
     if (mStmt.length) {
       const cols = mStmt[0].columns;
@@ -292,12 +332,11 @@ async function loadDB() {
 
     db.close();
 
-    // ── build quarterly from monthly ──────────────────────────────────────────
-    QUARTERLY = buildQuarterly(MONTHLY);
+    QUARTERLY   = buildQuarterly(MONTHLY);
+    SEASONALITY = buildSeasonality(MONTHLY);
 
     loadEl.style.display = 'none';
 
-    // Latest label: most recent monthly period with spread
     const latestM = MONTHLY.filter(r => r.spread != null).slice(-1)[0];
     if (latestM) document.getElementById('latest-period').textContent = latestM.period;
 
@@ -315,315 +354,386 @@ function setView(v) {
   currentView = v;
   document.querySelectorAll('.view-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.view === v));
-  render();
+  renderCharts(); // only top 2 charts
 }
 
 function setTab(t) {
   currentTab = t;
   document.querySelectorAll('.tab-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === t));
-  const rollingLabel =
-    t === 'weekly'    ? '4-Week Rolling Avg' :
-    t === 'quarterly' ? '4-Quarter Rolling Avg' : '12M Rolling Avg';
-  document.getElementById('avg-label').textContent = rollingLabel;
-  renderCharts();
   renderTable();
 }
 
-// ─── FILTER BY VIEW WINDOW ───────────────────────────────────────────────────
-// Months to subtract for each view (used for monthly + quarterly)
-const VIEW_MONTHS = { 'all': null, '3y': 36, '1y': 12, '3m': 3, '1m': 1 };
+function setSeasonYears(n) {
+  seasonYears = n;
+  document.querySelectorAll('.season-btn').forEach(b =>
+    b.classList.toggle('active', parseInt(b.dataset.sy) === n));
+  renderSeasonalityChart();
+}
 
-function filterMonthly(rows) {
+// ─── FILTER FOR CHARTS (monthly, view-aware) ──────────────────────────────────
+function filterMonthlyForChart() {
   const mo = VIEW_MONTHS[currentView];
-  if (!mo) return rows;
-  const withData = rows.filter(r => r.spread != null);
-  if (!withData.length) return rows;
+  if (!mo) return MONTHLY;
+  const withData = MONTHLY.filter(r => r.spread != null);
+  if (!withData.length) return MONTHLY;
   const last = withData[withData.length - 1];
-  // cutoff = last period minus `mo` months
   let cy = last.year, cm = last.month - mo;
   while (cm <= 0) { cy--; cm += 12; }
-  return rows.filter(r => r.year > cy || (r.year === cy && r.month >= cm));
+  return MONTHLY.filter(r => r.year > cy || (r.year === cy && r.month >= cm));
 }
 
-function filterWeekly(rows) {
+function filterWeeklyForChart() {
   const mo = VIEW_MONTHS[currentView];
-  if (!mo) return rows;
-  if (!rows.length) return rows;
-  const lastDate = new Date(rows[rows.length - 1].start_date);
+  if (!mo || !WEEKLY.length) return WEEKLY;
+  const lastDate = new Date(WEEKLY[WEEKLY.length - 1].start_date);
   const cutoff   = new Date(lastDate);
   cutoff.setMonth(cutoff.getMonth() - mo);
-  return rows.filter(r => new Date(r.start_date) >= cutoff);
+  return WEEKLY.filter(r => new Date(r.start_date) >= cutoff);
 }
 
-function filterQuarterly(rows) {
+function filterQuarterlyForChart() {
   const mo = VIEW_MONTHS[currentView];
-  if (!mo) return rows;
-  if (!rows.length) return rows;
-  // Approximate: treat mo months as quarters
-  const withData = rows.slice(-1)[0];
-  const totalRows = Math.max(1, Math.ceil(mo / 3));
-  return rows.slice(-totalRows);
+  if (!mo || !QUARTERLY.length) return QUARTERLY;
+  return QUARTERLY.slice(-Math.max(1, Math.ceil(mo / 3)));
 }
 
-function filterRows() {
-  if (currentTab === 'monthly')   return filterMonthly(MONTHLY);
-  if (currentTab === 'weekly')    return filterWeekly(WEEKLY);
-  if (currentTab === 'quarterly') return filterQuarterly(QUARTERLY);
-  return [];
+function chartRows() {
+  if (currentTab === 'weekly')    return filterWeeklyForChart();
+  if (currentTab === 'quarterly') return filterQuarterlyForChart();
+  return filterMonthlyForChart();
 }
 
-// ─── ROLLING AVERAGE ─────────────────────────────────────────────────────────
-function rollingAvg(vals, n) {
-  return vals.map((_, i) => {
-    const slice = vals.slice(Math.max(0, i - n + 1), i + 1).filter(v => v != null);
-    return slice.length ? slice.reduce((s, v) => s + v, 0) / slice.length : null;
-  });
+// ─── PERIOD AVERAGE (flat line) ───────────────────────────────────────────────
+function periodMean(vals) {
+  const v = vals.filter(x => x != null);
+  return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null;
 }
 
-// ─── CHARTS ──────────────────────────────────────────────────────────────────
+// ─── CHARTS 1 & 2 ────────────────────────────────────────────────────────────
 function renderCharts() {
-  const rows   = filterRows();
-  const n      = currentTab === 'weekly' ? 4 : currentTab === 'quarterly' ? 4 : 12;
+  const rows   = chartRows();
   const labelK = currentTab === 'weekly' ? 'start_date' : 'period';
 
   const labels   = rows.map(r => r[labelK]);
   const spreads  = rows.map(r => r.spread);
-  const ravg     = rollingAvg(spreads, n);
   const exports_ = rows.map(r => r.secex_brl_kg);
   const cattle   = rows.map(r => r.cepea_r_kg);
+  const mean     = periodMean(spreads);
+  const avgLine  = spreads.map(() => mean);
+
+  if (mean != null)
+    document.getElementById('avg-display').textContent = mean.toFixed(3) + '×';
 
   const ptRadius = rows.length > 60 ? 0 : 2;
 
-  // ── Chart 1: Spread + Rolling Avg ────────────────────────────────────────
+  // ── Chart 1: Spread + Period Avg ─────────────────────────────────────────
   if (charts.spread) charts.spread.destroy();
   charts.spread = new Chart(document.getElementById('spreadChart').getContext('2d'), {
     type: 'line',
     data: {
       labels,
       datasets: [
-        {
-          label: 'Spread (×)',
-          data: spreads,
-          borderColor: '#FF5500',
-          backgroundColor: 'rgba(255,85,0,0.07)',
-          borderWidth: 1.8,
-          pointRadius: ptRadius,
-          pointHoverRadius: 4,
-          fill: true,
-          tension: 0.3,
-          order: 2,
-        },
-        {
-          label: `${n}-period Rolling Avg`,
-          data: ravg,
-          borderColor: '#FF9966',
-          backgroundColor: 'transparent',
-          borderWidth: 2,
-          borderDash: [5, 3],
-          pointRadius: 0,
-          tension: 0.4,
-          order: 1,
-        },
+        { label: 'Spread (×)', data: spreads,
+          borderColor: '#FF5500', backgroundColor: 'rgba(255,85,0,0.07)',
+          borderWidth: 1.8, pointRadius: ptRadius, pointHoverRadius: 4,
+          fill: true, tension: 0.3, order: 2 },
+        { label: 'Period Avg', data: avgLine,
+          borderColor: '#FF9966', backgroundColor: 'transparent',
+          borderWidth: 1.8, borderDash: [6, 4],
+          pointRadius: 0, tension: 0, order: 1 },
       ],
     },
     options: chartOpts({
       yCallback: v => v.toFixed(2) + '×',
-      tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(3) ?? '—'}×`,
+      tooltipCb:  ctx => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(3) ?? '—'}×`,
     }),
   });
 
-  // ── Chart 2: Export BRL/kg vs Cattle BRL/kg (dual Y) ─────────────────────
+  // ── Chart 2: Export vs Cattle — SINGLE Y-AXIS, no BRL prefix ─────────────
   if (charts.price) charts.price.destroy();
   charts.price = new Chart(document.getElementById('priceChart').getContext('2d'), {
     type: 'line',
     data: {
       labels,
       datasets: [
-        {
-          label: 'Export Price (BRL/kg)',
-          data: exports_,
-          borderColor: '#FF5500',
-          backgroundColor: 'transparent',
-          borderWidth: 2,
-          pointRadius: ptRadius,
-          pointHoverRadius: 4,
-          tension: 0.3,
-          yAxisID: 'y',
-        },
-        {
-          label: 'Cattle Cost (BRL/kg)',
-          data: cattle,
-          borderColor: '#333333',
-          backgroundColor: 'transparent',
-          borderWidth: 2,
-          pointRadius: ptRadius,
-          pointHoverRadius: 4,
-          tension: 0.3,
-          yAxisID: 'y2',
-        },
+        { label: 'Export Price (BRL/kg)', data: exports_,
+          borderColor: '#FF5500', backgroundColor: 'transparent',
+          borderWidth: 2, pointRadius: ptRadius, pointHoverRadius: 4, tension: 0.3 },
+        { label: 'Cattle Cost (BRL/kg)', data: cattle,
+          borderColor: '#333333', backgroundColor: 'transparent',
+          borderWidth: 2, pointRadius: ptRadius, pointHoverRadius: 4, tension: 0.3 },
       ],
     },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#333', titleColor: '#ccc', bodyColor: '#eee',
+          borderColor: '#555', borderWidth: 1,
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? '—'}`,
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#999', font: { size: 9, family: 'Arial' },
+              maxTicksLimit: 10, maxRotation: 0 },
+             grid: { color: 'rgba(0,0,0,0.04)' } },
+        y: { ticks: { color: '#666', font: { size: 9 },
+              callback: v => v.toFixed(1) },
+             grid: { color: 'rgba(0,0,0,0.05)' },
+             title: { display: true, text: 'BRL/kg', color: '#888',
+               font: { size: 9 } } },
+      },
+    },
+  });
+}
+
+function chartOpts({ yCallback, tooltipCb }) {
+  return {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: '#333', titleColor: '#ccc', bodyColor: '#eee',
+        borderColor: '#555', borderWidth: 1,
+        callbacks: { label: tooltipCb },
+      },
+    },
+    scales: {
+      x: { ticks: { color: '#999', font: { size: 9, family: 'Arial' },
+            maxTicksLimit: 10, maxRotation: 0 },
+           grid: { color: 'rgba(0,0,0,0.04)' } },
+      y: { ticks: { color: '#999', font: { size: 9, family: 'Arial' },
+            callback: yCallback },
+           grid: { color: 'rgba(0,0,0,0.05)' } },
+    },
+  };
+}
+
+// ─── SEASONALITY CHART ────────────────────────────────────────────────────────
+function renderSeasonalityChart() {
+  const allYears = Object.keys(SEASONALITY).map(Number).sort((a, b) => a - b);
+  if (!allYears.length) return;
+
+  const latestYear = allYears[allYears.length - 1];
+  // historical years = all except latest (latest may be partial)
+  const histYears  = allYears.filter(y => y < latestYear);
+  // band years = subset of historical based on filter
+  const bandYears  = seasonYears === 0
+    ? histYears
+    : histYears.filter(y => y >= latestYear - seasonYears);
+
+  // compute per-month min/max from band years
+  const minBand = Array(12).fill(null);
+  const maxBand = Array(12).fill(null);
+  bandYears.forEach(y => {
+    SEASONALITY[y].forEach((v, mi) => {
+      if (v == null) return;
+      minBand[mi] = minBand[mi] == null ? v : Math.min(minBand[mi], v);
+      maxBand[mi] = maxBand[mi] == null ? v : Math.max(maxBand[mi], v);
+    });
+  });
+
+  const bandLabel = seasonYears === 0
+    ? `Max/Min — all years (${bandYears[0]}–${bandYears[bandYears.length-1]})`
+    : `Max/Min — last ${seasonYears}Y (${bandYears[0]}–${bandYears[bandYears.length-1]})`;
+
+  const datasets = [];
+
+  // Shaded band: maxBand fills down to minBand via fill:'+1'
+  datasets.push({
+    label: bandLabel,
+    data: maxBand,
+    borderColor: 'rgba(255,85,0,0.20)',
+    backgroundColor: 'rgba(255,85,0,0.10)',
+    borderWidth: 0.8,
+    pointRadius: 0,
+    tension: 0.35,
+    fill: '+1',   // fills to next dataset (minBand)
+    order: 4,
+  });
+  datasets.push({
+    label: '_min',  // hidden from tooltip/legend
+    data: minBand,
+    borderColor: 'rgba(255,85,0,0.20)',
+    backgroundColor: 'rgba(255,85,0,0.10)',
+    borderWidth: 0.8,
+    pointRadius: 0,
+    tension: 0.35,
+    fill: false,
+    order: 4,
+  });
+
+  // Historical year lines (light gray, thin)
+  histYears.forEach(y => {
+    datasets.push({
+      label: String(y),
+      data: SEASONALITY[y],
+      borderColor: 'rgba(170,170,170,0.40)',
+      backgroundColor: 'transparent',
+      borderWidth: 1,
+      pointRadius: 0,
+      tension: 0.35,
+      order: 3,
+    });
+  });
+
+  // Current (latest) year — orange, bold
+  datasets.push({
+    label: `${latestYear} (current)`,
+    data: SEASONALITY[latestYear],
+    borderColor: '#FF5500',
+    backgroundColor: 'transparent',
+    borderWidth: 2.5,
+    pointRadius: 3,
+    pointHoverRadius: 5,
+    pointBackgroundColor: '#FF5500',
+    tension: 0.35,
+    order: 1,
+  });
+
+  if (charts.season) charts.season.destroy();
+  charts.season = new Chart(document.getElementById('seasonChart').getContext('2d'), {
+    type: 'line',
+    data: { labels: MONTHS_SHORT, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { display: false },
+        legend: {
+          display: true,
+          position: 'right',
+          labels: {
+            // Only show band entry + current year; skip individual historical lines
+            filter: item => !item.text.match(/^\d{4}$/) && !item.text.startsWith('_'),
+            font: { size: 10, family: 'Segoe UI,Arial,sans-serif' },
+            boxWidth: 14,
+            color: '#666',
+            padding: 10,
+          },
+        },
         tooltip: {
-          backgroundColor: '#333',
-          titleColor: '#ccc',
-          bodyColor: '#eee',
-          borderColor: '#555',
-          borderWidth: 1,
+          backgroundColor: '#333', titleColor: '#ccc', bodyColor: '#eee',
+          borderColor: '#555', borderWidth: 1,
+          filter: item => !item.dataset.label.startsWith('_'), // hide _min
           callbacks: {
-            label: ctx => `${ctx.dataset.label}: BRL ${ctx.parsed.y?.toFixed(2) ?? '—'}/kg`,
+            label: ctx => {
+              if (ctx.parsed.y == null) return null;
+              const lbl = ctx.dataset.label;
+              // Shorten band label in tooltip
+              const displayLbl = lbl.startsWith('Max/Min') ? 'Band Max' : lbl;
+              return `${displayLbl}: ${ctx.parsed.y.toFixed(3)}×`;
+            },
           },
         },
       },
       scales: {
         x: {
-          ticks: { color: '#999', font: { size: 9, family: 'Arial' }, maxTicksLimit: 10, maxRotation: 0 },
-          grid:  { color: 'rgba(0,0,0,0.04)' },
+          ticks: { color: '#999', font: { size: 10, family: 'Arial' }, maxRotation: 0 },
+          grid: { color: 'rgba(0,0,0,0.04)' },
         },
         y: {
-          position: 'left',
-          title: { display: true, text: 'Export Price BRL/kg', color: '#FF5500', font: { size: 9 } },
-          ticks: { color: '#FF5500', font: { size: 9 }, callback: v => 'BRL ' + v.toFixed(1) },
-          grid:  { color: 'rgba(0,0,0,0.05)' },
-        },
-        y2: {
-          position: 'right',
-          title: { display: true, text: 'Cattle Cost BRL/kg', color: '#333333', font: { size: 9 } },
-          ticks: { color: '#333333', font: { size: 9 }, callback: v => 'BRL ' + v.toFixed(1) },
-          grid:  { drawOnChartArea: false },
+          ticks: { color: '#888', font: { size: 9 },
+            callback: v => v.toFixed(2) + '×' },
+          grid: { color: 'rgba(0,0,0,0.05)' },
+          title: { display: true, text: 'Spread (×)', color: '#999',
+            font: { size: 9 } },
         },
       },
     },
   });
 }
 
-function chartOpts({ yCallback, tooltipCallback }) {
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { mode: 'index', intersect: false },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        backgroundColor: '#333',
-        titleColor: '#ccc',
-        bodyColor: '#eee',
-        borderColor: '#555',
-        borderWidth: 1,
-        callbacks: { label: tooltipCallback },
-      },
-    },
-    scales: {
-      x: {
-        ticks: { color: '#999', font: { size: 9, family: 'Arial' }, maxTicksLimit: 10, maxRotation: 0 },
-        grid:  { color: 'rgba(0,0,0,0.04)' },
-      },
-      y: {
-        ticks: { color: '#999', font: { size: 9, family: 'Arial' }, callback: yCallback },
-        grid:  { color: 'rgba(0,0,0,0.05)' },
-      },
-    },
-  };
-}
-
-// ─── TABLE ────────────────────────────────────────────────────────────────────
-function fmt(v, dec=2, prefix='') {
+// ─── TABLE — always full history ──────────────────────────────────────────────
+function fmt(v, dec=2)    { return v == null ? '<span class="td-na">—</span>' : v.toFixed(dec); }
+function fmtBRL(v, dec=2) { return v == null ? '<span class="td-na">—</span>' : v.toFixed(dec); }
+function fmtVol(v)        {
   if (v == null) return '<span class="td-na">—</span>';
-  return prefix + v.toFixed(dec);
+  return (v / 1000).toFixed(1);
 }
-
-function fmtBRL(v, dec=2) {
-  if (v == null) return '<span class="td-na">—</span>';
-  return 'BRL ' + v.toFixed(dec);
+function fmtSpread(v)     {
+  return v == null
+    ? '<span class="td-na">—</span>'
+    : `<span class="td-spread">${v.toFixed(3)}×</span>`;
 }
 
 function renderTable() {
-  const rows = filterRows().slice().reverse(); // most recent first
   const head = document.getElementById('table-head');
   const body = document.getElementById('table-body');
 
-  if (currentTab === 'monthly') {
-    // 6 columns: Period(20%) | Export USD/kg(13%) | FX(12%) | Export BRL/kg(18%) | Cattle BRL/kg(18%) | Spread(19%)
+  if (currentTab === 'quarterly') {
     head.innerHTML = `<tr>
-      <th style="text-align:left;width:14%;">Period</th>
-      <th style="width:15%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg</span></th>
-      <th style="width:12%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD</span></th>
-      <th style="width:20%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
-      <th style="width:20%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
-      <th style="width:19%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">(×)</span></th>
+      <th style="text-align:left;width:11%;">Quarter</th>
+      <th style="width:14%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg avg</span></th>
+      <th style="width:11%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD</span></th>
+      <th style="width:16%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg avg</span></th>
+      <th style="width:16%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg avg</span></th>
+      <th style="width:16%;">Volume<br><span style="font-weight:400;font-size:9px;text-transform:none;">000 t</span></th>
+      <th style="width:16%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">avg (×)</span></th>
     </tr>`;
-    body.innerHTML = rows.map(r => {
-      const sp = r.spread != null
-        ? `<span class="td-spread">${r.spread.toFixed(3)}×</span>` : '<span class="td-na">—</span>';
-      return `<tr>
-        <td>${r.period ?? '—'}</td>
-        <td>${fmt(r.secex_usd_kg, 3)}</td>
-        <td>${fmt(r.fx, 3)}</td>
-        <td>${fmtBRL(r.secex_brl_kg)}</td>
-        <td>${fmtBRL(r.cepea_r_kg)}</td>
-        <td>${sp}</td>
-      </tr>`;
-    }).join('');
+    body.innerHTML = QUARTERLY.slice().reverse().map(r => `<tr>
+      <td>${r.period}</td>
+      <td>${fmt(r.secex_usd_kg, 3)}</td>
+      <td>${fmt(r.fx, 3)}</td>
+      <td>${fmtBRL(r.secex_brl_kg)}</td>
+      <td>${fmtBRL(r.cepea_r_kg)}</td>
+      <td>${fmtVol(r.vol_tons)}</td>
+      <td>${fmtSpread(r.spread)}</td>
+    </tr>`).join('');
 
-  } else if (currentTab === 'weekly') {
-    // 7 columns: Start(12%) | End(12%) | Export USD(11%) | FX(10%) | Export BRL(17%) | Cattle BRL(17%) | Spread(21%)
+  } else if (currentTab === 'monthly') {
+    head.innerHTML = `<tr>
+      <th style="text-align:left;width:10%;">Period</th>
+      <th style="width:14%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg</span></th>
+      <th style="width:11%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD</span></th>
+      <th style="width:15%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
+      <th style="width:15%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
+      <th style="width:17%;">Volume<br><span style="font-weight:400;font-size:9px;text-transform:none;">000 t</span></th>
+      <th style="width:18%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">(×)</span></th>
+    </tr>`;
+    body.innerHTML = MONTHLY.slice().reverse().map(r => `<tr>
+      <td>${r.period ?? '—'}</td>
+      <td>${fmt(r.secex_usd_kg, 3)}</td>
+      <td>${fmt(r.fx, 3)}</td>
+      <td>${fmtBRL(r.secex_brl_kg)}</td>
+      <td>${fmtBRL(r.cepea_r_kg)}</td>
+      <td>${fmtVol(r.vol_tons)}</td>
+      <td>${fmtSpread(r.spread)}</td>
+    </tr>`).join('');
+
+  } else {
+    // Weekly — no volume available at weekly granularity
     head.innerHTML = `<tr>
       <th style="text-align:left;width:12%;">Start</th>
       <th style="width:12%;">End</th>
-      <th style="width:11%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg</span></th>
-      <th style="width:10%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD</span></th>
-      <th style="width:18%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
-      <th style="width:18%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
-      <th style="width:19%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">(×)</span></th>
+      <th style="width:13%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg</span></th>
+      <th style="width:11%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD</span></th>
+      <th style="width:17%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
+      <th style="width:17%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
+      <th style="width:18%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">(×)</span></th>
     </tr>`;
-    body.innerHTML = rows.map(r => {
-      const sp = r.spread != null
-        ? `<span class="td-spread">${r.spread.toFixed(3)}×</span>` : '<span class="td-na">—</span>';
-      return `<tr>
-        <td>${r.start_date ?? '—'}</td>
-        <td>${r.end_date ?? '—'}</td>
-        <td>${fmt(r.secex_usd_kg, 3)}</td>
-        <td>${fmt(r.fx, 3)}</td>
-        <td>${fmtBRL(r.secex_brl_kg)}</td>
-        <td>${fmtBRL(r.cepea_r_kg)}</td>
-        <td>${sp}</td>
-      </tr>`;
-    }).join('');
-
-  } else {
-    // Quarterly — 6 columns: Quarter(14%) | Export USD(15%) | FX(12%) | Export BRL(20%) | Cattle BRL(20%) | Spread(19%)
-    head.innerHTML = `<tr>
-      <th style="text-align:left;width:14%;">Quarter</th>
-      <th style="width:15%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg avg</span></th>
-      <th style="width:12%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD avg</span></th>
-      <th style="width:20%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg avg</span></th>
-      <th style="width:20%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg avg</span></th>
-      <th style="width:19%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">avg (×)</span></th>
-    </tr>`;
-    body.innerHTML = rows.map(r => {
-      const sp = r.spread != null
-        ? `<span class="td-spread">${r.spread.toFixed(3)}×</span>` : '<span class="td-na">—</span>';
-      return `<tr>
-        <td>${r.period ?? '—'}</td>
-        <td>${fmt(r.secex_usd_kg, 3)}</td>
-        <td>${fmt(r.fx, 3)}</td>
-        <td>${fmtBRL(r.secex_brl_kg)}</td>
-        <td>${fmtBRL(r.cepea_r_kg)}</td>
-        <td>${sp}</td>
-      </tr>`;
-    }).join('');
+    body.innerHTML = WEEKLY.slice().reverse().map(r => `<tr>
+      <td>${r.start_date ?? '—'}</td>
+      <td>${r.end_date ?? '—'}</td>
+      <td>${fmt(r.secex_usd_kg, 3)}</td>
+      <td>${fmt(r.fx, 3)}</td>
+      <td>${fmtBRL(r.secex_brl_kg)}</td>
+      <td>${fmtBRL(r.cepea_r_kg)}</td>
+      <td>${fmtSpread(r.spread)}</td>
+    </tr>`).join('');
   }
 }
 
 // ─── FULL RENDER ─────────────────────────────────────────────────────────────
 function render() {
   renderCharts();
+  renderSeasonalityChart();
   renderTable();
 }
 
