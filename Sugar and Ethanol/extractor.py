@@ -395,8 +395,8 @@ def fetch_etanol_cepea(conn) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 ANP_BASE     = "https://www.gov.br/anp/pt-br/centrais-de-conteudo/dados-abertos/arquivos"
-FUEL_EST_URL = ANP_BASE + "/vdpb/semanal-estados-desde-2013.xlsx"
-FUEL_BR_URL  = ANP_BASE + "/vdpb/semanal-brasil-desde-2013.xlsx"
+FUEL_EST_URL = "https://www.gov.br/anp/pt-br/assuntos/precos-e-defesa-da-concorrencia/precos/precos-revenda-e-de-distribuicao-combustiveis/shlp/semanal/semanal-estados-desde-2013.xlsx"
+FUEL_BR_URL  = "https://www.gov.br/anp/pt-br/assuntos/precos-e-defesa-da-concorrencia/precos/precos-revenda-e-de-distribuicao-combustiveis/shlp/semanal/semanal-brasil-desde-2013.xlsx"
 PRODUTOS     = {"ETANOL HIDRATADO", "GASOLINA COMUM"}
 
 def run_fuel(conn: sqlite3.Connection) -> dict:
@@ -492,9 +492,8 @@ def ingest_fuel_brasil(conn) -> int:
 # ══ SECTION 3: Supply/Demand  (runs on 5th of each month) ═══════════════════
 # ─────────────────────────────────────────────────────────────────────────────
 
-VENDAS_ETH_URL = ANP_BASE + "/vdpb/vc/vendas-etanol-hidratado-m3-{year}.csv"
-VENDAS_GAS_URL = ANP_BASE + "/vdpb/vc/vendas-gasolina-c-m3-{year}.csv"
-PRODUCAO_URL   = ANP_BASE + "/peb/producao-etanol-hidratado-m3.csv"
+VENDAS_CSV_URL = "https://www.gov.br/anp/pt-br/centrais-de-conteudo/dados-abertos/arquivos/vdpb/vendas-derivados-petroleo-e-etanol/vendas-combustiveis-m3-1990-2025.csv"
+PRODUCAO_URL   = "https://www.gov.br/anp/pt-br/assuntos/producao-e-fornecimento-de-biocombustiveis/etanol/arquivos-etanol/pb-da-etanol.zip"
 
 MES_PT = {
     "JAN":1,"FEV":2,"MAR":3,"ABR":4,"MAI":5,"JUN":6,
@@ -564,49 +563,83 @@ def parse_vendas_year(content: bytes, year: int, label: str) -> pd.DataFrame | N
 
 
 def ingest_vendas(conn) -> int:
+    """
+    Downloads the consolidated ANP vendas CSV (all years, all products)
+    and inserts only rows newer than last in DB.
+    Format: ANO;MÊS;GRANDE REGIÃO;UNIDADE DA FEDERAÇÃO;PRODUTO;VENDAS
+    """
     last = last_year_month(conn, "anp_vendas_uf")
     last_ano = last[0] if last else 2013
     last_mes = last[1] if last else 0
-    years = sorted({last_ano, last_ano + 1, TODAY.year})
 
-    eth_frames, gas_frames = [], []
-    for year in years:
-        for url_tpl, frames, lbl in [
-            (VENDAS_ETH_URL, eth_frames, f"eth-{year}"),
-            (VENDAS_GAS_URL, gas_frames, f"gas-{year}"),
-        ]:
-            content = download(url_tpl.format(year=year), lbl, fatal=True)
-            df = parse_vendas_year(content, year, lbl)
-            if df is not None and not df.empty:
-                frames.append(df)
-            time.sleep(1)
+    content = download(VENDAS_CSV_URL, "vendas", fatal=True)
 
-    if not eth_frames and not gas_frames:
-        raise RuntimeError("[vendas] No data fetched from ANP")
+    for enc in ("utf-8-sig", "latin-1", "utf-8"):
+        try:
+            text = content.decode(enc); break
+        except UnicodeDecodeError: continue
 
-    def concat_rename(frames, col):
-        if not frames:
-            return pd.DataFrame(columns=["ano","mes","estado",col])
-        return pd.concat(frames, ignore_index=True).rename(columns={"volume": col})
+    df = pd.read_csv(io.StringIO(text), sep=";", on_bad_lines="skip")
+    df.columns = [c.strip() for c in df.columns]
 
-    eth = concat_rename(eth_frames, "eth_hid_m3")
-    gas = concat_rename(gas_frames, "gas_c_m3")
-    merged = eth.merge(gas, on=["ano","mes","estado"], how="outer") \
-             if not eth.empty and not gas.empty else \
-             (eth if not eth.empty else gas)
-    if "eth_hid_m3" not in merged.columns: merged["eth_hid_m3"] = None
-    if "gas_c_m3"   not in merged.columns: merged["gas_c_m3"]   = None
+    # Find columns
+    ano_col    = next((c for c in df.columns if c.upper() in ("ANO","AÑO")), None)
+    mes_col    = next((c for c in df.columns if "MÊS" in c.upper() or "MES" in c.upper()), None)
+    uf_col     = next((c for c in df.columns if "FEDERAÇÃO" in c.upper() or "FEDERACAO" in c.upper()), None)
+    prod_col   = next((c for c in df.columns if "PRODUTO" in c.upper()), None)
+    vendas_col = next((c for c in df.columns if "VENDAS" in c.upper()), None)
 
-    merged = merged[
-        (merged["ano"] > last_ano) |
-        ((merged["ano"] == last_ano) & (merged["mes"] > last_mes))
+    if not all([ano_col, mes_col, uf_col, prod_col, vendas_col]):
+        raise RuntimeError(f"[vendas] Missing columns. Got: {list(df.columns)}")
+
+    # Filter to only our products
+    df = df[df[prod_col].isin(["ETANOL HIDRATADO", "GASOLINA C"])].copy()
+
+    # Map month names to numbers
+    df["mes_num"] = df[mes_col].str[:3].str.upper().map(MES_PT)
+    df = df[df["mes_num"].notna()].copy()
+    df["mes_num"] = df["mes_num"].astype(int)
+    df["ano_num"] = pd.to_numeric(df[ano_col], errors="coerce").astype("Int64")
+    df = df[df["ano_num"].notna()].copy()
+
+    # Convert vendas values
+    df["volume"] = pd.to_numeric(
+        df[vendas_col].astype(str).str.replace(".", "").str.replace(",", "."),
+        errors="coerce"
+    )
+    df["estado"] = df[uf_col].str.strip().str.upper()
+
+    # Pivot eth + gas into same row
+    piv = df.pivot_table(
+        index=["ano_num", "mes_num", "estado"],
+        columns=prod_col,
+        values="volume",
+        aggfunc="sum"
+    ).reset_index()
+    piv.columns.name = None
+    piv = piv.rename(columns={
+        "ano_num": "ano", "mes_num": "mes",
+        "ETANOL HIDRATADO": "eth_hid_m3",
+        "GASOLINA C": "gas_c_m3"
+    })
+    if "eth_hid_m3" not in piv.columns: piv["eth_hid_m3"] = None
+    if "gas_c_m3"   not in piv.columns: piv["gas_c_m3"]   = None
+
+    # Only new rows
+    piv = piv[
+        (piv["ano"] > last_ano) |
+        ((piv["ano"] == last_ano) & (piv["mes"] > last_mes))
     ]
-    if merged.empty:
+
+    if piv.empty:
         log.info("[vendas] Nothing new.")
         return 0
 
+    log.info(f"[vendas] {len(piv)} new rows to insert | "
+             f"up to {int(piv['ano'].max())}-{int(piv['mes'].max()):02d}")
+
     inserted = 0
-    for _, r in merged.iterrows():
+    for _, r in piv.iterrows():
         conn.execute(
             "INSERT OR IGNORE INTO anp_vendas_uf "
             "(ano,mes,estado,eth_hid_m3,gas_c_m3,updated_at) VALUES(?,?,?,?,?,?)",
@@ -622,14 +655,28 @@ def ingest_vendas(conn) -> int:
 
 
 def ingest_producao(conn) -> int:
+    import zipfile
     last = last_year_month(conn, "anp_producao_uf")
     last_ano = last[0] if last else 2016
     last_mes = last[1] if last else 0
 
     content = download(PRODUCAO_URL, "producao", fatal=True)
+
+    # Extract Etanol_Produção.csv from zip
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            csv_name = next((n for n in zf.namelist()
+                             if "rodu" in n.lower() and n.endswith(".csv")), None)
+            if not csv_name:
+                raise RuntimeError(f"[producao] Etanol_Produção.csv not found in zip. Files: {zf.namelist()}")
+            log.info(f"[producao] Extracting: {csv_name}")
+            raw = zf.read(csv_name)
+    except zipfile.BadZipFile as e:
+        raise RuntimeError(f"[producao] Bad zip file: {e}")
+
     for enc in ("utf-8-sig", "utf-8", "latin-1"):
         try:
-            text = content.decode(enc); break
+            text = raw.decode(enc); break
         except UnicodeDecodeError: continue
 
     df = pd.read_csv(io.StringIO(text), sep=",")
