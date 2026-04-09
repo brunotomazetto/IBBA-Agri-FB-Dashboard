@@ -188,9 +188,9 @@ tr:hover td{background:#FFF8F5;}
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
           <span style="font-size:10.5px;font-weight:700;color:var(--gray-mid);">BAND:</span>
           <div style="display:flex;gap:3px;">
-            <button class="season-btn" data-sy="5" onclick="setSeasonYears(5)">5Y</button>
-            <button class="season-btn active" data-sy="10" onclick="setSeasonYears(10)">10Y</button>
-            <button class="season-btn" data-sy="15" onclick="setSeasonYears(15)">15Y</button>
+            <button class="season-btn" data-sy="2" onclick="setSeasonYears(2)">2Y</button>
+            <button class="season-btn" data-sy="3" onclick="setSeasonYears(3)">3Y</button>
+            <button class="season-btn active" data-sy="5" onclick="setSeasonYears(5)">5Y</button>
             <button class="season-btn" data-sy="0" onclick="setSeasonYears(0)">All</button>
           </div>
         </div>
@@ -230,7 +230,7 @@ let SEASONALITY = {};  // { year: [Jan..Dec] spread values }
 let charts       = {};
 let currentView  = '3y';       // affects charts 1 & 2 only
 let currentTab   = 'quarterly'; // table tab
-let seasonYears  = 10;          // 0 = all
+let seasonYears  = 5;           // 0 = all
 
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const VIEW_MONTHS  = { all: null, '3y': 36, '1y': 12, '3m': 3, '1m': 1 };
