@@ -888,9 +888,15 @@ def summary(conn):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    # Support --dashboard-only flag to regenerate dashboard without scraping
+    dashboard_only = "--dashboard-only" in sys.argv
+
     log.info("=" * 60)
-    log.info(f"IBBA Extractor | {TODAY} ({TODAY.strftime('%A')}) | {NOW_STR}")
-    log.info(f"  Weekday: {is_weekday()} | Thursday: {is_thursday()} | 5th: {is_month_5th()}")
+    if dashboard_only:
+        log.info(f"IBBA Extractor | DASHBOARD-ONLY MODE | {NOW_STR}")
+    else:
+        log.info(f"IBBA Extractor | {TODAY} ({TODAY.strftime('%A')}) | {NOW_STR}")
+        log.info(f"  Weekday: {is_weekday()} | Thursday: {is_thursday()} | 5th: {is_month_5th()}")
     log.info("=" * 60)
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -899,26 +905,27 @@ def main():
 
     errors = []
 
-    # S&E — daily
-    try:
-        run_se(conn)
-    except Exception as e:
-        log.error(f"[S&E] FAILED: {e}")
-        errors.append(f"S&E: {e}")
+    if not dashboard_only:
+        # S&E — daily
+        try:
+            run_se(conn)
+        except Exception as e:
+            log.error(f"[S&E] FAILED: {e}")
+            errors.append(f"S&E: {e}")
 
-    # Fuel — Thursdays
-    try:
-        run_fuel(conn)
-    except Exception as e:
-        log.error(f"[Fuel] FAILED: {e}")
-        errors.append(f"Fuel: {e}")
+        # Fuel — Thursdays
+        try:
+            run_fuel(conn)
+        except Exception as e:
+            log.error(f"[Fuel] FAILED: {e}")
+            errors.append(f"Fuel: {e}")
 
-    # Supply/Demand — 5th of month
-    try:
-        run_supply_demand(conn)
-    except Exception as e:
-        log.error(f"[Supply/Demand] FAILED: {e}")
-        errors.append(f"Supply/Demand: {e}")
+        # Supply/Demand — 5th of month
+        try:
+            run_supply_demand(conn)
+        except Exception as e:
+            log.error(f"[Supply/Demand] FAILED: {e}")
+            errors.append(f"Supply/Demand: {e}")
 
     # Regenerate dashboard with latest data
     try:
@@ -934,7 +941,7 @@ def main():
         log.error(f"EXTRACTOR FINISHED WITH {len(errors)} ERROR(S):")
         for e in errors:
             log.error(f"  • {e}")
-        sys.exit(1)   # non-zero exit → GitHub marks run red ✗
+        sys.exit(1)
     else:
         log.info("All sections completed successfully.")
 
