@@ -845,7 +845,8 @@ const DEF_YEARS    = {J(def_years)};
 const OTT_YEARS    = {J(ott_years)};
 const BR_DEF_SERIES  = {J(br_def)};
 const BR_OTTO_SERIES = {J(br_otto)};
-const UF_CODE_SD   = {J(UF_CODE_SD)};"""
+const UF_CODE_SD   = {J(UF_CODE_SD)};
+const MONTH_NAMES  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];"""
 
     # Decompress templates and assemble
     tmpl_before = gzip.decompress(base64.b64decode(_TMPL_BEFORE_B64)).decode("utf-8")
