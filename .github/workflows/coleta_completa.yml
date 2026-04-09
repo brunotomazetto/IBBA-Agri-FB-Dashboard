@@ -29,6 +29,8 @@ jobs:
         run: python "Supermarket Prices/scraper.py" Carnes
       - name: Coletar Biscoitos e Massas
         run: python "Supermarket Prices/scraper.py" Biscoitos Massas
+      - name: Preencher gaps (uma vez, após todas as coletas)
+        run: python "Supermarket Prices/preencher_gaps.py"
       - name: Gerar dashboard
         run: python "Supermarket Prices/gerar_dashboard.py"
       - name: Commit e push
