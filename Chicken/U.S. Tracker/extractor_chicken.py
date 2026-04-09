@@ -872,13 +872,190 @@ def load_from_excel(base_dir: str) -> dict:
 
     return data
 
+# ─── Weekly table helpers ─────────────────────────────────────────────────────
+def _ensure_weekly_table(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS weekly (
+            report_date TEXT PRIMARY KEY,
+            bw          REAL,
+            breast      REAL,
+            leg_qtrs    REAL,
+            wings       REAL,
+            tenders     REAL,
+            sbm         REAL,
+            corn        REAL,
+            updated_at  TEXT
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_weekly_date ON weekly(report_date)")
+
+
+def _upsert_weekly_dict(weekly: dict, label: str = ""):
+    """
+    Core upsert: takes {date_str → {field: value}} and merges into weekly table.
+    Existing rows are never deleted; NULL fields are filled; non-NULL fields
+    are never overwritten.
+    """
+    if not weekly:
+        print(f"  {label}no rows to write")
+        return 0, 0
+
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    _ensure_weekly_table(cur)
+
+    ts = datetime.now().isoformat(timespec="seconds")
+    inserted = updated = 0
+    FIELDS = ["bw", "breast", "leg_qtrs", "wings", "tenders", "sbm", "corn"]
+
+    for date_str, vals in sorted(weekly.items()):
+        existing = cur.execute(
+            "SELECT bw, breast, leg_qtrs, wings, tenders, sbm, corn "
+            "FROM weekly WHERE report_date=?",
+            (date_str,)
+        ).fetchone()
+
+        if existing is None:
+            cur.execute("""
+                INSERT INTO weekly
+                    (report_date, bw, breast, leg_qtrs, wings, tenders, sbm, corn, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?)
+            """, (
+                date_str,
+                vals.get("bw"),     vals.get("breast"), vals.get("leg_qtrs"),
+                vals.get("wings"),  vals.get("tenders"),
+                vals.get("sbm"),    vals.get("corn"),
+                ts
+            ))
+            inserted += 1
+        else:
+            updates = {
+                f: vals[f]
+                for i, f in enumerate(FIELDS)
+                if existing[i] is None and vals.get(f) is not None
+            }
+            if updates:
+                set_clause = ", ".join(f"{f}=?" for f in updates)
+                cur.execute(
+                    f"UPDATE weekly SET {set_clause}, updated_at=? WHERE report_date=?",
+                    (*updates.values(), ts, date_str)
+                )
+                updated += 1
+
+    con.commit()
+    n = cur.execute("SELECT COUNT(*) FROM weekly").fetchone()[0]
+    con.close()
+    print(f"  {label}Weekly table: {n} rows total  (+{inserted} new, {updated} updated)")
+    return inserted, updated
+
+
+def backfill_weekly_from_excel(base_dir: str):
+    """
+    One-time / incremental backfill: read US_Chicken_Weekly_Prices_IBBA.xlsx
+    and upsert ALL historical rows into the weekly table.
+    Safe to call on every local run — only fills NULL gaps, never overwrites.
+    """
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        print("  ⚠ openpyxl not installed — skipping Excel backfill")
+        return
+
+    parts_path = os.path.join(base_dir, "US_Chicken_Weekly_Prices_IBBA.xlsx")
+    if not os.path.exists(parts_path):
+        print(f"  ⚠ {parts_path} not found — skipping backfill")
+        return
+
+    wb = load_workbook(parts_path, data_only=True, read_only=True)
+    weekly: dict[str, dict] = {}
+
+    # ── Weekly Prices sheet: breast, leg_qtrs, wings, tenders (rows start at 6) ─
+    ws_p = wb["Weekly Prices"]
+    for r in ws_p.iter_rows(min_row=6, values_only=True):
+        dt = r[0]
+        if not dt or not isinstance(dt, datetime):
+            continue
+        key = dt.strftime("%Y-%m-%d")
+        entry = weekly.setdefault(key, {})
+        if isinstance(r[1], (int, float)): entry["breast"]   = r[1]
+        if isinstance(r[2], (int, float)): entry["leg_qtrs"] = r[2]
+        if isinstance(r[3], (int, float)): entry["wings"]    = r[3]
+        if isinstance(r[4], (int, float)): entry["tenders"]  = r[4]
+
+    # ── Cost Inputs sheet: sbm, corn (newest-first; rows start at 3) ──────────
+    def _sf(v):
+        if v is None or v == "":
+            return None
+        try:
+            return float(str(v).replace(";", ".").replace(",", ""))
+        except (ValueError, TypeError):
+            return None
+
+    ws_c = wb["Cost Inputs"]
+    for r in ws_c.iter_rows(min_row=3, values_only=True):
+        dt = r[0]
+        if not dt or not isinstance(dt, datetime):
+            continue
+        key = dt.strftime("%Y-%m-%d")
+        entry = weekly.setdefault(key, {})
+        sbm_v  = _sf(r[1])
+        corn_v = _sf(r[2])
+        if sbm_v  is not None: entry["sbm"]  = sbm_v
+        if corn_v is not None: entry["corn"] = corn_v
+
+    wb.close()
+    parts_count = sum(1 for v in weekly.values() if any(k in v for k in ("breast","leg_qtrs","wings","tenders")))
+    costs_count = sum(1 for v in weekly.values() if any(k in v for k in ("sbm","corn")))
+    print(f"  Excel backfill: {len(weekly)} unique dates "
+          f"({parts_count} with parts prices, {costs_count} with cost data)")
+    _upsert_weekly_dict(weekly, label="Excel backfill — ")
+
+
+def load_weekly_rows_from_db() -> dict:
+    """
+    Query all rows from the weekly table and return in standard {field}_rows
+    format consumed by build_db() / quarterly_avg().
+    Makes the weekly table the single authoritative source for quarterly averages.
+    """
+    empty = {k: [] for k in [
+        "bw_rows", "breast_rows", "leg_rows", "wings_rows",
+        "tenders_rows", "sbm_rows", "corn_rows"
+    ]}
+    if not os.path.exists(DB_PATH):
+        return empty
+    try:
+        con = sqlite3.connect(DB_PATH)
+        rows = con.execute(
+            "SELECT report_date, breast, leg_qtrs, wings, tenders, sbm, corn "
+            "FROM weekly ORDER BY report_date"
+        ).fetchall()
+        con.close()
+    except Exception as e:
+        print(f"  ⚠ Could not read weekly table: {e}")
+        return empty
+
+    result = {k: [] for k in empty}
+    for r in rows:
+        dt = datetime.strptime(r[0], "%Y-%m-%d")
+        if r[1] is not None: result["breast_rows"].append({"date": dt, "value": r[1]})
+        if r[2] is not None: result["leg_rows"].append({"date": dt, "value": r[2]})
+        if r[3] is not None: result["wings_rows"].append({"date": dt, "value": r[3]})
+        if r[4] is not None: result["tenders_rows"].append({"date": dt, "value": r[4]})
+        if r[5] is not None: result["sbm_rows"].append({"date": dt, "value": r[5]})
+        if r[6] is not None: result["corn_rows"].append({"date": dt, "value": r[6]})
+
+    print(f"  Weekly DB: {len(rows)} rows → "
+          f"breast={len(result['breast_rows'])}, leg={len(result['leg_rows'])}, "
+          f"sbm={len(result['sbm_rows'])}, corn={len(result['corn_rows'])}")
+    return result
+
+
 # ─── Build weekly table ───────────────────────────────────────────────────────
 def build_weekly_db(data: dict):
     """
-    Upsert raw weekly observations into the `weekly` table.
-    Existing rows are never deleted — only new weeks are inserted,
-    and existing weeks are updated only if a NULL field gets a value.
-    The quarterly table and dashboard are unaffected.
+    Upsert raw weekly observations from a fresh PDF/API fetch into the weekly
+    table. Delegates to _upsert_weekly_dict(); never deletes or overwrites
+    good data. Also prints the latest 3 rows as a sanity check.
     """
     # Merge all date-keyed series into a single dict: date → {field: value}
     series_map = {
@@ -897,75 +1074,21 @@ def build_weekly_db(data: dict):
             key = r["date"].strftime("%Y-%m-%d")
             weekly.setdefault(key, {})[field] = r["value"]
 
-    if not weekly:
-        print("  (no weekly rows to write)")
-        return
+    _upsert_weekly_dict(weekly)
 
-    con = sqlite3.connect(DB_PATH)
-    cur = con.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS weekly (
-            report_date TEXT PRIMARY KEY,
-            bw          REAL,
-            breast      REAL,
-            leg_qtrs    REAL,
-            wings       REAL,
-            tenders     REAL,
-            sbm         REAL,
-            corn        REAL,
-            updated_at  TEXT
-        )
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_weekly_date ON weekly(report_date)")
-
-    ts = datetime.now().isoformat(timespec="seconds")
-    inserted = updated = 0
-
-    for date_str, vals in sorted(weekly.items()):
-        existing = cur.execute(
-            "SELECT bw, breast, leg_qtrs, wings, tenders, sbm, corn FROM weekly WHERE report_date=?",
-            (date_str,)
-        ).fetchone()
-
-        if existing is None:
-            # New week — insert
-            cur.execute("""
-                INSERT INTO weekly (report_date, bw, breast, leg_qtrs, wings, tenders, sbm, corn, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?)
-            """, (
-                date_str,
-                vals.get("bw"),     vals.get("breast"), vals.get("leg_qtrs"),
-                vals.get("wings"),  vals.get("tenders"),
-                vals.get("sbm"),    vals.get("corn"),
-                ts
-            ))
-            inserted += 1
-        else:
-            # Existing week — only fill NULLs (never overwrite good data with NULL)
-            fields = ["bw", "breast", "leg_qtrs", "wings", "tenders", "sbm", "corn"]
-            updates = {}
-            for i, f in enumerate(fields):
-                if existing[i] is None and vals.get(f) is not None:
-                    updates[f] = vals[f]
-            if updates:
-                set_clause = ", ".join(f"{f}=?" for f in updates)
-                cur.execute(
-                    f"UPDATE weekly SET {set_clause}, updated_at=? WHERE report_date=?",
-                    (*updates.values(), ts, date_str)
-                )
-                updated += 1
-
-    con.commit()
-    n = cur.execute("SELECT COUNT(*) FROM weekly").fetchone()[0]
-    latest = cur.execute(
-        "SELECT report_date, breast, wings, sbm, corn FROM weekly ORDER BY report_date DESC LIMIT 3"
-    ).fetchall()
-    print(f"  Weekly table: {n} rows total  (+{inserted} new, {updated} updated)")
-    print(f"  {'Date':<12} {'Breast':>8} {'Wings':>7} {'SBM':>8} {'Corn':>7}")
-    for r in latest:
-        def f(v): return f"{v:7.2f}" if v is not None else "    N/A"
-        print(f"  {r[0]:<12} {f(r[1]):>8} {f(r[2]):>7} {f(r[3]):>8} {f(r[4]):>7}")
-    con.close()
+    # Print latest 3 rows as sanity check
+    if os.path.exists(DB_PATH):
+        con = sqlite3.connect(DB_PATH)
+        latest = con.execute(
+            "SELECT report_date, breast, wings, sbm, corn "
+            "FROM weekly ORDER BY report_date DESC LIMIT 3"
+        ).fetchall()
+        con.close()
+        if latest:
+            print(f"  {'Date':<12} {'Breast':>8} {'Wings':>7} {'SBM':>8} {'Corn':>7}")
+            for r in latest:
+                def fv(v): return f"{v:7.2f}" if v is not None else "    N/A"
+                print(f"  {r[0]:<12} {fv(r[1]):>8} {fv(r[2]):>7} {fv(r[3]):>8} {fv(r[4]):>7}")
 
 
 # ─── Load existing DB as baseline ─────────────────────────────────────────────
@@ -1123,60 +1246,98 @@ def build_db(data: dict, baseline: dict = None):
     con.close()
     print(f"\n✓ chicken.db ready  ({os.path.getsize(DB_PATH)//1024} KB)")
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
+# ─── One-time historical backfill (run manually, never called by main()) ──────
+def run_excel_backfill():
+    """
+    Utility: populate the weekly table from US_Chicken_Weekly_Prices_IBBA.xlsx.
+    Call ONCE after cloning/setting up, then never again.
+    The DB already contains this history after the initial setup — the regular
+    update loop (main) only uses USDA PDFs from that point on.
+
+    Usage:
+        python extractor_chicken.py --backfill
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(script_dir, "..", "..", "U.S. Chicken"),
+        os.path.join(script_dir, "..",       "U.S. Chicken"),
+        os.path.join(os.path.expanduser("~"), "OneDrive", "Documentos",
+                     "BBA", "Claude", "Food", "Spread Trackers", "U.S. Chicken"),
+    ]
+    excel_base = next((p for p in candidates if os.path.isdir(p)), None)
+    if not excel_base:
+        print("ERROR: US_Chicken_Weekly_Prices_IBBA.xlsx folder not found.")
+        print("Searched:", candidates)
+        sys.exit(1)
+    print(f"Backfilling from: {excel_base}")
+    backfill_weekly_from_excel(excel_base)
+    print("\nDone. Rebuilding quarterly table from updated weekly history …")
+    baseline = load_db_baseline()
+    data = load_weekly_rows_from_db()
+    build_db(data, baseline=baseline)
+
+
+# ─── Main — runs on every GitHub Actions trigger (every ~3 days) ─────────────
 def main():
+    """
+    Regular update flow — no Excel files involved at any point.
+    The weekly table in chicken.db is the sole historical store.
+
+    [0] Load existing quarterly DB as baseline  (preserves PPC + lag columns)
+    [1] Fetch latest data from USDA PDFs → upsert into weekly table.
+        • Chicken parts (ams_3646.pdf) — weekly; runs between publications
+          are no-ops for parts (same date already stored).
+        • SBM (ams_3511.pdf)           — weekly; same idempotency guarantee.
+        • Corn (AMS_3192.pdf)          — daily; almost always a new value.
+    [2] Load ALL rows from weekly table → compute quarterly averages.
+    [3] Rebuild quarterly table (PPC from HARD_PPC dict, lag columns, etc.)
+    """
     print("="*60)
     print("U.S. Chicken Spread Tracker — Database Extractor")
     print("="*60)
 
-    # ── Step 0: Load existing DB as baseline ─────────────────────────────────
-    # This ensures historical market data is preserved even when Excel files
-    # are absent (e.g. GitHub Actions) and USDA APIs return empty/sparse data.
-    print("\n[0/2] Loading existing DB baseline (if any) …")
+    # ── Step 0: Load quarterly baseline (preserves PPC + lag when needed) ────
+    print("\n[0/3] Loading existing DB baseline …")
     baseline = load_db_baseline()
 
-    # ── Step 1: Fetch fresh market data ──────────────────────────────────────
-    # Try Excel files first (preferred for historical depth and accuracy).
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    excel_base = os.path.join(script_dir, "..", "..", "U.S. Chicken")  # relative to repo structure
-    if not os.path.isdir(excel_base):
-        excel_base = os.path.join(os.path.expanduser("~"), "OneDrive",
-                                  "Documentos", "Claude", "U.S. Chicken")  # Windows OneDrive fallback
+    # ── Step 1: Fetch latest from USDA PDFs → upsert into weekly table ───────
+    print("\n[1/3] Fetching latest data from USDA PDFs …")
 
-    data = {}
-    if os.path.isdir(excel_base):
-        print(f"\n[1/2] Loading from Excel files at {excel_base} …")
-        data = load_from_excel(excel_base)
-    else:
-        print(f"\n[1/2] Excel source not found — fetching from USDA APIs …")
-        print("  (Historical gaps will be filled from existing DB baseline)")
-        print("  Fetching chicken parts (AMS-3646) …")
-        parts = fetch_parts()
-        for k, v in parts.items():
-            print(f"  → {k}: {len(v)} rows")
-        print("  Fetching SBM (AMS-3511) …")
-        sbm_rows = fetch_sbm()
-        print(f"  → {len(sbm_rows)} rows")
-        print("  Fetching Corn (AMS-3192) …")
-        corn_rows = fetch_corn()
-        print(f"  → {len(corn_rows)} rows")
-        data = {
-            "bw_rows":      [],          # BW retired — no longer fetched
-            "breast_rows":  parts.get("breast",  []),
-            "leg_rows":     parts.get("leg_qtrs", []),
-            "wings_rows":   parts.get("wings",    []),
-            "tenders_rows": parts.get("tenders",  []),
-            "sbm_rows":     sbm_rows,
-            "corn_rows":    corn_rows,
-        }
+    print("  Fetching chicken parts (ams_3646.pdf) …")
+    parts = fetch_parts()
+    for k, v in parts.items():
+        print(f"  → {k}: {len(v)} data point(s)")
 
-    # ── Step 2a: Upsert raw weekly data ──────────────────────────────────────
-    print(f"\n[2/3] Storing raw weekly data …")
-    build_weekly_db(data)
+    print("  Fetching SBM (ams_3511.pdf) …")
+    sbm_rows = fetch_sbm()
+    print(f"  → sbm: {len(sbm_rows)} data point(s)")
 
-    # ── Step 2b: Build / refresh quarterly DB, merging with baseline ─────────
-    print(f"\n[3/3] Building quarterly database …")
+    print("  Fetching Corn (AMS_3192.pdf) …")
+    corn_rows = fetch_corn()
+    print(f"  → corn: {len(corn_rows)} data point(s)")
+
+    fresh_data = {
+        "bw_rows":      [],
+        "breast_rows":  parts.get("breast",   []),
+        "leg_rows":     parts.get("leg_qtrs", []),
+        "wings_rows":   parts.get("wings",    []),
+        "tenders_rows": parts.get("tenders",  []),
+        "sbm_rows":     sbm_rows,
+        "corn_rows":    corn_rows,
+    }
+    build_weekly_db(fresh_data)
+
+    # ── Step 2: Load full weekly history from DB for quarterly computation ────
+    print("\n[2/3] Loading full weekly history from DB …")
+    data = load_weekly_rows_from_db()
+
+    # ── Step 3: Rebuild quarterly table ──────────────────────────────────────
+    print("\n[3/3] Building quarterly database …")
     build_db(data, baseline=baseline)
 
+
 if __name__ == "__main__":
-    main()
+    if "--backfill" in sys.argv:
+        run_excel_backfill()
+    else:
+        main()
