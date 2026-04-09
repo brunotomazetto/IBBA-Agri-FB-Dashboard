@@ -11,7 +11,7 @@
 :root{
   --orange:#FF5500;--black:#1A1A1A;--gray-dark:#333;--gray-mid:#888;
   --gray-light:#F4F4F4;--border:#E5E5E5;--white:#fff;
-  --blue:#2980B9;--green:#27AE60;--red:#C0392B;
+  --green:#27AE60;--red:#C0392B;
   --font:'Segoe UI',Helvetica,Arial,sans-serif;
 }
 html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-dark);
@@ -66,7 +66,7 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 
 /* ── TABLE SECTION ── */
 .table-section{background:var(--white);border-top:1px solid var(--border);
-  display:flex;flex-direction:column;min-height:300px;margin:0 0 0 0;}
+  display:flex;flex-direction:column;min-height:300px;}
 .table-tabs{display:flex;align-items:center;padding:8px 16px 0;
   border-bottom:1px solid var(--border);background:var(--white);flex-shrink:0;gap:4px;}
 .tab-btn{padding:5px 14px;font-size:12px;border:1px solid var(--border);
@@ -76,14 +76,14 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .table-wrap{overflow:auto;max-height:380px;}
 .table-wrap::-webkit-scrollbar{width:5px;height:5px;}
 .table-wrap::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px;}
-table{width:100%;border-collapse:collapse;font-size:11.5px;}
+table{width:100%;border-collapse:collapse;font-size:11.5px;table-layout:fixed;}
 thead tr{background:#FAFAFA;border-bottom:2px solid var(--border);}
 th{padding:7px 9px;text-align:right;font-weight:700;font-size:10.5px;
-  color:var(--gray-mid);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;
-  position:sticky;top:0;background:#FAFAFA;z-index:1;}
+  color:var(--gray-mid);text-transform:uppercase;letter-spacing:.3px;
+  position:sticky;top:0;background:#FAFAFA;z-index:1;overflow:hidden;}
 th:first-child{text-align:left;}
 td{padding:5px 9px;text-align:right;border-bottom:1px solid #F5F5F5;
-  color:var(--gray-dark);white-space:nowrap;}
+  color:var(--gray-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 td:first-child{text-align:left;font-weight:600;color:var(--black);}
 tr:hover td{background:#FFF8F5;}
 .td-spread{font-weight:700;color:var(--orange);}
@@ -123,7 +123,7 @@ tr:hover td{background:#FFF8F5;}
   <div class="top-bar-divider"></div>
   <div>
     <div class="top-title">🇧🇷 Brazil Beef Export Spread Tracker</div>
-    <div class="top-sub">SECEX export price ÷ CEPEA Boi Gordo — NCM 0201 + 0202 · BRL/kg spread</div>
+    <div class="top-sub">Export Price ÷ Cattle Cost — NCM 0201 + 0202 · BRL/kg spread</div>
   </div>
   <div class="top-latest">Latest: <strong id="latest-period">—</strong></div>
 </div>
@@ -136,6 +136,8 @@ tr:hover td{background:#FFF8F5;}
     <button class="view-btn" data-view="all" onclick="setView('all')">All</button>
     <button class="view-btn active" data-view="3y" onclick="setView('3y')">Last 3 Years</button>
     <button class="view-btn" data-view="1y" onclick="setView('1y')">Last 12 Months</button>
+    <button class="view-btn" data-view="3m" onclick="setView('3m')">Last 3 Months</button>
+    <button class="view-btn" data-view="1m" onclick="setView('1m')">Last Month</button>
   </div>
 </div>
 
@@ -147,7 +149,7 @@ tr:hover td{background:#FFF8F5;}
     <!-- LEFT: Spread over time + rolling avg -->
     <div class="chart-card">
       <div class="chart-card-header">
-        <div class="chart-title">Beef Export Spread — BRL/kg ÷ CEPEA R$/kg</div>
+        <div class="chart-title">Beef Export Spread — Export Price ÷ Cattle Cost</div>
         <div class="chart-stat">Solid = Spread &nbsp;·&nbsp; Dashed = <em id="avg-label">12M Rolling Avg</em></div>
       </div>
       <div class="chart-wrap"><canvas id="spreadChart"></canvas></div>
@@ -155,11 +157,11 @@ tr:hover td{background:#FFF8F5;}
     <!-- RIGHT: Export price vs Cattle price -->
     <div class="chart-card">
       <div class="chart-card-header">
-        <div class="chart-title">Export Price vs. Cattle Price</div>
+        <div class="chart-title">Export Price vs. Cattle Cost</div>
         <div class="chart-stat">
-          <span style="color:var(--orange)">■</span> SECEX BRL/kg (left)
+          <span style="color:var(--orange)">■</span> Export Price BRL/kg (left)
           &nbsp;·&nbsp;
-          <span style="color:var(--blue)">■</span> CEPEA R$/kg (right)
+          <span style="color:var(--gray-dark)">■</span> Cattle Cost BRL/kg (right)
         </div>
       </div>
       <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
@@ -171,6 +173,7 @@ tr:hover td{background:#FFF8F5;}
     <div class="table-tabs">
       <button class="tab-btn active" data-tab="monthly" onclick="setTab('monthly')">Monthly</button>
       <button class="tab-btn" data-tab="weekly" onclick="setTab('weekly')">Weekly</button>
+      <button class="tab-btn" data-tab="quarterly" onclick="setTab('quarterly')">Quarterly</button>
     </div>
     <div class="table-wrap">
       <table>
@@ -181,18 +184,19 @@ tr:hover td{background:#FFF8F5;}
   </div>
 
   <div class="note-bar">
-    Sources: <em>SECEX/MDIC</em> — NCM 0201 (fresh/chilled) + 0202 (frozen) · <em>CEPEA/ESALQ</em> Boi Gordo (R$/arroba ÷ 15 = R$/kg) · <em>BCB PTAX</em> BRL/USD daily · Spread = SECEX BRL/kg ÷ CEPEA R$/kg
+    Sources: <em>SECEX/MDIC</em> — NCM 0201 (fresh/chilled) + 0202 (frozen) · <em>CEPEA/ESALQ</em> Boi Gordo (BRL/arroba ÷ 15 = BRL/kg) · <em>BCB PTAX</em> BRL/USD daily · Spread = Export Price BRL/kg ÷ Cattle Cost BRL/kg
   </div>
 
 </div><!-- main-wrap -->
 
 <script>
 // ─── GLOBALS ─────────────────────────────────────────────────────────────────
-let MONTHLY = [];    // rows from monthly table
-let WEEKLY  = [];    // rows from weekly table
-let charts  = {};
-let currentView = '3y';   // 'all' | '3y' | '1y'
-let currentTab  = 'monthly'; // 'monthly' | 'weekly'
+let MONTHLY    = [];   // rows from monthly table
+let WEEKLY     = [];   // rows from weekly table
+let QUARTERLY  = [];   // computed from MONTHLY
+let charts     = {};
+let currentView = '3y';     // 'all' | '3y' | '1y' | '3m' | '1m'
+let currentTab  = 'monthly'; // 'monthly' | 'weekly' | 'quarterly'
 
 // ─── NAVIGATION ──────────────────────────────────────────────────────────────
 function goBack() {
@@ -201,6 +205,53 @@ function goBack() {
   } else {
     window.history.back();
   }
+}
+
+// ─── QUARTERLY AGGREGATION ───────────────────────────────────────────────────
+// Groups MONTHLY rows into quarters, averaging all numeric fields.
+// Label format: "1Q25", "2Q25", etc.
+function buildQuarterly(monthly) {
+  const map = {};
+  monthly.forEach(r => {
+    if (r.spread == null) return; // skip rows without spread
+    const q = Math.ceil(r.month / 3);
+    const yr2 = String(r.year).slice(-2);
+    const key = `${q}Q${yr2}`;
+    if (!map[key]) {
+      map[key] = {
+        period: key,
+        year: r.year,
+        quarter: q,
+        year_q: r.year * 10 + q, // sortable key
+        secex_usd_kg: [],
+        fx: [],
+        secex_brl_kg: [],
+        cepea_r_kg: [],
+        spread: [],
+      };
+    }
+    const entry = map[key];
+    if (r.secex_usd_kg != null) entry.secex_usd_kg.push(r.secex_usd_kg);
+    if (r.fx            != null) entry.fx.push(r.fx);
+    if (r.secex_brl_kg  != null) entry.secex_brl_kg.push(r.secex_brl_kg);
+    if (r.cepea_r_kg    != null) entry.cepea_r_kg.push(r.cepea_r_kg);
+    if (r.spread        != null) entry.spread.push(r.spread);
+  });
+
+  const avg = arr => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
+
+  return Object.values(map)
+    .sort((a, b) => a.year_q - b.year_q)
+    .map(e => ({
+      period:       e.period,
+      year:         e.year,
+      quarter:      e.quarter,
+      secex_usd_kg: avg(e.secex_usd_kg),
+      fx:           avg(e.fx),
+      secex_brl_kg: avg(e.secex_brl_kg),
+      cepea_r_kg:   avg(e.cepea_r_kg),
+      spread:       avg(e.spread),
+    }));
 }
 
 // ─── LOAD DATABASE ───────────────────────────────────────────────────────────
@@ -240,6 +291,10 @@ async function loadDB() {
     }
 
     db.close();
+
+    // ── build quarterly from monthly ──────────────────────────────────────────
+    QUARTERLY = buildQuarterly(MONTHLY);
+
     loadEl.style.display = 'none';
 
     // Latest label: most recent monthly period with spread
@@ -267,43 +322,55 @@ function setTab(t) {
   currentTab = t;
   document.querySelectorAll('.tab-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === t));
-  const n = t === 'monthly' ? MONTHLY.length : WEEKLY.length;
-  document.getElementById('avg-label').textContent =
-    t === 'monthly' ? '12M Rolling Avg' : '4-Week Rolling Avg';
+  const rollingLabel =
+    t === 'weekly'    ? '4-Week Rolling Avg' :
+    t === 'quarterly' ? '4-Quarter Rolling Avg' : '12M Rolling Avg';
+  document.getElementById('avg-label').textContent = rollingLabel;
   renderCharts();
   renderTable();
 }
 
 // ─── FILTER BY VIEW WINDOW ───────────────────────────────────────────────────
+// Months to subtract for each view (used for monthly + quarterly)
+const VIEW_MONTHS = { 'all': null, '3y': 36, '1y': 12, '3m': 3, '1m': 1 };
+
 function filterMonthly(rows) {
-  if (currentView === 'all') return rows;
+  const mo = VIEW_MONTHS[currentView];
+  if (!mo) return rows;
   const withData = rows.filter(r => r.spread != null);
   if (!withData.length) return rows;
   const last = withData[withData.length - 1];
-  const ly = last.year, lm = last.month;
-  if (currentView === '3y') {
-    const cy = ly - 3;
-    return rows.filter(r => r.year > cy || (r.year === cy && r.month >= lm));
-  }
-  if (currentView === '1y') {
-    const cy = ly - 1;
-    return rows.filter(r => r.year > cy || (r.year === cy && r.month >= lm));
-  }
-  return rows;
+  // cutoff = last period minus `mo` months
+  let cy = last.year, cm = last.month - mo;
+  while (cm <= 0) { cy--; cm += 12; }
+  return rows.filter(r => r.year > cy || (r.year === cy && r.month >= cm));
 }
 
 function filterWeekly(rows) {
-  if (currentView === 'all') return rows;
+  const mo = VIEW_MONTHS[currentView];
+  if (!mo) return rows;
   if (!rows.length) return rows;
   const lastDate = new Date(rows[rows.length - 1].start_date);
   const cutoff   = new Date(lastDate);
-  if (currentView === '3y') cutoff.setFullYear(cutoff.getFullYear() - 3);
-  if (currentView === '1y') cutoff.setFullYear(cutoff.getFullYear() - 1);
+  cutoff.setMonth(cutoff.getMonth() - mo);
   return rows.filter(r => new Date(r.start_date) >= cutoff);
 }
 
+function filterQuarterly(rows) {
+  const mo = VIEW_MONTHS[currentView];
+  if (!mo) return rows;
+  if (!rows.length) return rows;
+  // Approximate: treat mo months as quarters
+  const withData = rows.slice(-1)[0];
+  const totalRows = Math.max(1, Math.ceil(mo / 3));
+  return rows.slice(-totalRows);
+}
+
 function filterRows() {
-  return currentTab === 'monthly' ? filterMonthly(MONTHLY) : filterWeekly(WEEKLY);
+  if (currentTab === 'monthly')   return filterMonthly(MONTHLY);
+  if (currentTab === 'weekly')    return filterWeekly(WEEKLY);
+  if (currentTab === 'quarterly') return filterQuarterly(QUARTERLY);
+  return [];
 }
 
 // ─── ROLLING AVERAGE ─────────────────────────────────────────────────────────
@@ -317,8 +384,8 @@ function rollingAvg(vals, n) {
 // ─── CHARTS ──────────────────────────────────────────────────────────────────
 function renderCharts() {
   const rows   = filterRows();
-  const n      = currentTab === 'monthly' ? 12 : 4;
-  const labelK = currentTab === 'monthly' ? 'period' : 'start_date';
+  const n      = currentTab === 'weekly' ? 4 : currentTab === 'quarterly' ? 4 : 12;
+  const labelK = currentTab === 'weekly' ? 'start_date' : 'period';
 
   const labels   = rows.map(r => r[labelK]);
   const spreads  = rows.map(r => r.spread);
@@ -366,7 +433,7 @@ function renderCharts() {
     }),
   });
 
-  // ── Chart 2: Export BRL/kg vs CEPEA R$/kg (dual Y) ───────────────────────
+  // ── Chart 2: Export BRL/kg vs Cattle BRL/kg (dual Y) ─────────────────────
   if (charts.price) charts.price.destroy();
   charts.price = new Chart(document.getElementById('priceChart').getContext('2d'), {
     type: 'line',
@@ -374,7 +441,7 @@ function renderCharts() {
       labels,
       datasets: [
         {
-          label: 'SECEX Export (R$/kg)',
+          label: 'Export Price (BRL/kg)',
           data: exports_,
           borderColor: '#FF5500',
           backgroundColor: 'transparent',
@@ -385,9 +452,9 @@ function renderCharts() {
           yAxisID: 'y',
         },
         {
-          label: 'CEPEA Cattle (R$/kg)',
+          label: 'Cattle Cost (BRL/kg)',
           data: cattle,
-          borderColor: '#2980B9',
+          borderColor: '#333333',
           backgroundColor: 'transparent',
           borderWidth: 2,
           pointRadius: ptRadius,
@@ -402,9 +469,7 @@ function renderCharts() {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: {
-          display: false,
-        },
+        legend: { display: false },
         tooltip: {
           backgroundColor: '#333',
           titleColor: '#ccc',
@@ -412,7 +477,7 @@ function renderCharts() {
           borderColor: '#555',
           borderWidth: 1,
           callbacks: {
-            label: ctx => `${ctx.dataset.label}: R$ ${ctx.parsed.y?.toFixed(2) ?? '—'}/kg`,
+            label: ctx => `${ctx.dataset.label}: BRL ${ctx.parsed.y?.toFixed(2) ?? '—'}/kg`,
           },
         },
       },
@@ -423,14 +488,14 @@ function renderCharts() {
         },
         y: {
           position: 'left',
-          title: { display: true, text: 'Export R$/kg', color: '#FF5500', font: { size: 9 } },
-          ticks: { color: '#FF5500', font: { size: 9 }, callback: v => 'R$' + v.toFixed(1) },
+          title: { display: true, text: 'Export Price BRL/kg', color: '#FF5500', font: { size: 9 } },
+          ticks: { color: '#FF5500', font: { size: 9 }, callback: v => 'BRL ' + v.toFixed(1) },
           grid:  { color: 'rgba(0,0,0,0.05)' },
         },
         y2: {
           position: 'right',
-          title: { display: true, text: 'Cattle R$/kg', color: '#2980B9', font: { size: 9 } },
-          ticks: { color: '#2980B9', font: { size: 9 }, callback: v => 'R$' + v.toFixed(1) },
+          title: { display: true, text: 'Cattle Cost BRL/kg', color: '#333333', font: { size: 9 } },
+          ticks: { color: '#333333', font: { size: 9 }, callback: v => 'BRL ' + v.toFixed(1) },
           grid:  { drawOnChartArea: false },
         },
       },
@@ -473,19 +538,25 @@ function fmt(v, dec=2, prefix='') {
   return prefix + v.toFixed(dec);
 }
 
+function fmtBRL(v, dec=2) {
+  if (v == null) return '<span class="td-na">—</span>';
+  return 'BRL ' + v.toFixed(dec);
+}
+
 function renderTable() {
-  const rows    = filterRows().slice().reverse(); // most recent first
-  const head    = document.getElementById('table-head');
-  const body    = document.getElementById('table-body');
+  const rows = filterRows().slice().reverse(); // most recent first
+  const head = document.getElementById('table-head');
+  const body = document.getElementById('table-body');
 
   if (currentTab === 'monthly') {
+    // 6 columns: Period(20%) | Export USD/kg(13%) | FX(12%) | Export BRL/kg(18%) | Cattle BRL/kg(18%) | Spread(19%)
     head.innerHTML = `<tr>
-      <th style="text-align:left;">Period</th>
-      <th>SECEX<br><span style="font-weight:400;font-size:9.5px;">USD/kg</span></th>
-      <th>FX<br><span style="font-weight:400;font-size:9.5px;">BRL/USD</span></th>
-      <th>Export<br><span style="font-weight:400;font-size:9.5px;">R$/kg</span></th>
-      <th>CEPEA<br><span style="font-weight:400;font-size:9.5px;">R$/kg</span></th>
-      <th>Spread<br><span style="font-weight:400;font-size:9.5px;">(×)</span></th>
+      <th style="text-align:left;width:14%;">Period</th>
+      <th style="width:15%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg</span></th>
+      <th style="width:12%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD</span></th>
+      <th style="width:20%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
+      <th style="width:20%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
+      <th style="width:19%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">(×)</span></th>
     </tr>`;
     body.innerHTML = rows.map(r => {
       const sp = r.spread != null
@@ -494,21 +565,22 @@ function renderTable() {
         <td>${r.period ?? '—'}</td>
         <td>${fmt(r.secex_usd_kg, 3)}</td>
         <td>${fmt(r.fx, 3)}</td>
-        <td>${fmt(r.secex_brl_kg, 2, 'R$')}</td>
-        <td>${fmt(r.cepea_r_kg, 2, 'R$')}</td>
+        <td>${fmtBRL(r.secex_brl_kg)}</td>
+        <td>${fmtBRL(r.cepea_r_kg)}</td>
         <td>${sp}</td>
       </tr>`;
     }).join('');
 
-  } else {
+  } else if (currentTab === 'weekly') {
+    // 7 columns: Start(12%) | End(12%) | Export USD(11%) | FX(10%) | Export BRL(17%) | Cattle BRL(17%) | Spread(21%)
     head.innerHTML = `<tr>
-      <th style="text-align:left;">Start</th>
-      <th>End</th>
-      <th>SECEX<br><span style="font-weight:400;font-size:9.5px;">USD/kg</span></th>
-      <th>FX<br><span style="font-weight:400;font-size:9.5px;">BRL/USD</span></th>
-      <th>Export<br><span style="font-weight:400;font-size:9.5px;">R$/kg</span></th>
-      <th>CEPEA<br><span style="font-weight:400;font-size:9.5px;">R$/kg</span></th>
-      <th>Spread<br><span style="font-weight:400;font-size:9.5px;">(×)</span></th>
+      <th style="text-align:left;width:12%;">Start</th>
+      <th style="width:12%;">End</th>
+      <th style="width:11%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg</span></th>
+      <th style="width:10%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD</span></th>
+      <th style="width:18%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
+      <th style="width:18%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
+      <th style="width:19%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">(×)</span></th>
     </tr>`;
     body.innerHTML = rows.map(r => {
       const sp = r.spread != null
@@ -518,8 +590,31 @@ function renderTable() {
         <td>${r.end_date ?? '—'}</td>
         <td>${fmt(r.secex_usd_kg, 3)}</td>
         <td>${fmt(r.fx, 3)}</td>
-        <td>${fmt(r.secex_brl_kg, 2, 'R$')}</td>
-        <td>${fmt(r.cepea_r_kg, 2, 'R$')}</td>
+        <td>${fmtBRL(r.secex_brl_kg)}</td>
+        <td>${fmtBRL(r.cepea_r_kg)}</td>
+        <td>${sp}</td>
+      </tr>`;
+    }).join('');
+
+  } else {
+    // Quarterly — 6 columns: Quarter(14%) | Export USD(15%) | FX(12%) | Export BRL(20%) | Cattle BRL(20%) | Spread(19%)
+    head.innerHTML = `<tr>
+      <th style="text-align:left;width:14%;">Quarter</th>
+      <th style="width:15%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg avg</span></th>
+      <th style="width:12%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD avg</span></th>
+      <th style="width:20%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg avg</span></th>
+      <th style="width:20%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg avg</span></th>
+      <th style="width:19%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">avg (×)</span></th>
+    </tr>`;
+    body.innerHTML = rows.map(r => {
+      const sp = r.spread != null
+        ? `<span class="td-spread">${r.spread.toFixed(3)}×</span>` : '<span class="td-na">—</span>';
+      return `<tr>
+        <td>${r.period ?? '—'}</td>
+        <td>${fmt(r.secex_usd_kg, 3)}</td>
+        <td>${fmt(r.fx, 3)}</td>
+        <td>${fmtBRL(r.secex_brl_kg)}</td>
+        <td>${fmtBRL(r.cepea_r_kg)}</td>
         <td>${sp}</td>
       </tr>`;
     }).join('');
