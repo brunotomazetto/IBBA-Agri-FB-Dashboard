@@ -467,49 +467,118 @@ def fetch_weekly_bulletin(conn):
     — CUCI classification) from balanca.economia.gov.br and update _weekly_raw
     with the latest week's price_usd_kg and vol_tons (MTD cumulative).
 
-    The bulletin page is:
-      https://balanca.economia.gov.br/balanca/pg_principal_bc/principais_resultados.html
+    The bulletin page is a React SPA — links are rendered via JavaScript and
+    won't appear in raw HTML. This function uses three discovery strategies:
+      1. Search the raw HTML for any xlsx URL (href attrs AND JS strings)
+      2. Try a set of guessed URL patterns based on known SECEX file naming
+      3. As a last resort, try the SECEX API endpoint directly
 
-    It publishes an Excel with columns (per current month):
-      US$ Mil | US$ Mil/avg | Toneladas | Toneladas/avg | Preço (US$/Ton) | Variação %
+    Excel structure (per current month):
+      US$ Mil | US$ Mil/avg | Toneladas | Toneladas/avg | Preço (US$/Ton) | Var%
 
     We extract for "Carne bovina fresca, refrigerada ou congelada":
-      - US$ Mil  → revenue (MTD, thousands USD)
+      - US$ Mil   → revenue (MTD, thousands USD)
       - Toneladas → volume (MTD, tons)
 
     De-accumulation (MTD → weekly) happens later in materialise().
     """
     import io, re as _re
 
-    PAGE_URL = (
-        "https://balanca.economia.gov.br/balanca/pg_principal_bc/principais_resultados.html"
-    )
+    BASE = "https://balanca.economia.gov.br"
+    PAGE_URL = f"{BASE}/balanca/pg_principal_bc/principais_resultados.html"
 
-    # ── Step 1: fetch page HTML to discover Excel download link ───────────────
-    r = get(PAGE_URL, **{"headers": {"Accept": "text/html", "User-Agent": "Mozilla/5.0"}})
-    if r is None:
-        print("  [BULLETIN] Could not fetch bulletin page — skipping.")
-        return 0
+    from datetime import date as _date, timedelta as _td
+    PT_MON = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
+              7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"}
+    today  = _date.today()
+    yr     = today.year
+    mo     = today.month
+    # ISO week number (SECEX files often use 2-digit week)
+    wk_num = today.isocalendar()[1]
 
-    # Look for Excel/XLSX href links that relate to the weekly product bulletin
-    # Typical pattern: /balanca/bd/boletim/CUCI_EXP_...xlsx
-    links = _re.findall(r'href=["\']([^"\']+\.xlsx?)["\']', r.text, _re.IGNORECASE)
+    # ── Step 1: fetch HTML and search broadly for xlsx links ──────────────────
+    # NOTE: we use requests directly (not get()) to avoid the duplicate-headers
+    #       bug that occurs when get()'s hdrs= and **kwargs both carry 'headers'.
     xlsx_url = None
     KEYWORDS = ("cuci", "produto", "semana", "boletim", "isic", "ativ")
-    for lnk in links:
-        if any(k in lnk.lower() for k in KEYWORDS):
-            xlsx_url = lnk if lnk.startswith("http") else \
-                       f"https://balanca.economia.gov.br{lnk}"
-            break
+    try:
+        import requests as _req
+        html_r = _req.get(
+            PAGE_URL,
+            headers={"Accept": "text/html,application/xhtml+xml",
+                     "User-Agent": "Mozilla/5.0"},
+            timeout=30,
+            verify=False,
+        )
+        page_text = html_r.text
+
+        # Search 1a: href attributes containing .xls / .xlsx
+        href_links = _re.findall(r'href=["\']([^"\']+\.xlsx?)["\']',
+                                 page_text, _re.IGNORECASE)
+        # Search 1b: any URL-like string with .xlsx in entire page source
+        #            (catches JS bundle strings like "/path/file.xlsx")
+        all_xlsx = _re.findall(r'["\']([^"\']*\.xlsx?)["\']',
+                                page_text, _re.IGNORECASE)
+
+        candidates = href_links + all_xlsx
+        print(f"  [BULLETIN] Page fetched ({len(page_text):,} chars). "
+              f"xlsx candidates found: {len(candidates)}")
+
+        for lnk in candidates:
+            if any(k in lnk.lower() for k in KEYWORDS):
+                xlsx_url = lnk if lnk.startswith("http") else f"{BASE}{lnk}"
+                print(f"  [BULLETIN] Found via page scrape: {xlsx_url}")
+                break
+
+        if not xlsx_url and candidates:
+            print(f"  [BULLETIN] Candidates (no keyword match): {candidates[:8]}")
+
+    except Exception as exc:
+        print(f"  [BULLETIN] Page fetch error: {exc}")
+
+    # ── Step 2: guessed URL patterns (SECEX naming conventions) ──────────────
+    if xlsx_url is None:
+        print("  [BULLETIN] Trying guessed URL patterns …")
+        guesses = []
+        for w in range(wk_num, wk_num - 3, -1):    # current week and 2 prior
+            w = max(w, 1)
+            for tpl in (
+                f"/balanca/bd/boletim/CUCI_EXP_SEMANA_{yr}_{w:02d}.xlsx",
+                f"/balanca/bd/boletim/AtividadeEconomica_EXP_SEMANA_{yr}_{w:02d}.xlsx",
+                f"/balanca/bd/boletim/PRODUTO_EXP_SEMANA_{yr}_{w:02d}.xlsx",
+                f"/balanca/bd/boletim/CUCI_EXP_SEMANA_{yr}_{mo:02d}.xlsx",
+                f"/balanca/bd/boletim/CUCI_EXP_SEMANA_{yr}_{mo:02d}_{today.day:02d}.xlsx",
+            ):
+                guesses.append(BASE + tpl)
+
+        for url in guesses:
+            try:
+                import requests as _req
+                probe = _req.head(url, timeout=10, verify=False,
+                                  headers={"User-Agent": "Mozilla/5.0"})
+                if probe.status_code == 200:
+                    xlsx_url = url
+                    print(f"  [BULLETIN] Guessed URL found: {xlsx_url}")
+                    break
+                else:
+                    print(f"  [BULLETIN]   {probe.status_code} {url.split('/')[-1]}")
+            except Exception:
+                pass
 
     if xlsx_url is None:
-        print(f"  [BULLETIN] No matching Excel link found on page. Links seen: {links[:6]}")
-        print("  [BULLETIN] Set BULLETIN_XLSX_URL in code to override.")
-        return 0
+        print("  [BULLETIN] Could not locate Excel file. "
+              "Set env var BULLETIN_XLSX_URL to override, e.g.:")
+        print("  export BULLETIN_XLSX_URL='https://balanca.economia.gov.br/balanca/bd/boletim/CUCI_EXP_SEMANA_XXXX_YY.xlsx'")
+        # Try env var override as last resort
+        import os
+        xlsx_url = os.environ.get("BULLETIN_XLSX_URL")
+        if xlsx_url:
+            print(f"  [BULLETIN] Using env override: {xlsx_url}")
+        else:
+            return 0
 
+    # ── Step 3: download Excel ────────────────────────────────────────────────
     print(f"  [BULLETIN] Downloading: {xlsx_url}")
-
-    # ── Step 2: download Excel ────────────────────────────────────────────────
     r2 = get(xlsx_url)
     if r2 is None:
         return 0
@@ -517,92 +586,128 @@ def fetch_weekly_bulletin(conn):
     try:
         import openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(r2.content), data_only=True)
-        ws = wb.active
     except Exception as exc:
         print(f"  [BULLETIN] Excel parse error: {exc}")
         return 0
 
-    # ── Step 3: locate header rows (find "Toneladas" and period sub-headers) ──
-    from datetime import date as _date
-    PT_MON = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
-              7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"}
-    today = _date.today()
-    curr_period = f"{PT_MON[today.month]}/{today.year}"  # e.g. "Mar/2026"
+    # ── Step 4: find the right sheet and parse headers ────────────────────────
+    # The workbook may have multiple sheets; try the active one first, then all
+    sheets_to_try = [wb.active] + [wb[s] for s in wb.sheetnames if wb[s] != wb.active]
 
-    # Scan rows for "Toneladas" category header
-    cat_header_row = None
-    ton_col_cat    = None   # column-index (0-based) where "Toneladas" appears
-    usd_col_cat    = None   # column-index for "US$ Mil" (first occurrence)
+    # Try current month AND previous month (in case bulletin not yet updated)
+    periods_to_try = [
+        f"{PT_MON[mo]}/{yr}",
+        f"{PT_MON[mo-1 if mo > 1 else 12]}/{yr if mo > 1 else yr-1}",
+    ]
 
-    for row in ws.iter_rows(max_row=20):
-        vals = [str(c.value or "").strip() for c in row]
-        if "Toneladas" in vals:
-            cat_header_row = row[0].row
-            ton_col_cat = next(i for i, v in enumerate(vals) if v == "Toneladas")
-            usd_matches = [i for i, v in enumerate(vals) if v == "US$ Mil"]
-            usd_col_cat = usd_matches[0] if usd_matches else None
-            break
+    def _parse_sheet(ws, period_label):
+        """Return (vol_mtd, usd_mil) for the given period or (None, None)."""
+        # ── Find category header row containing both "US$ Mil" and "Toneladas" ──
+        cat_header_row = None
+        ton_col_cat    = None   # 0-based column index of "Toneladas" category
+        usd_col_cat    = None   # 0-based column index of "US$ Mil" category
 
-    if cat_header_row is None:
-        print("  [BULLETIN] Could not find 'Toneladas' column header in Excel.")
-        return 0
-
-    # Scan the next 1-3 rows for period sub-headers (e.g. "Mar/2026")
-    col_ton_data = None   # 1-based Excel column for Toneladas current period
-    col_usd_data = None   # 1-based Excel column for US$ Mil current period
-
-    for row in ws.iter_rows(min_row=cat_header_row + 1, max_row=cat_header_row + 3):
-        for cell in row:
-            v = str(cell.value or "").strip()
-            if curr_period in v:
-                ci = cell.column - 1  # 0-based
-                # Assign to Toneladas if near ton_col_cat, else to US$ Mil
-                if ton_col_cat is not None and abs(ci - ton_col_cat) <= 2:
-                    col_ton_data = cell.column   # 1-based
-                elif usd_col_cat is not None and abs(ci - usd_col_cat) <= 2:
-                    col_usd_data = cell.column
-        if col_ton_data is not None:
-            break
-
-    if col_ton_data is None:
-        print(f"  [BULLETIN] Period '{curr_period}' not found in sub-headers.")
-        return 0
-
-    print(f"  [BULLETIN] Found columns — Toneladas: {col_ton_data}, US$ Mil: {col_usd_data}")
-
-    # ── Step 4: find "Carne bovina fresca" row ────────────────────────────────
-    carne_row = None
-    for row in ws.iter_rows(min_row=cat_header_row + 3):
-        for cell in row[:2]:   # search columns A and B
-            v = str(cell.value or "").lower()
-            if "carne bovina" in v and "fresca" in v:
-                carne_row = cell.row
+        for row in ws.iter_rows(max_row=30):
+            vals = [str(c.value or "").strip() for c in row]
+            # Find ALL "Toneladas" columns and ALL "US$ Mil" columns in this row
+            ton_cols = [i for i, v in enumerate(vals) if v.lower().startswith("ton")]
+            usd_cols = [i for i, v in enumerate(vals)
+                        if "us$" in v.lower() or "usd" in v.lower()]
+            if ton_cols and usd_cols:
+                cat_header_row = row[0].row
+                # Use the FIRST occurrence of each category
+                ton_col_cat = ton_cols[0]
+                usd_col_cat = usd_cols[0]
                 break
-        if carne_row:
+
+        if cat_header_row is None:
+            return None, None
+
+        # ── Find period sub-header columns (scan next 5 rows) ──────────────────
+        # Assign each period cell to its nearest category (Toneladas or US$ Mil)
+        col_ton_data = None
+        col_usd_data = None
+        for row in ws.iter_rows(min_row=cat_header_row + 1,
+                                max_row=cat_header_row + 5):
+            for cell in row:
+                v = str(cell.value or "").strip()
+                if period_label.lower() in v.lower():
+                    ci = cell.column - 1   # 0-based
+                    dist_ton = abs(ci - ton_col_cat)
+                    dist_usd = abs(ci - usd_col_cat) if usd_col_cat is not None else 9999
+                    # Assign to whichever category header is closer
+                    if dist_ton <= dist_usd:
+                        if col_ton_data is None:
+                            col_ton_data = cell.column   # 1-based
+                    else:
+                        if col_usd_data is None:
+                            col_usd_data = cell.column   # 1-based
+            if col_ton_data is not None and col_usd_data is not None:
+                break
+
+        if col_ton_data is None:
+            return None, None
+
+        # ── Find "Carne bovina fresca" row ──────────────────────────────────────
+        carne_row = None
+        for row in ws.iter_rows(min_row=cat_header_row + 3):
+            for cell in row[:3]:
+                v = str(cell.value or "").lower()
+                if "carne bovina" in v:
+                    carne_row = cell.row
+                    break
+            if carne_row:
+                break
+
+        if carne_row is None:
+            return None, None
+
+        vol = ws.cell(row=carne_row, column=col_ton_data).value
+        usd = ws.cell(row=carne_row, column=col_usd_data).value if col_usd_data else None
+        return vol, usd
+
+    vol_mtd = usd_mil = None
+    matched_period = None
+    for ws in sheets_to_try:
+        for period_label in periods_to_try:
+            v, u = _parse_sheet(ws, period_label)
+            if v is not None:
+                vol_mtd        = float(v)
+                usd_mil        = float(u) if u is not None else None
+                matched_period = period_label
+                print(f"  [BULLETIN] Parsed sheet '{ws.title}' period '{period_label}': "
+                      f"vol={vol_mtd:,.0f} t, usd_mil={usd_mil}")
+                break
+        if vol_mtd is not None:
             break
-
-    if carne_row is None:
-        print("  [BULLETIN] 'Carne bovina fresca' row not found in Excel.")
-        return 0
-
-    # ── Step 5: extract values ────────────────────────────────────────────────
-    vol_mtd = ws.cell(row=carne_row, column=col_ton_data).value
-    usd_mil = ws.cell(row=carne_row, column=col_usd_data).value if col_usd_data else None
 
     if vol_mtd is None:
-        print("  [BULLETIN] vol_mtd is None — data not yet available for this period.")
+        # Dump first 10 rows of active sheet for debugging
+        print("  [BULLETIN] Could not parse Excel. First rows of active sheet:")
+        for i, row in enumerate(wb.active.iter_rows(max_row=10)):
+            vals = [str(c.value or "")[:20] for c in row if c.value]
+            if vals:
+                print(f"    row {i+1}: {vals}")
         return 0
 
-    vol_mtd   = float(vol_mtd)
-    price_usd = (float(usd_mil) / vol_mtd) if usd_mil and vol_mtd else None
-    # ↑ price = (US$ Mil × 1000 USD) / (Tons × 1000 kg) = US$ Mil / Tons
+    price_usd = (usd_mil / vol_mtd) if usd_mil and vol_mtd else None
+    # price = (US$ Mil × 1000 USD) / (Tons × 1000 kg) = US$ Mil / Tons
 
-    print(f"  [BULLETIN] {curr_period}: vol_MTD={vol_mtd:,.0f} t, "
-          f"price={price_usd:.4f} USD/kg" if price_usd else
-          f"  [BULLETIN] {curr_period}: vol_MTD={vol_mtd:,.0f} t (no price)")
+    print(f"  [BULLETIN] {matched_period}: vol_MTD={vol_mtd:,.0f} t"
+          + (f", price={price_usd:.4f} USD/kg" if price_usd else " (no price)"))
 
-    # ── Step 6: find the latest _weekly_raw row for current month & upsert ───
-    yr_s, mo_s = str(today.year), f"{today.month:02d}"
+    # ── Step 5: find the right _weekly_raw row to update ─────────────────────
+    # If we matched the previous month, use that month; otherwise current month
+    if matched_period and matched_period != f"{PT_MON[mo]}/{yr}":
+        # Matched previous month
+        target_mo = mo - 1 if mo > 1 else 12
+        target_yr = yr if mo > 1 else yr - 1
+    else:
+        target_mo, target_yr = mo, yr
+
+    yr_s = str(target_yr)
+    mo_s = f"{target_mo:02d}"
+
     latest = conn.execute(
         "SELECT start_date, end_date FROM _weekly_raw"
         " WHERE start_date LIKE ? ORDER BY start_date DESC LIMIT 1",
@@ -610,11 +715,10 @@ def fetch_weekly_bulletin(conn):
     ).fetchone()
 
     if latest is None:
-        # No row for this month yet — insert a new one covering the current week
-        from datetime import timedelta
-        wk_start = today - timedelta(days=today.weekday())   # Monday
-        wk_end   = today
-        s_date, e_date = str(wk_start), str(wk_end)
+        # No row for this month yet — create one for the current week
+        wk_start = today - _td(days=today.weekday())   # Monday
+        s_date   = str(wk_start)
+        e_date   = str(today)
     else:
         s_date, e_date = latest
 
@@ -626,8 +730,9 @@ def fetch_weekly_bulletin(conn):
          vol_mtd)
     )
     conn.commit()
-    print(f"  [BULLETIN] Updated _weekly_raw: {s_date} → {e_date} | "
-          f"price={price_usd:.4f if price_usd else '—'} | vol_MTD={vol_mtd:,.0f} t")
+    print(f"  [BULLETIN] _weekly_raw updated: {s_date} → {e_date} | "
+          f"vol_MTD={vol_mtd:,.0f} t"
+          + (f" | price={price_usd:.4f} USD/kg" if price_usd else ""))
     return 1
 
 
