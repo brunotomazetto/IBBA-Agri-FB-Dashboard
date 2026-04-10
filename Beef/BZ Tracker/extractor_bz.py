@@ -690,6 +690,22 @@ def fetch_weekly_bulletin(conn):
 
         vol = ws.cell(row=carne_row, column=col_ton_data).value
         usd = ws.cell(row=carne_row, column=col_usd_data).value if col_usd_data else None
+
+        # ── DEBUG: dump entire carne bovina row + header structure ────────────
+        print(f"  [BULLETIN-DEBUG] cat_header_row={cat_header_row} "
+              f"ton_col_cat={ton_col_cat}(0-based) usd_col_cat={usd_col_cat}(0-based)")
+        print(f"  [BULLETIN-DEBUG] col_ton_data={col_ton_data}(1-based) "
+              f"col_usd_data={col_usd_data}(1-based)")
+        hdr_vals = [(c.column, str(c.value or "")[:20])
+                    for c in ws[cat_header_row] if c.value]
+        print(f"  [BULLETIN-DEBUG] header row: {hdr_vals}")
+        sub_vals = [(c.column, str(c.value or "")[:20])
+                    for c in ws[cat_header_row + 1] if c.value]
+        print(f"  [BULLETIN-DEBUG] sub-header row: {sub_vals}")
+        beef_vals = [(c.column, c.value)
+                     for c in ws[carne_row] if c.value is not None]
+        print(f"  [BULLETIN-DEBUG] carne row {carne_row}: {beef_vals[:12]}")
+
         return vol, usd
 
     vol_mtd = usd_mil = None
@@ -768,7 +784,12 @@ def fetch_weekly_bulletin(conn):
     else:
         s_date, e_date, existing_price = existing
 
-    # Keep the existing price if our computed price failed the sanity check
+    # Validate existing_price too — don't preserve a previously bad value
+    if existing_price is not None and not (PRICE_MIN <= existing_price <= PRICE_MAX):
+        print(f"  [BULLETIN] Existing price {existing_price:.4f} also out of range — clearing.")
+        existing_price = None
+
+    # Keep the existing (good) price if our computed price failed the sanity check
     final_price = price_usd if price_usd is not None else existing_price
 
     conn.execute(
