@@ -301,6 +301,9 @@ def fetch_secex(conn, years=None):
     if years is None:
         years = range(ANO_INI, datetime.now().year + 1)
 
+    # The annual CSV uses 8-digit NCM codes (e.g. "02011000").
+    # NCM_CODES contains 4-digit chapter codes ("0201", "0202"), so we
+    # match by prefix — str[:4] — rather than exact equality.
     BASE = "https://balanca.economia.gov.br/balanca/bd/comexstat-bd/ncm/EXP_{year}.csv"
     total = 0
     for yr in years:
@@ -309,7 +312,10 @@ def fetch_secex(conn, years=None):
             continue
         try:
             df = pd.read_csv(StringIO(r.text), sep=";", dtype=str, low_memory=False)
-            df = df[df["CO_NCM"].isin(NCM_CODES)].copy()
+            # Normalise: strip whitespace and zero-pad to 8 chars
+            df["CO_NCM"] = df["CO_NCM"].str.strip().str.zfill(8)
+            # Keep rows whose 4-digit chapter prefix matches NCM_CODES
+            df = df[df["CO_NCM"].str[:4].isin(NCM_CODES)].copy()
             if df.empty:
                 print(f"  [SECEX] {yr}: no beef rows")
                 continue
@@ -426,6 +432,59 @@ def seed_weekly_raw(conn):
     )
     conn.commit()
     print(f"  [WEEKLY] {len(WEEKLY_SEED)} rows seeded into _weekly_raw.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FILL MISSING SECEX MONTHS FROM WEEKLY AVERAGES
+# ══════════════════════════════════════════════════════════════════════════════
+def fill_secex_from_weekly(conn):
+    """
+    For months after the last official SECEX entry, estimate price_usd_kg as the
+    simple average of weekly prices that fall within that month.
+
+    Uses INSERT OR IGNORE so that when real MDIC data arrives via fetch_secex()
+    (which uses INSERT OR REPLACE), the official values automatically overwrite
+    these estimates.
+
+    Returns the number of newly inserted estimated rows.
+    """
+    last = conn.execute(
+        "SELECT year, month FROM _secex_raw ORDER BY year DESC, month DESC LIMIT 1"
+    ).fetchone()
+    if not last:
+        return 0
+
+    ly, lm = last
+    last_date = f"{ly}-{lm:02d}-{monthrange(ly, lm)[1]:02d}"
+
+    weekly = conn.execute(
+        """
+        SELECT CAST(strftime('%Y', start_date) AS INTEGER),
+               CAST(strftime('%m', start_date) AS INTEGER),
+               AVG(price_usd_kg)
+        FROM   _weekly_raw
+        WHERE  start_date > ? AND price_usd_kg IS NOT NULL
+        GROUP  BY 1, 2
+        ORDER  BY 1, 2
+        """,
+        (last_date,),
+    ).fetchall()
+
+    filled = 0
+    for yr, mo, avg_p in weekly:
+        if avg_p is None:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO _secex_raw(year,month,rev_000usd,vol_tons,price_usd_kg)"
+            " VALUES(?,?,NULL,NULL,?)",
+            (yr, mo, round(avg_p, 6)),
+        )
+        if conn.execute("SELECT changes()").fetchone()[0]:
+            print(f"  [SECEX-est] {yr}-{mo:02d}: {avg_p:.4f} USD/kg  ← weekly avg (official MDIC pending)")
+            filled += 1
+
+    conn.commit()
+    return filled
 
 
 # ══════════════════════════════════════════════════════════════════════════════
