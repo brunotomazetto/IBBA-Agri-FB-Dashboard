@@ -445,17 +445,37 @@ def load_cepea_xls(conn, path):
 # WEEKLY RAW SEED
 # ══════════════════════════════════════════════════════════════════════════════
 def seed_weekly_raw(conn):
-    """Seed _weekly_raw from WEEKLY_SEED using INSERT OR IGNORE so that
-    live-fetched vol_tons values (non-None) are never overwritten by the
-    historical seed rows that have vol_tons=None.
+    """Seed _weekly_raw from WEEKLY_SEED with smart conflict resolution:
+      - INSERT new rows normally.
+      - On conflict (row already exists):
+          * Restore price_usd_kg from seed IF current value is NULL or clearly
+            wrong (outside 2–20 USD/kg), without touching vol_tons live data.
+          * Clear vol_tons if it looks like a bad value (< 100 t, which is
+            impossible for a full week of Brazil beef exports).
     """
     conn.executemany(
-        "INSERT OR IGNORE INTO _weekly_raw(start_date,end_date,price_usd_kg,vol_tons)"
-        " VALUES(?,?,?,?)",
+        """
+        INSERT INTO _weekly_raw(start_date, end_date, price_usd_kg, vol_tons)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(start_date) DO UPDATE SET
+            -- Restore seed price only when existing price is NULL or out of range
+            price_usd_kg = CASE
+                WHEN _weekly_raw.price_usd_kg IS NULL THEN excluded.price_usd_kg
+                WHEN _weekly_raw.price_usd_kg < 2.0   THEN excluded.price_usd_kg
+                WHEN _weekly_raw.price_usd_kg > 20.0  THEN excluded.price_usd_kg
+                ELSE _weekly_raw.price_usd_kg
+            END,
+            -- Clear vol_tons if it looks like a parsing artefact (< 100 t)
+            vol_tons = CASE
+                WHEN _weekly_raw.vol_tons IS NOT NULL
+                     AND _weekly_raw.vol_tons < 100.0 THEN NULL
+                ELSE _weekly_raw.vol_tons
+            END
+        """,
         WEEKLY_SEED
     )
     conn.commit()
-    print(f"  [WEEKLY] {len(WEEKLY_SEED)} rows seeded into _weekly_raw (INSERT OR IGNORE).")
+    print(f"  [WEEKLY] {len(WEEKLY_SEED)} rows seeded/validated in _weekly_raw.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
