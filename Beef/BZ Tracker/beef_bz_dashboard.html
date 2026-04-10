@@ -205,14 +205,16 @@ tr:hover td{background:#FFF8F5;}
     </div>
   </div>
 
-  <!-- REFERENCE CHARTS: static, not updated by view/tab/season filters -->
+  <!-- COMPARISON CHARTS: driven by Q/M/W tab — current / prev / same period LY -->
   <div class="refcharts-row">
     <div class="chart-card">
       <div class="chart-card-header">
         <div>
-          <div class="chart-title">Export Volume &amp; Price — Reference Periods</div>
+          <div class="chart-title">Volume &amp; Export Price — <span id="comp-period-label">Period Comparison</span></div>
           <div style="font-size:10.5px;color:var(--gray-mid);margin-top:3px;">
-            Bars = Monthly Volume ('000 t) &nbsp;·&nbsp; Dots = Export Price (USD/kg)
+            <span style="color:#888;font-weight:700;">■</span> Volume ('000 t, left axis)
+            &nbsp;·&nbsp;
+            <span style="color:#1A1A1A;font-weight:700;">●</span> Export Price USD/kg (right axis)
           </div>
         </div>
       </div>
@@ -221,10 +223,11 @@ tr:hover td{background:#FFF8F5;}
     <div class="chart-card">
       <div class="chart-card-header">
         <div>
-          <div class="chart-title">Export Price Variation — Reference Periods</div>
+          <div class="chart-title">Export Price USD vs BRL — <span id="comp-period-label2">Period Comparison</span></div>
           <div style="font-size:10.5px;color:var(--gray-mid);margin-top:3px;">
-            <span style="color:var(--gray-dark);font-weight:700;">■</span> USD/kg &nbsp;·&nbsp;
-            <span style="color:var(--orange);font-weight:700;">■</span> BRL/kg
+            <span style="color:#1A1A1A;font-weight:700;">■</span> USD/kg (left axis)
+            &nbsp;·&nbsp;
+            <span style="color:var(--orange);font-weight:700;">■</span> BRL/kg (right axis)
           </div>
         </div>
       </div>
@@ -232,7 +235,7 @@ tr:hover td{background:#FFF8F5;}
     </div>
   </div>
 
-  <!-- TABLE SECTION — full history, no view filtering -->
+  <!-- TABLE SECTION — full history, driven by Q/M/W tab -->
   <div class="table-section">
     <div class="table-tabs">
       <button class="tab-btn active" data-tab="quarterly" onclick="setTab('quarterly')">Quarterly</button>
@@ -248,7 +251,7 @@ tr:hover td{background:#FFF8F5;}
   </div>
 
   <div class="note-bar">
-    Sources: <em>SECEX/MDIC</em> — NCM 0201+0202 · <em>CEPEA/ESALQ</em> Boi Gordo (BRL/arroba ÷ 15 = BRL/kg) · <em>BCB PTAX</em> BRL/USD · Spread = Export BRL/kg ÷ Cattle BRL/kg · Vol = total export volume (000 t) · Table = full history; chart view filter applies to top two charts only
+    Sources: <em>SECEX/MDIC</em> — NCM 0201+0202 · <em>CEPEA/ESALQ</em> Boi Gordo (BRL/arroba ÷ 15 = BRL/kg) · <em>BCB PTAX</em> BRL/USD · Spread = Export BRL/kg ÷ Cattle BRL/kg · Vol = total export volume (000 t) · Q/M/W tab drives comparison charts + table · top chart view filter applies to spread &amp; price line charts only
   </div>
 
 </div><!-- main-wrap -->
@@ -395,6 +398,13 @@ function setTab(t) {
   document.querySelectorAll('.tab-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === t));
   renderTable();
+  renderComparisonCharts(); // comparison charts follow the Q/M/W tab
+}
+
+function renderComparisonCharts() {
+  buildReferenceData();
+  renderVolumeChart();
+  renderPriceRefChart();
 }
 
 function setSeasonYears(n) {
@@ -785,7 +795,7 @@ function renderTable() {
   }
 }
 
-// ─── REFERENCE CHARTS (static — built once at boot) ──────────────────────────
+// ─── COMPARISON CHARTS (driven by Q/M/W tab) ─────────────────────────────────
 let REF = null;
 
 function shortDate(d) {
@@ -796,111 +806,158 @@ function shortDate(d) {
 }
 
 function buildReferenceData() {
-  // Latest weekly periods
-  const sortedW = [...WEEKLY]
-    .sort((a, b) => a.start_date < b.start_date ? -1 : 1)
-    .filter(r => r.secex_usd_kg != null);
-  const thisWeek = sortedW[sortedW.length - 1] || null;
-  const lastWeek = sortedW[sortedW.length - 2] || null;
+  // ── MONTHLY ──────────────────────────────────────────────────────────────────
+  if (currentTab === 'monthly') {
+    const sortedM = [...MONTHLY].filter(r => r.spread != null)
+      .sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
+    const curr   = sortedM[sortedM.length - 1] || null;
+    const prev   = sortedM[sortedM.length - 2] || null;
+    const samely = curr ? (MONTHLY.find(r =>
+      r.year === curr.year - 1 && r.month === curr.month) || null) : null;
 
-  // Latest monthly periods (with spread data)
-  const sortedM = [...MONTHLY]
-    .filter(r => r.spread != null)
-    .sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
-  const currMonth  = sortedM[sortedM.length - 1] || null;
-  const prevMonth  = sortedM[sortedM.length - 2] || null;
-  let   sameMonthLY = null;
-  if (currMonth) {
-    sameMonthLY = MONTHLY.find(r =>
-      r.year === currMonth.year - 1 && r.month === currMonth.month
-    ) || null;
+    const periods = [
+      { label: samely ? samely.period : 'LY',     d: samely, hasVol: true  },
+      { label: prev   ? prev.period   : 'Prev Mo', d: prev,  hasVol: true  },
+      { label: curr   ? curr.period   : 'Curr Mo', d: curr,  hasVol: true  },
+    ];
+    const tag = curr ? `${MONTHS_SHORT[curr.month-1]} ${curr.year}: curr / prev / same LY` : 'Monthly';
+    _setREF(periods, tag, true);
+
+  // ── QUARTERLY ────────────────────────────────────────────────────────────────
+  } else if (currentTab === 'quarterly') {
+    const curr   = QUARTERLY[QUARTERLY.length - 1] || null;
+    const prev   = QUARTERLY[QUARTERLY.length - 2] || null;
+    const samely = curr ? (QUARTERLY.find(q =>
+      q.year === curr.year - 1 && q.quarter === curr.quarter) || null) : null;
+
+    const periods = [
+      { label: samely ? samely.period : 'LY',      d: samely, hasVol: true },
+      { label: prev   ? prev.period   : 'Prev Q',  d: prev,   hasVol: true },
+      { label: curr   ? curr.period   : 'Curr Q',  d: curr,   hasVol: true },
+    ];
+    const tag = curr ? `${curr.period}: curr / prev / same LY` : 'Quarterly';
+    _setREF(periods, tag, true);
+
+  // ── WEEKLY ───────────────────────────────────────────────────────────────────
+  } else {
+    const sortedW = [...WEEKLY].filter(r => r.secex_usd_kg != null)
+      .sort((a, b) => a.start_date < b.start_date ? -1 : 1);
+    const curr = sortedW[sortedW.length - 1] || null;
+    const prev = sortedW[sortedW.length - 2] || null;
+    // Same week last year: find weekly closest to (curr.start_date - 1 year)
+    let samely = null;
+    if (curr) {
+      const lyTarget = new Date(curr.start_date);
+      lyTarget.setFullYear(lyTarget.getFullYear() - 1);
+      let minDiff = Infinity;
+      sortedW.forEach(w => {
+        const diff = Math.abs(new Date(w.start_date) - lyTarget);
+        if (diff < minDiff && w.start_date !== curr.start_date) { minDiff = diff; samely = w; }
+      });
+    }
+    const periods = [
+      { label: samely ? ['LY Wk', shortDate(samely.start_date)]   : ['LY Wk',  '—'], d: samely, hasVol: false },
+      { label: prev   ? ['Last Wk', shortDate(prev.start_date)]   : ['Last Wk','—'], d: prev,   hasVol: false },
+      { label: curr   ? ['This Wk', shortDate(curr.start_date)]   : ['This Wk','—'], d: curr,   hasVol: false },
+    ];
+    const tag = curr ? `${shortDate(curr.start_date)}: this / last / same LY` : 'Weekly';
+    _setREF(periods, tag, false);
   }
+}
 
-  const periods = [
-    { label: lastWeek  ? ['Last Wk',  shortDate(lastWeek.start_date)]  : ['Last Wk',  '—'],
-      d: lastWeek,   type: 'weekly'  },
-    { label: thisWeek  ? ['This Wk',  shortDate(thisWeek.start_date)]  : ['This Wk',  '—'],
-      d: thisWeek,   type: 'weekly'  },
-    { label: sameMonthLY ? ['LY', sameMonthLY.period]                  : ['LY Mo',    '—'],
-      d: sameMonthLY, type: 'monthly' },
-    { label: prevMonth ? ['Prev Mo',  prevMonth.period]                : ['Prev Mo',  '—'],
-      d: prevMonth,  type: 'monthly' },
-    { label: currMonth ? ['Curr Mo',  currMonth.period]                : ['Curr Mo',  '—'],
-      d: currMonth,  type: 'monthly' },
-  ];
-
+function _setREF(periods, tag, hasVolume) {
   REF = {
-    labels: periods.map(p => p.label),
-    usd:    periods.map(p => p.d?.secex_usd_kg   ?? null),
-    brl:    periods.map(p => p.d?.secex_brl_kg   ?? null),
-    vol:    periods.map(p => p.type === 'monthly' ? (p.d?.vol_tons != null ? p.d.vol_tons / 1000 : null) : null),
+    labels:    periods.map(p => p.label),
+    usd:       periods.map(p => p.d?.secex_usd_kg  ?? null),
+    brl:       periods.map(p => p.d?.secex_brl_kg  ?? null),
+    vol:       periods.map(p => p.hasVol ? (p.d?.vol_tons != null ? p.d.vol_tons / 1000 : null) : null),
+    hasVolume: hasVolume,
+    tag:       tag,
   };
+  // Update dynamic labels in chart card headers
+  document.getElementById('comp-period-label').textContent  = tag;
+  document.getElementById('comp-period-label2').textContent = tag;
 }
 
 function renderVolumeChart() {
   if (!REF) return;
   if (charts.volume) charts.volume.destroy();
 
-  const barBg  = ['rgba(160,160,160,0.50)','rgba(160,160,160,0.50)',
-                   'rgba(255,85,0,0.45)','rgba(255,85,0,0.45)','rgba(255,85,0,0.80)'];
-  const barBdr = ['rgba(120,120,120,0.70)','rgba(120,120,120,0.70)',
-                   'rgba(255,85,0,0.70)','rgba(255,85,0,0.70)','rgba(255,85,0,1.00)'];
+  // 3 bars: LY (gray) → Prev (medium) → Curr (orange bold)
+  const barBg  = ['rgba(160,160,160,0.45)', 'rgba(100,100,100,0.50)', 'rgba(255,85,0,0.80)'];
+  const barBdr = ['rgba(130,130,130,0.70)', 'rgba(70,70,70,0.70)',    'rgba(255,85,0,1.00)'];
+
+  // If no volume data (weekly tab), show only the price line
+  const showVolume = REF.hasVolume;
+
+  const datasets = [];
+
+  if (showVolume) {
+    datasets.push({
+      type: 'bar',
+      label: "Volume ('000 t)",
+      data: REF.vol,
+      backgroundColor: barBg,
+      borderColor: barBdr,
+      borderWidth: 1,
+      yAxisID: 'yVol',
+      order: 2,
+      datalabels: {
+        display: true, anchor: 'end', align: 'top',
+        font: { size: 10, weight: '600' }, color: '#555',
+        formatter: v => v != null ? v.toFixed(0) : '',
+      },
+    });
+  }
+
+  datasets.push({
+    type: showVolume ? 'line' : 'bar',
+    label: 'Export Price (USD/kg)',
+    data: REF.usd,
+    borderColor: '#1A1A1A',
+    backgroundColor: showVolume
+      ? '#1A1A1A'
+      : ['rgba(160,160,160,0.45)', 'rgba(100,100,100,0.50)', 'rgba(40,40,40,0.85)'],
+    borderWidth: showVolume ? 2 : 0,
+    pointRadius: showVolume ? 7 : 0,
+    pointHoverRadius: showVolume ? 8 : 0,
+    pointBackgroundColor: showVolume ? '#1A1A1A' : undefined,
+    pointStyle: showVolume ? 'circle' : undefined,
+    yAxisID: 'yUsd',
+    order: 1,
+    tension: 0,
+    spanGaps: true,
+    datalabels: {
+      display: true,
+      anchor: showVolume ? 'center' : 'end',
+      align: showVolume ? 'right' : 'top',
+      offset: showVolume ? 10 : 0,
+      font: { size: 10, weight: 'bold' }, color: '#1A1A1A',
+      formatter: v => v != null ? v.toFixed(2) : '',
+    },
+  });
+
+  // Determine y-axis min with padding
+  const usdVals  = REF.usd.filter(v => v != null);
+  const usdMin   = usdVals.length ? Math.floor((Math.min(...usdVals) - 0.3) * 10) / 10 : undefined;
+  const usdMax   = usdVals.length ? Math.ceil ((Math.max(...usdVals) + 0.3) * 10) / 10 : undefined;
 
   charts.volume = new Chart(document.getElementById('volumeChart').getContext('2d'), {
-    data: {
-      labels: REF.labels,
-      datasets: [
-        {
-          type: 'bar',
-          label: "Volume ('000 t)",
-          data: REF.vol,
-          backgroundColor: barBg,
-          borderColor: barBdr,
-          borderWidth: 1,
-          yAxisID: 'yVol',
-          order: 2,
-          datalabels: {
-            display: true, anchor: 'end', align: 'top',
-            font: { size: 9 }, color: '#666',
-            formatter: v => v != null ? v.toFixed(0) : '',
-          },
-        },
-        {
-          type: 'line',
-          label: 'Export Price (USD/kg)',
-          data: REF.usd,
-          borderColor: '#1A1A1A',
-          backgroundColor: '#1A1A1A',
-          borderWidth: 2,
-          pointRadius: 6,
-          pointHoverRadius: 7,
-          pointBackgroundColor: '#1A1A1A',
-          pointStyle: 'circle',
-          yAxisID: 'yUsd',
-          order: 1,
-          tension: 0,
-          spanGaps: true,
-          datalabels: {
-            display: true, anchor: 'top', align: 'top', offset: 4,
-            font: { size: 9, weight: 'bold' }, color: '#1A1A1A',
-            formatter: v => v != null ? v.toFixed(2) : '',
-          },
-        },
-      ],
-    },
+    data: { labels: REF.labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: true, position: 'top',
-          labels: { font: { size: 10 }, boxWidth: 10, color: '#555' } },
-        datalabels: { display: false }, // default off; each dataset overrides
+          labels: { font: { size: 10 }, boxWidth: 10, color: '#555',
+            filter: item => !(item.text === "Volume ('000 t)" && !showVolume) } },
+        datalabels: { display: false },
         tooltip: {
           backgroundColor: '#333', titleColor: '#ccc', bodyColor: '#eee',
           borderColor: '#555', borderWidth: 1,
           callbacks: {
             label: ctx => {
-              if (ctx.dataset.type === 'bar')
+              if (ctx.dataset.label?.includes('Volume'))
                 return `Volume: ${ctx.parsed.y?.toFixed(0) ?? '—'} '000 t`;
               return `Price: ${ctx.parsed.y?.toFixed(2) ?? '—'} USD/kg`;
             },
@@ -908,17 +965,22 @@ function renderVolumeChart() {
         },
       },
       scales: {
-        yVol: {
-          type: 'linear', position: 'left',
-          title: { display: true, text: "'000 t", color: '#888', font: { size: 9 } },
-          ticks: { color: '#999', font: { size: 9 }, callback: v => v.toFixed(0) },
-          grid: { color: 'rgba(0,0,0,0.05)' },
-        },
+        ...(showVolume ? {
+          yVol: {
+            type: 'linear', position: 'left',
+            title: { display: true, text: "'000 t", color: '#888', font: { size: 9 } },
+            ticks: { color: '#888', font: { size: 9 }, callback: v => v.toFixed(0) },
+            grid: { color: 'rgba(0,0,0,0.05)' },
+          },
+        } : {}),
         yUsd: {
-          type: 'linear', position: 'right',
-          title: { display: true, text: 'USD/kg', color: '#888', font: { size: 9 } },
-          ticks: { color: '#999', font: { size: 9 }, callback: v => v.toFixed(2) },
-          grid: { drawOnChartArea: false },
+          type: 'linear', position: showVolume ? 'right' : 'left',
+          min: usdMin, max: usdMax,
+          title: { display: true, text: 'USD/kg',
+            // colored to match series (#1A1A1A = black dots/bars)
+            color: '#1A1A1A', font: { size: 9, weight: '600' } },
+          ticks: { color: '#1A1A1A', font: { size: 9 }, callback: v => v.toFixed(2) },
+          grid: showVolume ? { drawOnChartArea: false } : { color: 'rgba(0,0,0,0.05)' },
         },
         x: {
           ticks: { color: '#999', font: { size: 9 }, maxRotation: 0 },
@@ -933,10 +995,15 @@ function renderPriceRefChart() {
   if (!REF) return;
   if (charts.priceRef) charts.priceRef.destroy();
 
-  const usdBg  = ['rgba(40,40,40,0.50)','rgba(40,40,40,0.50)',
-                   'rgba(40,40,40,0.45)','rgba(40,40,40,0.45)','rgba(40,40,40,0.85)'];
-  const brlBg  = ['rgba(255,85,0,0.40)','rgba(255,85,0,0.40)',
-                   'rgba(255,85,0,0.45)','rgba(255,85,0,0.45)','rgba(255,85,0,0.80)'];
+  // 3 groups per currency: LY (light) → Prev (medium) → Curr (bold)
+  const usdBg = ['rgba(40,40,40,0.35)', 'rgba(40,40,40,0.55)', 'rgba(40,40,40,0.90)'];
+  const brlBg = ['rgba(255,85,0,0.30)', 'rgba(255,85,0,0.55)', 'rgba(255,85,0,0.85)'];
+
+  // Padded axis bounds
+  const usdVals = REF.usd.filter(v => v != null);
+  const brlVals = REF.brl.filter(v => v != null);
+  const usdMin  = usdVals.length ? Math.floor((Math.min(...usdVals) - 0.5)  * 4) / 4 : undefined;
+  const brlMin  = brlVals.length ? Math.floor((Math.min(...brlVals) - 2)    * 2) / 2 : undefined;
 
   charts.priceRef = new Chart(document.getElementById('priceRefChart').getContext('2d'), {
     type: 'bar',
@@ -952,7 +1019,7 @@ function renderPriceRefChart() {
           order: 1,
           datalabels: {
             display: true, anchor: 'end', align: 'top',
-            font: { size: 9 }, color: '#1A1A1A',
+            font: { size: 10, weight: '600' }, color: '#1A1A1A',
             formatter: v => v != null ? v.toFixed(2) : '',
           },
         },
@@ -965,8 +1032,8 @@ function renderPriceRefChart() {
           order: 2,
           datalabels: {
             display: true, anchor: 'end', align: 'top',
-            font: { size: 9 }, color: '#FF5500',
-            formatter: v => v != null ? v.toFixed(2) : '',
+            font: { size: 10, weight: '600' }, color: '#FF5500',
+            formatter: v => v != null ? v.toFixed(1) : '',
           },
         },
       ],
@@ -976,7 +1043,15 @@ function renderPriceRefChart() {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: true, position: 'top',
-          labels: { font: { size: 10 }, boxWidth: 10, color: '#555' } },
+          labels: { font: { size: 10 }, boxWidth: 10,
+            generateLabels: chart => chart.data.datasets.map((ds, i) => ({
+              text: ds.label,
+              fillStyle: i === 0 ? '#1A1A1A' : '#FF5500',
+              strokeStyle: 'transparent',
+              hidden: false, datasetIndex: i,
+            })),
+          },
+        },
         datalabels: { display: false },
         tooltip: {
           backgroundColor: '#333', titleColor: '#ccc', bodyColor: '#eee',
@@ -989,14 +1064,20 @@ function renderPriceRefChart() {
       scales: {
         yUsd: {
           type: 'linear', position: 'left',
-          title: { display: true, text: 'USD/kg', color: '#888', font: { size: 9 } },
-          ticks: { color: '#999', font: { size: 9 }, callback: v => v.toFixed(2) },
+          min: usdMin,
+          // Axis color matches USD series (dark/black)
+          title: { display: true, text: 'USD/kg',
+            color: '#1A1A1A', font: { size: 9, weight: '600' } },
+          ticks: { color: '#1A1A1A', font: { size: 9 }, callback: v => v.toFixed(2) },
           grid: { color: 'rgba(0,0,0,0.05)' },
         },
         yBrl: {
           type: 'linear', position: 'right',
-          title: { display: true, text: 'BRL/kg', color: '#888', font: { size: 9 } },
-          ticks: { color: '#999', font: { size: 9 }, callback: v => v.toFixed(1) },
+          min: brlMin,
+          // Axis color matches BRL series (orange)
+          title: { display: true, text: 'BRL/kg',
+            color: '#FF5500', font: { size: 9, weight: '600' } },
+          ticks: { color: '#FF5500', font: { size: 9 }, callback: v => v.toFixed(1) },
           grid: { drawOnChartArea: false },
         },
         x: {
@@ -1012,9 +1093,7 @@ function renderPriceRefChart() {
 function render() {
   renderCharts();
   renderSeasonalityChart();
-  buildReferenceData();
-  renderVolumeChart();
-  renderPriceRefChart();
+  renderComparisonCharts(); // builds REF for currentTab, renders both comparison charts
   renderTable();
 }
 
