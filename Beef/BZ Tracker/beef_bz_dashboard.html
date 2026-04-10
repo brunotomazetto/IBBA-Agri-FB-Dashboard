@@ -360,7 +360,7 @@ async function loadDB() {
 
     // ── weekly ────────────────────────────────────────────────────────────────
     const wStmt = db.exec(`
-      SELECT start_date, end_date, secex_usd_kg, fx, secex_brl_kg, cepea_r_kg, spread
+      SELECT start_date, end_date, secex_usd_kg, fx, secex_brl_kg, cepea_r_kg, spread, vol_tons
       FROM weekly ORDER BY start_date ASC
     `);
     if (wStmt.length) {
