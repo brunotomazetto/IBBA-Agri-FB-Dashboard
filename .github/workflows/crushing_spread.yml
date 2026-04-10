@@ -1,0 +1,87 @@
+name: Crushing Spread — Agri Monitor
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Schedules:
+#   Quinta + Sexta (11h Brasília) → soja CONAB + biodiesel ANP + spread
+#   Dias 8–15 do mês (11h Brasília) → farelo ComexStat + PTAX + spread
+#
+# O script decide internamente o que buscar comparando a idade do último
+# dado no banco com o limiar de freshness de cada fonte. Se o dado ainda
+# não estiver disponível na fonte, simplesmente não insere nada — e na
+# próxima rodada tenta de novo automaticamente.
+#
+# Limiares definidos no script:
+#   SOJA_STALE_DAYS   = 5   dias  (fonte semanal)
+#   BIO_STALE_DAYS    = 10  dias  (ANP publica ~12 dias após o fechamento)
+#   FARELO_STALE_DAYS = 25  dias  (ComexStat fecha entre dias 8–15)
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # Quinta-feira 11h Brasília (UTC-3 = 14h UTC)
+    - cron: "0 14 * * 4"
+    # Sexta-feira 11h Brasília
+    - cron: "0 14 * * 5"
+    # Dias 8 a 15 do mês, segunda a sexta, 11h Brasília
+    - cron: "0 14 8-15 * 1-5"
+
+  # Permite rodar manualmente pelo painel do GitHub Actions
+  workflow_dispatch:
+    inputs:
+      force_all:
+        description: "Rebuscar tudo ignorando freshness? (true/false)"
+        required: false
+        default: "false"
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    # Permissão para commitar o .db de volta no repo
+    permissions:
+      contents: write
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1   # só o último commit — mais rápido
+
+      # ── 2. Python ────────────────────────────────────────────────────────
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── 3. Dependências ──────────────────────────────────────────────────
+      - name: Instalar dependências
+        run: |
+          pip install --upgrade pip
+          pip install requests pandas openpyxl xlrd
+
+      # ── 4. Executar extractor ────────────────────────────────────────────
+      - name: Executar extractor_crushing_spread.py
+        working-directory: "Agri Monitor/crushing_spread"
+        run: |
+          if [ "${{ github.event.inputs.force_all }}" = "true" ]; then
+            python extractor_crushing_spread.py --force-all
+          else
+            python extractor_crushing_spread.py
+          fi
+
+      # ── 5. Commit do .db atualizado ──────────────────────────────────────
+      - name: Commit crushing_spread.db
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "Agri Monitor/crushing_spread/crushing_spread.db"
+
+          # Só commita se o banco realmente mudou
+          if git diff --cached --quiet; then
+            echo "Nenhuma mudança no banco — nada a commitar."
+          else
+            git commit -m "chore: atualiza crushing_spread.db [$(date '+%Y-%m-%d %H:%M') BRT]"
+            git push
+          fi
