@@ -887,74 +887,70 @@ function renderVolumeChart() {
   if (!REF) return;
   if (charts.volume) charts.volume.destroy();
 
-  // 3 bars: LY (gray) → Prev (medium) → Curr (orange bold)
+  const hasVol = REF.hasVolume;
+
+  // Volume bars: LY (light gray) → Prev (medium) → Curr (orange)
+  // Always defined; values are null when weekly → bars simply don't render
   const barBg  = ['rgba(160,160,160,0.45)', 'rgba(100,100,100,0.50)', 'rgba(255,85,0,0.80)'];
   const barBdr = ['rgba(130,130,130,0.70)', 'rgba(70,70,70,0.70)',    'rgba(255,85,0,1.00)'];
 
-  // If no volume data (weekly tab), show only the price line
-  const showVolume = REF.hasVolume;
-
-  const datasets = [];
-
-  if (showVolume) {
-    datasets.push({
-      type: 'bar',
-      label: "Volume ('000 t)",
-      data: REF.vol,
-      backgroundColor: barBg,
-      borderColor: barBdr,
-      borderWidth: 1,
-      yAxisID: 'yVol',
-      order: 2,
-      datalabels: {
-        display: true, anchor: 'end', align: 'top',
-        font: { size: 10, weight: '600' }, color: '#555',
-        formatter: v => v != null ? v.toFixed(0) : '',
-      },
-    });
-  }
-
-  datasets.push({
-    type: showVolume ? 'line' : 'bar',
-    label: 'Export Price (USD/kg)',
-    data: REF.usd,
-    borderColor: '#1A1A1A',
-    backgroundColor: showVolume
-      ? '#1A1A1A'
-      : ['rgba(160,160,160,0.45)', 'rgba(100,100,100,0.50)', 'rgba(40,40,40,0.85)'],
-    borderWidth: showVolume ? 2 : 0,
-    pointRadius: showVolume ? 7 : 0,
-    pointHoverRadius: showVolume ? 8 : 0,
-    pointBackgroundColor: showVolume ? '#1A1A1A' : undefined,
-    pointStyle: showVolume ? 'circle' : undefined,
-    yAxisID: 'yUsd',
-    order: 1,
-    tension: 0,
-    spanGaps: true,
-    datalabels: {
-      display: true,
-      anchor: showVolume ? 'center' : 'end',
-      align: showVolume ? 'right' : 'top',
-      offset: showVolume ? 10 : 0,
-      font: { size: 10, weight: 'bold' }, color: '#1A1A1A',
-      formatter: v => v != null ? v.toFixed(2) : '',
-    },
-  });
-
-  // Determine y-axis min with padding
-  const usdVals  = REF.usd.filter(v => v != null);
-  const usdMin   = usdVals.length ? Math.floor((Math.min(...usdVals) - 0.3) * 10) / 10 : undefined;
-  const usdMax   = usdVals.length ? Math.ceil ((Math.max(...usdVals) + 0.3) * 10) / 10 : undefined;
+  // Padded USD range
+  const usdVals = REF.usd.filter(v => v != null);
+  const usdMin  = usdVals.length ? Math.floor((Math.min(...usdVals) - 0.3) * 10) / 10 : undefined;
+  const usdMax  = usdVals.length ? Math.ceil ((Math.max(...usdVals) + 0.5) * 10) / 10 : undefined;
 
   charts.volume = new Chart(document.getElementById('volumeChart').getContext('2d'), {
-    data: { labels: REF.labels, datasets },
+    data: {
+      labels: REF.labels,
+      datasets: [
+        // ── Volume bars (always present; null values = invisible in weekly) ──
+        {
+          type: 'bar',
+          label: "Volume ('000 t)",
+          data: hasVol ? REF.vol : [null, null, null],
+          backgroundColor: barBg,
+          borderColor: barBdr,
+          borderWidth: 1,
+          yAxisID: 'yVol',
+          order: 2,
+          datalabels: {
+            display: hasVol, anchor: 'end', align: 'top',
+            font: { size: 10, weight: '600' }, color: '#555',
+            formatter: v => v != null ? v.toFixed(0) : '',
+          },
+        },
+        // ── Export price line (always a line, never a bar) ────────────────
+        {
+          type: 'line',
+          label: 'Export Price (USD/kg)',
+          data: REF.usd,
+          borderColor: '#1A1A1A',
+          backgroundColor: '#1A1A1A',
+          borderWidth: 2,
+          pointRadius: 7,
+          pointHoverRadius: 8,
+          pointBackgroundColor: '#1A1A1A',
+          pointStyle: 'circle',
+          yAxisID: 'yUsd',
+          order: 1,
+          tension: 0,
+          spanGaps: true,
+          datalabels: {
+            display: true, anchor: 'center', align: 'right', offset: 10,
+            font: { size: 10, weight: 'bold' }, color: '#1A1A1A',
+            formatter: v => v != null ? v.toFixed(2) : '',
+          },
+        },
+      ],
+    },
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: true, position: 'top',
           labels: { font: { size: 10 }, boxWidth: 10, color: '#555',
-            filter: item => !(item.text === "Volume ('000 t)" && !showVolume) } },
+            // hide Volume entry when weekly (no data)
+            filter: item => !(item.text.includes('Volume') && !hasVol) } },
         datalabels: { display: false },
         tooltip: {
           backgroundColor: '#333', titleColor: '#ccc', bodyColor: '#eee',
@@ -962,29 +958,27 @@ function renderVolumeChart() {
           callbacks: {
             label: ctx => {
               if (ctx.dataset.label?.includes('Volume'))
-                return `Volume: ${ctx.parsed.y?.toFixed(0) ?? '—'} '000 t`;
+                return hasVol ? `Volume: ${ctx.parsed.y?.toFixed(0) ?? '—'} '000 t` : null;
               return `Price: ${ctx.parsed.y?.toFixed(2) ?? '—'} USD/kg`;
             },
           },
         },
       },
       scales: {
-        ...(showVolume ? {
-          yVol: {
-            type: 'linear', position: 'left',
-            title: { display: true, text: "'000 t", color: '#888', font: { size: 9 } },
-            ticks: { color: '#888', font: { size: 9 }, callback: v => v.toFixed(0) },
-            grid: { color: 'rgba(0,0,0,0.05)' },
-          },
-        } : {}),
+        yVol: {
+          type: 'linear', position: 'left',
+          display: hasVol,   // hide axis entirely when weekly
+          title: { display: hasVol, text: "'000 t", color: '#888', font: { size: 9 } },
+          ticks: { color: '#888', font: { size: 9 }, callback: v => v.toFixed(0) },
+          grid: { color: 'rgba(0,0,0,0.05)' },
+        },
         yUsd: {
-          type: 'linear', position: showVolume ? 'right' : 'left',
+          type: 'linear', position: hasVol ? 'right' : 'left',
           min: usdMin, max: usdMax,
           title: { display: true, text: 'USD/kg',
-            // colored to match series (#1A1A1A = black dots/bars)
             color: '#1A1A1A', font: { size: 9, weight: '600' } },
           ticks: { color: '#1A1A1A', font: { size: 9 }, callback: v => v.toFixed(2) },
-          grid: showVolume ? { drawOnChartArea: false } : { color: 'rgba(0,0,0,0.05)' },
+          grid: hasVol ? { drawOnChartArea: false } : { color: 'rgba(0,0,0,0.05)' },
         },
         x: {
           ticks: { color: '#999', font: { size: 9 }, maxRotation: 0 },
