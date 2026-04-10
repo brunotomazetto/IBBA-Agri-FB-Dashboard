@@ -549,10 +549,15 @@ def seed_weekly_raw(conn):
                 WHEN _weekly_raw.price_usd_kg > 20.0  THEN excluded.price_usd_kg
                 ELSE _weekly_raw.price_usd_kg
             END,
-            -- Clear vol_tons if it looks like a parsing artefact (< 100 t)
+            -- Update vol_tons from seed when:
+            --   (a) existing is NULL → use seed value
+            --   (b) existing is a bad artefact (< 100 t) → use seed value
+            -- Otherwise keep the existing live bulletin value.
             vol_tons = CASE
-                WHEN _weekly_raw.vol_tons IS NOT NULL
-                     AND _weekly_raw.vol_tons < 100.0 THEN NULL
+                WHEN excluded.vol_tons IS NOT NULL AND (
+                    _weekly_raw.vol_tons IS NULL OR
+                    _weekly_raw.vol_tons < 100.0
+                ) THEN excluded.vol_tons
                 ELSE _weekly_raw.vol_tons
             END
         """,
