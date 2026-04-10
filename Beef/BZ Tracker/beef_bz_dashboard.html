@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Brazil Beef Spread Tracker — Itaú BBA</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -96,6 +97,11 @@ tr:hover td{background:#FFF8F5;}
 .td-spread{font-weight:700;color:var(--orange);}
 .td-na{color:#ccc;font-size:10.5px;}
 
+/* ── REFERENCE CHARTS ROW ── */
+.refcharts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;
+  padding:0 16px 8px;}
+.refcharts-row .chart-wrap{height:220px;}
+
 /* ── NOTE BAR ── */
 .note-bar{background:#FFFBF8;border-top:1px solid #FFD9C8;
   padding:5px 20px;font-size:10.5px;color:var(--gray-mid);flex-shrink:0;}
@@ -182,13 +188,13 @@ tr:hover td{background:#FFF8F5;}
           <div style="font-size:10.5px;color:var(--gray-mid);margin-top:3px;">
             Each line = one year &nbsp;·&nbsp;
             <span style="color:var(--orange);font-weight:700;">—</span> = current year &nbsp;·&nbsp;
-            <span style="background:rgba(255,85,0,0.15);padding:0 4px;border-radius:2px;">shading</span> = max/min band for selected period
+            <span style="color:var(--black);font-weight:700;">—</span> = prev year &nbsp;·&nbsp;
+            <span style="background:rgba(255,85,0,0.15);padding:0 4px;border-radius:2px;">shading</span> = max/min band
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
           <span style="font-size:10.5px;font-weight:700;color:var(--gray-mid);">BAND:</span>
           <div style="display:flex;gap:3px;">
-            <button class="season-btn" data-sy="2" onclick="setSeasonYears(2)">2Y</button>
             <button class="season-btn" data-sy="3" onclick="setSeasonYears(3)">3Y</button>
             <button class="season-btn active" data-sy="5" onclick="setSeasonYears(5)">5Y</button>
             <button class="season-btn" data-sy="0" onclick="setSeasonYears(0)">All</button>
@@ -196,6 +202,33 @@ tr:hover td{background:#FFF8F5;}
         </div>
       </div>
       <div class="chart-wrap"><canvas id="seasonChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- REFERENCE CHARTS: static, not updated by view/tab/season filters -->
+  <div class="refcharts-row">
+    <div class="chart-card">
+      <div class="chart-card-header">
+        <div>
+          <div class="chart-title">Export Volume &amp; Price — Reference Periods</div>
+          <div style="font-size:10.5px;color:var(--gray-mid);margin-top:3px;">
+            Bars = Monthly Volume ('000 t) &nbsp;·&nbsp; Dots = Export Price (USD/kg)
+          </div>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="volumeChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-header">
+        <div>
+          <div class="chart-title">Export Price Variation — Reference Periods</div>
+          <div style="font-size:10.5px;color:var(--gray-mid);margin-top:3px;">
+            <span style="color:var(--gray-dark);font-weight:700;">■</span> USD/kg &nbsp;·&nbsp;
+            <span style="color:var(--orange);font-weight:700;">■</span> BRL/kg
+          </div>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="priceRefChart"></canvas></div>
     </div>
   </div>
 
@@ -470,6 +503,7 @@ function renderCharts() {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
+        datalabels: { display: false },
         tooltip: {
           backgroundColor: '#333', titleColor: '#ccc', bodyColor: '#eee',
           borderColor: '#555', borderWidth: 1,
@@ -498,6 +532,7 @@ function chartOpts({ yCallback, tooltipCb }) {
     interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { display: false },
+      datalabels: { display: false },
       tooltip: {
         backgroundColor: '#333', titleColor: '#ccc', bodyColor: '#eee',
         borderColor: '#555', borderWidth: 1,
@@ -521,14 +556,17 @@ function renderSeasonalityChart() {
   if (!allYears.length) return;
 
   const latestYear = allYears[allYears.length - 1];
+  const prevYear   = latestYear - 1;
   // historical years = all except latest (latest may be partial)
   const histYears  = allYears.filter(y => y < latestYear);
-  // band years = subset of historical based on filter
+  // band years = subset for min/max band based on filter
   const bandYears  = seasonYears === 0
     ? histYears
     : histYears.filter(y => y >= latestYear - seasonYears);
+  // gray lines = band years excluding prevYear (prevYear gets its own black line)
+  const grayYears  = bandYears.filter(y => y !== prevYear);
 
-  // compute per-month min/max from band years
+  // compute per-month min/max from band years (includes prevYear for band accuracy)
   const minBand = Array(12).fill(null);
   const maxBand = Array(12).fill(null);
   bandYears.forEach(y => {
@@ -540,7 +578,7 @@ function renderSeasonalityChart() {
   });
 
   const bandLabel = seasonYears === 0
-    ? `Max/Min — all years (${bandYears[0]}–${bandYears[bandYears.length-1]})`
+    ? `Max/Min — all (${bandYears[0]}–${bandYears[bandYears.length-1]})`
     : `Max/Min — last ${seasonYears}Y (${bandYears[0]}–${bandYears[bandYears.length-1]})`;
 
   const datasets = [];
@@ -554,11 +592,11 @@ function renderSeasonalityChart() {
     borderWidth: 0.8,
     pointRadius: 0,
     tension: 0.35,
-    fill: '+1',   // fills to next dataset (minBand)
+    fill: '+1',
     order: 4,
   });
   datasets.push({
-    label: '_min',  // hidden from tooltip/legend
+    label: '_min',
     data: minBand,
     borderColor: 'rgba(255,85,0,0.20)',
     backgroundColor: 'rgba(255,85,0,0.10)',
@@ -569,12 +607,12 @@ function renderSeasonalityChart() {
     order: 4,
   });
 
-  // Historical year lines (light gray, thin)
-  histYears.forEach(y => {
+  // Gray lines = band years excluding prevYear
+  grayYears.forEach(y => {
     datasets.push({
       label: String(y),
       data: SEASONALITY[y],
-      borderColor: 'rgba(170,170,170,0.40)',
+      borderColor: 'rgba(160,160,160,0.35)',
       backgroundColor: 'transparent',
       borderWidth: 1,
       pointRadius: 0,
@@ -582,6 +620,22 @@ function renderSeasonalityChart() {
       order: 3,
     });
   });
+
+  // Previous year (latestYear-1) — BLACK line
+  if (SEASONALITY[prevYear]) {
+    datasets.push({
+      label: `${prevYear} (prev)`,
+      data: SEASONALITY[prevYear],
+      borderColor: '#1A1A1A',
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      pointRadius: 2,
+      pointHoverRadius: 4,
+      pointBackgroundColor: '#1A1A1A',
+      tension: 0.35,
+      order: 2,
+    });
+  }
 
   // Current (latest) year — orange, bold
   datasets.push({
@@ -606,11 +660,12 @@ function renderSeasonalityChart() {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
+        datalabels: { display: false },
         legend: {
           display: true,
           position: 'right',
           labels: {
-            // Only show band entry + current year; skip individual historical lines
+            // Show band + prevYear + current year; skip raw year labels and _min
             filter: item => !item.text.match(/^\d{4}$/) && !item.text.startsWith('_'),
             font: { size: 10, family: 'Segoe UI,Arial,sans-serif' },
             boxWidth: 14,
@@ -730,10 +785,236 @@ function renderTable() {
   }
 }
 
+// ─── REFERENCE CHARTS (static — built once at boot) ──────────────────────────
+let REF = null;
+
+function shortDate(d) {
+  if (!d) return '';
+  const p = d.split('-');
+  if (p.length < 3) return d;
+  return `${MONTHS_SHORT[parseInt(p[1]) - 1]} ${parseInt(p[2])}`;
+}
+
+function buildReferenceData() {
+  // Latest weekly periods
+  const sortedW = [...WEEKLY]
+    .sort((a, b) => a.start_date < b.start_date ? -1 : 1)
+    .filter(r => r.secex_usd_kg != null);
+  const thisWeek = sortedW[sortedW.length - 1] || null;
+  const lastWeek = sortedW[sortedW.length - 2] || null;
+
+  // Latest monthly periods (with spread data)
+  const sortedM = [...MONTHLY]
+    .filter(r => r.spread != null)
+    .sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
+  const currMonth  = sortedM[sortedM.length - 1] || null;
+  const prevMonth  = sortedM[sortedM.length - 2] || null;
+  let   sameMonthLY = null;
+  if (currMonth) {
+    sameMonthLY = MONTHLY.find(r =>
+      r.year === currMonth.year - 1 && r.month === currMonth.month
+    ) || null;
+  }
+
+  const periods = [
+    { label: lastWeek  ? ['Last Wk',  shortDate(lastWeek.start_date)]  : ['Last Wk',  '—'],
+      d: lastWeek,   type: 'weekly'  },
+    { label: thisWeek  ? ['This Wk',  shortDate(thisWeek.start_date)]  : ['This Wk',  '—'],
+      d: thisWeek,   type: 'weekly'  },
+    { label: sameMonthLY ? ['LY', sameMonthLY.period]                  : ['LY Mo',    '—'],
+      d: sameMonthLY, type: 'monthly' },
+    { label: prevMonth ? ['Prev Mo',  prevMonth.period]                : ['Prev Mo',  '—'],
+      d: prevMonth,  type: 'monthly' },
+    { label: currMonth ? ['Curr Mo',  currMonth.period]                : ['Curr Mo',  '—'],
+      d: currMonth,  type: 'monthly' },
+  ];
+
+  REF = {
+    labels: periods.map(p => p.label),
+    usd:    periods.map(p => p.d?.secex_usd_kg   ?? null),
+    brl:    periods.map(p => p.d?.secex_brl_kg   ?? null),
+    vol:    periods.map(p => p.type === 'monthly' ? (p.d?.vol_tons != null ? p.d.vol_tons / 1000 : null) : null),
+  };
+}
+
+function renderVolumeChart() {
+  if (!REF) return;
+  if (charts.volume) charts.volume.destroy();
+
+  const barBg  = ['rgba(160,160,160,0.50)','rgba(160,160,160,0.50)',
+                   'rgba(255,85,0,0.45)','rgba(255,85,0,0.45)','rgba(255,85,0,0.80)'];
+  const barBdr = ['rgba(120,120,120,0.70)','rgba(120,120,120,0.70)',
+                   'rgba(255,85,0,0.70)','rgba(255,85,0,0.70)','rgba(255,85,0,1.00)'];
+
+  charts.volume = new Chart(document.getElementById('volumeChart').getContext('2d'), {
+    data: {
+      labels: REF.labels,
+      datasets: [
+        {
+          type: 'bar',
+          label: "Volume ('000 t)",
+          data: REF.vol,
+          backgroundColor: barBg,
+          borderColor: barBdr,
+          borderWidth: 1,
+          yAxisID: 'yVol',
+          order: 2,
+          datalabels: {
+            display: true, anchor: 'end', align: 'top',
+            font: { size: 9 }, color: '#666',
+            formatter: v => v != null ? v.toFixed(0) : '',
+          },
+        },
+        {
+          type: 'line',
+          label: 'Export Price (USD/kg)',
+          data: REF.usd,
+          borderColor: '#1A1A1A',
+          backgroundColor: '#1A1A1A',
+          borderWidth: 2,
+          pointRadius: 6,
+          pointHoverRadius: 7,
+          pointBackgroundColor: '#1A1A1A',
+          pointStyle: 'circle',
+          yAxisID: 'yUsd',
+          order: 1,
+          tension: 0,
+          spanGaps: true,
+          datalabels: {
+            display: true, anchor: 'top', align: 'top', offset: 4,
+            font: { size: 9, weight: 'bold' }, color: '#1A1A1A',
+            formatter: v => v != null ? v.toFixed(2) : '',
+          },
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top',
+          labels: { font: { size: 10 }, boxWidth: 10, color: '#555' } },
+        datalabels: { display: false }, // default off; each dataset overrides
+        tooltip: {
+          backgroundColor: '#333', titleColor: '#ccc', bodyColor: '#eee',
+          borderColor: '#555', borderWidth: 1,
+          callbacks: {
+            label: ctx => {
+              if (ctx.dataset.type === 'bar')
+                return `Volume: ${ctx.parsed.y?.toFixed(0) ?? '—'} '000 t`;
+              return `Price: ${ctx.parsed.y?.toFixed(2) ?? '—'} USD/kg`;
+            },
+          },
+        },
+      },
+      scales: {
+        yVol: {
+          type: 'linear', position: 'left',
+          title: { display: true, text: "'000 t", color: '#888', font: { size: 9 } },
+          ticks: { color: '#999', font: { size: 9 }, callback: v => v.toFixed(0) },
+          grid: { color: 'rgba(0,0,0,0.05)' },
+        },
+        yUsd: {
+          type: 'linear', position: 'right',
+          title: { display: true, text: 'USD/kg', color: '#888', font: { size: 9 } },
+          ticks: { color: '#999', font: { size: 9 }, callback: v => v.toFixed(2) },
+          grid: { drawOnChartArea: false },
+        },
+        x: {
+          ticks: { color: '#999', font: { size: 9 }, maxRotation: 0 },
+          grid: { color: 'rgba(0,0,0,0.04)' },
+        },
+      },
+    },
+  });
+}
+
+function renderPriceRefChart() {
+  if (!REF) return;
+  if (charts.priceRef) charts.priceRef.destroy();
+
+  const usdBg  = ['rgba(40,40,40,0.50)','rgba(40,40,40,0.50)',
+                   'rgba(40,40,40,0.45)','rgba(40,40,40,0.45)','rgba(40,40,40,0.85)'];
+  const brlBg  = ['rgba(255,85,0,0.40)','rgba(255,85,0,0.40)',
+                   'rgba(255,85,0,0.45)','rgba(255,85,0,0.45)','rgba(255,85,0,0.80)'];
+
+  charts.priceRef = new Chart(document.getElementById('priceRefChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: REF.labels,
+      datasets: [
+        {
+          label: 'Export Price (USD/kg)',
+          data: REF.usd,
+          backgroundColor: usdBg,
+          borderWidth: 0,
+          yAxisID: 'yUsd',
+          order: 1,
+          datalabels: {
+            display: true, anchor: 'end', align: 'top',
+            font: { size: 9 }, color: '#1A1A1A',
+            formatter: v => v != null ? v.toFixed(2) : '',
+          },
+        },
+        {
+          label: 'Export Price (BRL/kg)',
+          data: REF.brl,
+          backgroundColor: brlBg,
+          borderWidth: 0,
+          yAxisID: 'yBrl',
+          order: 2,
+          datalabels: {
+            display: true, anchor: 'end', align: 'top',
+            font: { size: 9 }, color: '#FF5500',
+            formatter: v => v != null ? v.toFixed(2) : '',
+          },
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top',
+          labels: { font: { size: 10 }, boxWidth: 10, color: '#555' } },
+        datalabels: { display: false },
+        tooltip: {
+          backgroundColor: '#333', titleColor: '#ccc', bodyColor: '#eee',
+          borderColor: '#555', borderWidth: 1,
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? '—'}`,
+          },
+        },
+      },
+      scales: {
+        yUsd: {
+          type: 'linear', position: 'left',
+          title: { display: true, text: 'USD/kg', color: '#888', font: { size: 9 } },
+          ticks: { color: '#999', font: { size: 9 }, callback: v => v.toFixed(2) },
+          grid: { color: 'rgba(0,0,0,0.05)' },
+        },
+        yBrl: {
+          type: 'linear', position: 'right',
+          title: { display: true, text: 'BRL/kg', color: '#888', font: { size: 9 } },
+          ticks: { color: '#999', font: { size: 9 }, callback: v => v.toFixed(1) },
+          grid: { drawOnChartArea: false },
+        },
+        x: {
+          ticks: { color: '#999', font: { size: 9 }, maxRotation: 0 },
+          grid: { color: 'rgba(0,0,0,0.04)' },
+        },
+      },
+    },
+  });
+}
+
 // ─── FULL RENDER ─────────────────────────────────────────────────────────────
 function render() {
   renderCharts();
   renderSeasonalityChart();
+  buildReferenceData();
+  renderVolumeChart();
+  renderPriceRefChart();
   renderTable();
 }
 
