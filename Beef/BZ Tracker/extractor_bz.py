@@ -584,8 +584,34 @@ def fetch_weekly_bulletin(conn):
         return 0
 
     try:
-        import openpyxl
-        wb = openpyxl.load_workbook(io.BytesIO(r2.content), data_only=True)
+        import openpyxl, zipfile as _zf, re as _re2
+        raw_bytes = r2.content
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), data_only=True)
+        except Exception as exc1:
+            # openpyxl bug: Excel has broken drawing references in the zip.
+            # Fix: rebuild zip without drawing files and strip drawing rels.
+            if "drawing" in str(exc1).lower() or "no item named" in str(exc1).lower():
+                print(f"  [BULLETIN] Drawing ref error — stripping drawings and retrying …")
+                buf_fix = io.BytesIO()
+                with _zf.ZipFile(io.BytesIO(raw_bytes), 'r') as zin:
+                    with _zf.ZipFile(buf_fix, 'w', _zf.ZIP_DEFLATED) as zout:
+                        for item in zin.infolist():
+                            if 'drawing' in item.filename.lower():
+                                continue          # drop drawing files
+                            data = zin.read(item.filename)
+                            if item.filename.endswith('.rels'):
+                                # Remove <Relationship> entries pointing to drawings
+                                data = _re2.sub(
+                                    rb'<Relationship[^>]+/drawing[^>]+/?>',
+                                    b'', data
+                                )
+                            zout.writestr(item, data)
+                buf_fix.seek(0)
+                wb = openpyxl.load_workbook(buf_fix, data_only=True)
+            else:
+                print(f"  [BULLETIN] Excel parse error: {exc1}")
+                return 0
     except Exception as exc:
         print(f"  [BULLETIN] Excel parse error: {exc}")
         return 0
