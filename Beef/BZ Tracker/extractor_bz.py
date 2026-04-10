@@ -701,31 +701,50 @@ def fetch_weekly_bulletin(conn):
                 vol_mtd        = float(v)
                 usd_mil        = float(u) if u is not None else None
                 matched_period = period_label
-                print(f"  [BULLETIN] Parsed sheet '{ws.title}' period '{period_label}': "
-                      f"vol={vol_mtd:,.0f} t, usd_mil={usd_mil}")
+                # ── DEBUG: always print raw extracted values ──────────────────
+                print(f"  [BULLETIN] Parsed sheet '{ws.title}' period '{period_label}':")
+                print(f"    raw vol_cell={v!r}  raw usd_cell={u!r}")
+                print(f"    → vol_mtd={vol_mtd:,.2f}  usd_mil={usd_mil}")
                 break
         if vol_mtd is not None:
             break
 
     if vol_mtd is None:
-        # Dump first 10 rows of active sheet for debugging
-        print("  [BULLETIN] Could not parse Excel. First rows of active sheet:")
-        for i, row in enumerate(wb.active.iter_rows(max_row=10)):
-            vals = [str(c.value or "")[:20] for c in row if c.value]
-            if vals:
-                print(f"    row {i+1}: {vals}")
+        # Dump first 15 rows of every sheet for debugging
+        print("  [BULLETIN] Could not parse Excel. Sheet dump:")
+        for ws in sheets_to_try[:2]:
+            print(f"  Sheet: '{ws.title}'")
+            for i, row in enumerate(ws.iter_rows(max_row=15)):
+                vals = [(c.column, str(c.value or "")[:25]) for c in row if c.value]
+                if vals:
+                    print(f"    row {i+1}: {vals}")
         return 0
 
-    price_usd = (usd_mil / vol_mtd) if usd_mil and vol_mtd else None
-    # price = (US$ Mil × 1000 USD) / (Tons × 1000 kg) = US$ Mil / Tons
+    # ── Compute price: US$ Mil (thousands USD) / Toneladas → USD/kg ──────────
+    # formula: (usd_thousands × 1000) / (tons × 1000 kg) = usd_thousands / tons
+    price_usd_raw = (usd_mil / vol_mtd) if usd_mil and vol_mtd else None
 
+    # ── Sanity check: Brazilian beef export price is 3–20 USD/kg ─────────────
+    PRICE_MIN, PRICE_MAX = 3.0, 20.0
+    if price_usd_raw is not None and not (PRICE_MIN <= price_usd_raw <= PRICE_MAX):
+        # Try dividing by 1000 (in case US$ column is raw USD, not thousands)
+        alt = price_usd_raw / 1000.0
+        if PRICE_MIN <= alt <= PRICE_MAX:
+            print(f"  [BULLETIN] Raw price {price_usd_raw:.2f} out of range — "
+                  f"applying /1000 correction → {alt:.4f} USD/kg")
+            price_usd_raw = alt
+        else:
+            print(f"  [BULLETIN] Computed price {price_usd_raw:.2f} USD/kg is out of "
+                  f"range [{PRICE_MIN},{PRICE_MAX}] — discarding price (vol_tons only).")
+            price_usd_raw = None
+
+    price_usd = price_usd_raw
     print(f"  [BULLETIN] {matched_period}: vol_MTD={vol_mtd:,.0f} t"
-          + (f", price={price_usd:.4f} USD/kg" if price_usd else " (no price)"))
+          + (f", price={price_usd:.4f} USD/kg" if price_usd else " (price discarded)"))
 
     # ── Step 5: find the right _weekly_raw row to update ─────────────────────
     # If we matched the previous month, use that month; otherwise current month
     if matched_period and matched_period != f"{PT_MON[mo]}/{yr}":
-        # Matched previous month
         target_mo = mo - 1 if mo > 1 else 12
         target_yr = yr if mo > 1 else yr - 1
     else:
@@ -734,31 +753,35 @@ def fetch_weekly_bulletin(conn):
     yr_s = str(target_yr)
     mo_s = f"{target_mo:02d}"
 
-    latest = conn.execute(
-        "SELECT start_date, end_date FROM _weekly_raw"
+    existing = conn.execute(
+        "SELECT start_date, end_date, price_usd_kg FROM _weekly_raw"
         " WHERE start_date LIKE ? ORDER BY start_date DESC LIMIT 1",
         (f"{yr_s}-{mo_s}-%",)
     ).fetchone()
 
-    if latest is None:
+    if existing is None:
         # No row for this month yet — create one for the current week
         wk_start = today - _td(days=today.weekday())   # Monday
         s_date   = str(wk_start)
         e_date   = str(today)
+        existing_price = None
     else:
-        s_date, e_date = latest
+        s_date, e_date, existing_price = existing
+
+    # Keep the existing price if our computed price failed the sanity check
+    final_price = price_usd if price_usd is not None else existing_price
 
     conn.execute(
         "INSERT OR REPLACE INTO _weekly_raw(start_date,end_date,price_usd_kg,vol_tons)"
         " VALUES(?,?,?,?)",
         (s_date, e_date,
-         round(price_usd, 6) if price_usd else None,
+         round(final_price, 6) if final_price is not None else None,
          vol_mtd)
     )
     conn.commit()
     print(f"  [BULLETIN] _weekly_raw updated: {s_date} → {e_date} | "
           f"vol_MTD={vol_mtd:,.0f} t"
-          + (f" | price={price_usd:.4f} USD/kg" if price_usd else ""))
+          + (f" | price={final_price:.4f} USD/kg" if final_price else ""))
     return 1
 
 
