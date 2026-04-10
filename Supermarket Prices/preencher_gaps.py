@@ -1,5 +1,6 @@
 """
 Preenche gaps do dia atual com o último preço disponível.
+Cobre tanto produtos não coletados quanto produtos indisponíveis.
 Chamado UMA VEZ após todas as categorias serem coletadas.
 """
 import sqlite3
@@ -11,17 +12,6 @@ DB_PATH = _ROOT / "precos.db"
 
 def preencher_gaps(con, hoje):
     inseridos = 0
-
-    # Produtos com dado real nos últimos 7 dias
-    candidatos = con.execute("""
-        SELECT DISTINCT supermercado, categoria, grupo, marca, nome_produto,
-               embalagem, cidade, uf, regiao, url
-        FROM precos
-        WHERE preco_atual IS NOT NULL
-          AND data_coleta >= date(?, '-7 days')
-          AND data_coleta < ?
-          AND erro IS NULL
-    """, (hoje, hoje)).fetchall()
 
     # Remove todas as cópias de hoje antes de inserir (limpa estado anterior)
     con.execute("DELETE FROM precos WHERE data_coleta=? AND erro='copiado_dia_anterior'", (hoje,))
@@ -35,6 +25,23 @@ def preencher_gaps(con, hoje):
           AND (erro IS NULL OR erro='input_manual')
     """, (hoje,)).fetchall():
         tem_hoje.add((r[0], r[1], r[2]))
+
+    # Candidatos: produtos com dado real nos últimos 7 dias
+    # + produtos marcados como indisponíveis hoje
+    candidatos = con.execute("""
+        SELECT DISTINCT supermercado, categoria, grupo, marca, nome_produto,
+               embalagem, cidade, uf, regiao, url
+        FROM precos
+        WHERE preco_atual IS NOT NULL
+          AND data_coleta >= date(?, '-7 days')
+          AND data_coleta < ?
+          AND erro IS NULL
+        UNION
+        SELECT DISTINCT supermercado, categoria, grupo, marca, nome_produto,
+               embalagem, cidade, uf, regiao, url
+        FROM precos
+        WHERE data_coleta=? AND erro='produto_indisponivel'
+    """, (hoje, hoje, hoje)).fetchall()
 
     for p in candidatos:
         sm, cat, grp, marca, nome, emb = p[0], p[1], p[2], p[3], p[4], p[5]
@@ -63,6 +70,7 @@ def preencher_gaps(con, hoje):
         """, (hoje, "00:00:00", sm, cat, grp, marca, nome, emb,
               cidade, uf, reg, ultimo[0], ultimo[1], ultimo[2], url))
         inseridos += 1
+        tem_hoje.add((sm, nome, emb))
 
     con.commit()
     print(f"  → {inseridos} preços preenchidos por cópia do dia anterior")
