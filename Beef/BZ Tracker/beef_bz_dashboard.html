@@ -44,13 +44,17 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 .view-label{font-size:11px;font-weight:700;color:var(--gray-mid);
   text-transform:uppercase;letter-spacing:.5px;}
 .view-btns{display:flex;gap:4px;}
-.view-btn,.season-btn{padding:4px 12px;font-size:12px;border-radius:4px;cursor:pointer;
+.view-btn,.tab-btn,.season-btn{padding:4px 12px;font-size:12px;border-radius:4px;cursor:pointer;
   border:1px solid var(--border);background:none;color:var(--gray-mid);
   font-family:var(--font);transition:all .15s;}
-.view-btn.active,.season-btn.active{background:var(--orange);color:white;
+.view-btn.active,.tab-btn.active,.season-btn.active{background:var(--orange);color:white;
   border-color:var(--orange);font-weight:700;}
-.view-btn:hover:not(.active),.season-btn:hover:not(.active){border-color:#ccc;color:var(--gray-dark);}
+.view-btn:hover:not(.active),.tab-btn:hover:not(.active),.season-btn:hover:not(.active){border-color:#ccc;color:var(--gray-dark);}
 .season-btn{padding:3px 9px;font-size:11px;}
+
+/* ── GRANULARITY BAR (Q / M / W — drives comparison charts + table) ── */
+.granularity-bar{background:var(--white);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;height:40px;gap:16px;flex-shrink:0;}
 
 /* ── MAIN LAYOUT ── */
 .main-wrap{display:flex;flex-direction:column;}
@@ -75,12 +79,7 @@ html,body{font-family:var(--font);background:var(--gray-light);color:var(--gray-
 /* ── TABLE SECTION ── */
 .table-section{background:var(--white);border-top:1px solid var(--border);
   display:flex;flex-direction:column;min-height:260px;}
-.table-tabs{display:flex;align-items:center;padding:8px 16px 0;
-  border-bottom:1px solid var(--border);background:var(--white);flex-shrink:0;gap:4px;}
-.tab-btn{padding:5px 14px;font-size:12px;border:1px solid var(--border);
-  border-radius:4px 4px 0 0;cursor:pointer;font-family:var(--font);
-  background:none;color:var(--gray-mid);transition:all .12s;}
-.tab-btn.active{background:var(--orange);color:white;border-color:var(--orange);font-weight:700;}
+.table-tabs{display:none;} /* tabs moved to granularity-bar above charts */
 .table-wrap{overflow:auto;max-height:340px;}
 .table-wrap::-webkit-scrollbar{width:5px;height:5px;}
 .table-wrap::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px;}
@@ -205,7 +204,17 @@ tr:hover td{background:#FFF8F5;}
     </div>
   </div>
 
-  <!-- COMPARISON CHARTS: driven by Q/M/W tab — current / prev / same period LY -->
+  <!-- GRANULARITY SELECTOR — drives comparison charts + table below -->
+  <div class="granularity-bar">
+    <span class="view-label">GRANULARITY:</span>
+    <div class="view-btns">
+      <button class="tab-btn active" data-tab="quarterly" onclick="setTab('quarterly')">Quarterly</button>
+      <button class="tab-btn" data-tab="monthly"   onclick="setTab('monthly')">Monthly</button>
+      <button class="tab-btn" data-tab="weekly"    onclick="setTab('weekly')">Weekly</button>
+    </div>
+  </div>
+
+  <!-- COMPARISON CHARTS: driven by granularity selector — current / prev / same period LY -->
   <div class="refcharts-row">
     <div class="chart-card">
       <div class="chart-card-header">
@@ -235,13 +244,8 @@ tr:hover td{background:#FFF8F5;}
     </div>
   </div>
 
-  <!-- TABLE SECTION — full history, driven by Q/M/W tab -->
+  <!-- TABLE SECTION — full history, follows granularity selector above -->
   <div class="table-section">
-    <div class="table-tabs">
-      <button class="tab-btn active" data-tab="quarterly" onclick="setTab('quarterly')">Quarterly</button>
-      <button class="tab-btn" data-tab="monthly" onclick="setTab('monthly')">Monthly</button>
-      <button class="tab-btn" data-tab="weekly" onclick="setTab('weekly')">Weekly</button>
-    </div>
     <div class="table-wrap">
       <table>
         <thead id="table-head"></thead>
