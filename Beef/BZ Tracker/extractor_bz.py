@@ -620,66 +620,54 @@ def fetch_weekly_bulletin(conn):
     # The workbook may have multiple sheets; try the active one first, then all
     sheets_to_try = [wb.active] + [wb[s] for s in wb.sheetnames if wb[s] != wb.active]
 
-    # Try current month AND previous month (in case bulletin not yet updated)
-    periods_to_try = [
-        f"{PT_MON[mo]}/{yr}",
-        f"{PT_MON[mo-1 if mo > 1 else 12]}/{yr if mo > 1 else yr-1}",
-    ]
+    # The Setores_Produtos.xlsx structure (confirmed from debug):
+    #   Header row:  [Descrição | US$ Mil | US$ Mil/MédDiária | Toneladas |
+    #                 Ton/MédDiária | Preço (US$/Tonelada) | Variação (%)]
+    #   Each category has 2 data cols: [current period | previous period]
+    #   "Current period" is always the FIRST column after each category header.
+    #   There are NO per-column period sub-headers; the period label appears
+    #   only in the "Variação" column as "MonAno - MonAno".
+    #   → We find category header columns DIRECTLY and use them as data columns.
 
-    def _parse_sheet(ws, period_label):
-        """Return (vol_mtd, usd_mil) for the given period or (None, None)."""
-        # ── Find category header row containing both "US$ Mil" and "Toneladas" ──
+    def _parse_sheet(ws):
+        """
+        Return (vol_tons_mtd, price_usd_kg) for the current period, or (None, None).
+
+        Strategy: locate the category header row by scanning for "Toneladas"
+        and "Preço" headers. The current-period data is in the same column as
+        the category header (first column of each metric pair).
+        """
+        ton_col   = None   # Excel column (1-based) for "Toneladas" header
+        price_col = None   # Excel column (1-based) for "Preço (US$/Ton)" header
+        usd_col   = None   # Excel column (1-based) for "US$ Mil" header (fallback)
         cat_header_row = None
-        ton_col_cat    = None   # 0-based column index of "Toneladas" category
-        usd_col_cat    = None   # 0-based column index of "US$ Mil" category
 
         for row in ws.iter_rows(max_row=30):
-            vals = [str(c.value or "").strip() for c in row]
-            # Find ALL "Toneladas" columns and ALL "US$ Mil" columns in this row
-            ton_cols = [i for i, v in enumerate(vals) if v.lower().startswith("ton")]
-            usd_cols = [i for i, v in enumerate(vals)
-                        if "us$" in v.lower() or "usd" in v.lower()]
-            if ton_cols and usd_cols:
-                cat_header_row = row[0].row
-                # Use the FIRST occurrence of each category
-                ton_col_cat = ton_cols[0]
-                usd_col_cat = usd_cols[0]
-                break
-
-        if cat_header_row is None:
-            return None, None
-
-        # ── Find period sub-header columns (scan next 5 rows) ──────────────────
-        # Assign each period cell to its nearest category (Toneladas or US$ Mil)
-        col_ton_data = None
-        col_usd_data = None
-        for row in ws.iter_rows(min_row=cat_header_row + 1,
-                                max_row=cat_header_row + 5):
             for cell in row:
-                v = str(cell.value or "").strip()
-                if period_label.lower() in v.lower():
-                    ci = cell.column - 1   # 0-based
-                    dist_ton = abs(ci - ton_col_cat)
-                    dist_usd = abs(ci - usd_col_cat) if usd_col_cat is not None else 9999
-                    # Assign to whichever category header is closer
-                    if dist_ton <= dist_usd:
-                        if col_ton_data is None:
-                            col_ton_data = cell.column   # 1-based
-                    else:
-                        if col_usd_data is None:
-                            col_usd_data = cell.column   # 1-based
-            if col_ton_data is not None and col_usd_data is not None:
-                break
+                v = str(cell.value or "").strip().lower()
+                col = cell.column
+                if v.startswith("ton") and "media" not in v and ton_col is None:
+                    ton_col = col
+                    cat_header_row = cell.row
+                if ("preço" in v or "preco" in v or "us$/ton" in v) and price_col is None:
+                    price_col = col
+                if "us$ mil" in v and "media" not in v and usd_col is None:
+                    usd_col = col
+            # Stop once we found at least Toneladas
+            if ton_col is not None and cat_header_row is not None:
+                # Look for Preço on the same row or within 2 rows
+                if price_col is not None or usd_col is not None:
+                    break
 
-        if col_ton_data is None:
+        if ton_col is None or cat_header_row is None:
             return None, None
 
         # ── Find "Carne bovina fresca" row ──────────────────────────────────────
         carne_row = None
-        for row in ws.iter_rows(min_row=cat_header_row + 3):
+        for row in ws.iter_rows(min_row=cat_header_row + 1):
             for cell in row[:3]:
                 v = str(cell.value or "").lower()
-                if "carne bovina" in v:
+                if "carne bovina" in v and "fresca" in v:
                     carne_row = cell.row
                     break
             if carne_row:
@@ -688,84 +676,59 @@ def fetch_weekly_bulletin(conn):
         if carne_row is None:
             return None, None
 
-        vol = ws.cell(row=carne_row, column=col_ton_data).value
-        usd = ws.cell(row=carne_row, column=col_usd_data).value if col_usd_data else None
+        # ── Extract values ───────────────────────────────────────────────────────
+        vol_tons = ws.cell(row=carne_row, column=ton_col).value
 
-        # ── DEBUG: dump entire carne bovina row + header structure ────────────
-        print(f"  [BULLETIN-DEBUG] cat_header_row={cat_header_row} "
-              f"ton_col_cat={ton_col_cat}(0-based) usd_col_cat={usd_col_cat}(0-based)")
-        print(f"  [BULLETIN-DEBUG] col_ton_data={col_ton_data}(1-based) "
-              f"col_usd_data={col_usd_data}(1-based)")
-        hdr_vals = [(c.column, str(c.value or "")[:20])
-                    for c in ws[cat_header_row] if c.value]
-        print(f"  [BULLETIN-DEBUG] header row: {hdr_vals}")
-        sub_vals = [(c.column, str(c.value or "")[:20])
-                    for c in ws[cat_header_row + 1] if c.value]
-        print(f"  [BULLETIN-DEBUG] sub-header row: {sub_vals}")
-        beef_vals = [(c.column, c.value)
-                     for c in ws[carne_row] if c.value is not None]
-        print(f"  [BULLETIN-DEBUG] carne row {carne_row}: {beef_vals[:12]}")
+        if price_col is not None:
+            # Preferred: read price directly from "Preço (US$/Tonelada)" column
+            price_per_ton = ws.cell(row=carne_row, column=price_col).value
+            price_usd_kg  = (float(price_per_ton) / 1000.0) if price_per_ton else None
+        elif usd_col is not None and vol_tons:
+            # Fallback: compute from US$ Mil / Toneladas
+            usd_mil_val   = ws.cell(row=carne_row, column=usd_col).value
+            price_usd_kg  = (float(usd_mil_val) / float(vol_tons)) if usd_mil_val else None
+        else:
+            price_usd_kg = None
 
-        return vol, usd
+        print(f"  [BULLETIN] Cols → ton={ton_col}, price={price_col}, usd={usd_col}  "
+              f"| beef row={carne_row}")
+        price_cell_val = ws.cell(row=carne_row, column=price_col).value if price_col else None
+        print(f"  [BULLETIN] Extracted: vol={vol_tons!r}  price_per_ton={price_cell_val!r}")
 
-    vol_mtd = usd_mil = None
-    matched_period = None
+        return (float(vol_tons) if vol_tons is not None else None), price_usd_kg
+
+    vol_mtd    = None
+    price_usd  = None
+    used_sheet = None
     for ws in sheets_to_try:
-        for period_label in periods_to_try:
-            v, u = _parse_sheet(ws, period_label)
-            if v is not None:
-                vol_mtd        = float(v)
-                usd_mil        = float(u) if u is not None else None
-                matched_period = period_label
-                # ── DEBUG: always print raw extracted values ──────────────────
-                print(f"  [BULLETIN] Parsed sheet '{ws.title}' period '{period_label}':")
-                print(f"    raw vol_cell={v!r}  raw usd_cell={u!r}")
-                print(f"    → vol_mtd={vol_mtd:,.2f}  usd_mil={usd_mil}")
-                break
-        if vol_mtd is not None:
+        v, p = _parse_sheet(ws)
+        if v is not None:
+            vol_mtd    = v
+            price_usd  = p
+            used_sheet = ws.title
+            print(f"  [BULLETIN] Sheet '{used_sheet}': vol_MTD={vol_mtd:,.0f} t"
+                  + (f", price={price_usd:.4f} USD/kg" if price_usd else " (no price)"))
             break
 
     if vol_mtd is None:
-        # Dump first 15 rows of every sheet for debugging
-        print("  [BULLETIN] Could not parse Excel. Sheet dump:")
+        print("  [BULLETIN] Could not parse Excel. Sheet headers dump:")
         for ws in sheets_to_try[:2]:
             print(f"  Sheet: '{ws.title}'")
-            for i, row in enumerate(ws.iter_rows(max_row=15)):
+            for i, row in enumerate(ws.iter_rows(max_row=10)):
                 vals = [(c.column, str(c.value or "")[:25]) for c in row if c.value]
                 if vals:
                     print(f"    row {i+1}: {vals}")
         return 0
 
-    # ── Compute price: US$ Mil (thousands USD) / Toneladas → USD/kg ──────────
-    # formula: (usd_thousands × 1000) / (tons × 1000 kg) = usd_thousands / tons
-    price_usd_raw = (usd_mil / vol_mtd) if usd_mil and vol_mtd else None
-
-    # ── Sanity check: Brazilian beef export price is 3–20 USD/kg ─────────────
+    # ── Sanity check on price ─────────────────────────────────────────────────
     PRICE_MIN, PRICE_MAX = 3.0, 20.0
-    if price_usd_raw is not None and not (PRICE_MIN <= price_usd_raw <= PRICE_MAX):
-        # Try dividing by 1000 (in case US$ column is raw USD, not thousands)
-        alt = price_usd_raw / 1000.0
-        if PRICE_MIN <= alt <= PRICE_MAX:
-            print(f"  [BULLETIN] Raw price {price_usd_raw:.2f} out of range — "
-                  f"applying /1000 correction → {alt:.4f} USD/kg")
-            price_usd_raw = alt
-        else:
-            print(f"  [BULLETIN] Computed price {price_usd_raw:.2f} USD/kg is out of "
-                  f"range [{PRICE_MIN},{PRICE_MAX}] — discarding price (vol_tons only).")
-            price_usd_raw = None
-
-    price_usd = price_usd_raw
-    print(f"  [BULLETIN] {matched_period}: vol_MTD={vol_mtd:,.0f} t"
-          + (f", price={price_usd:.4f} USD/kg" if price_usd else " (price discarded)"))
+    if price_usd is not None and not (PRICE_MIN <= price_usd <= PRICE_MAX):
+        print(f"  [BULLETIN] Price {price_usd:.4f} out of range [{PRICE_MIN},{PRICE_MAX}] — discarding.")
+        price_usd = None
 
     # ── Step 5: find the right _weekly_raw row to update ─────────────────────
-    # If we matched the previous month, use that month; otherwise current month
-    if matched_period and matched_period != f"{PT_MON[mo]}/{yr}":
-        target_mo = mo - 1 if mo > 1 else 12
-        target_yr = yr if mo > 1 else yr - 1
-    else:
-        target_mo, target_yr = mo, yr
-
+    # Always update the latest row for the current month
+    target_mo, target_yr = mo, yr
     yr_s = str(target_yr)
     mo_s = f"{target_mo:02d}"
 
