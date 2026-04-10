@@ -36,7 +36,6 @@ on:
 jobs:
   update:
     runs-on: ubuntu-latest
-    # Permissão para commitar o .db de volta no repo
     permissions:
       contents: write
 
@@ -45,20 +44,17 @@ jobs:
       - name: Checkout repositório
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1   # só o último commit — mais rápido
+          fetch-depth: 1
 
       # ── 2. Python ────────────────────────────────────────────────────────
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       # ── 3. Dependências ──────────────────────────────────────────────────
       - name: Instalar dependências
-        run: |
-          pip install --upgrade pip
-          pip install requests pandas openpyxl xlrd
+        run: pip install requests pandas openpyxl xlrd
 
       # ── 4. Executar extractor ────────────────────────────────────────────
       - name: Executar extractor_crushing_spread.py
@@ -78,7 +74,6 @@ jobs:
 
           git add "Agri Monitor/crushing_spread/crushing_spread.db"
 
-          # Só commita se o banco realmente mudou
           if git diff --cached --quiet; then
             echo "Nenhuma mudança no banco — nada a commitar."
           else
