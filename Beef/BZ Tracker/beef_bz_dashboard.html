@@ -777,15 +777,16 @@ function renderTable() {
     </tr>`).join('');
 
   } else {
-    // Weekly — no volume available at weekly granularity
+    // Weekly
     head.innerHTML = `<tr>
-      <th style="text-align:left;width:12%;">Start</th>
-      <th style="width:12%;">End</th>
-      <th style="width:13%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg</span></th>
-      <th style="width:11%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD</span></th>
-      <th style="width:17%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
-      <th style="width:17%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
-      <th style="width:18%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">(×)</span></th>
+      <th style="text-align:left;width:11%;">Start</th>
+      <th style="width:11%;">End</th>
+      <th style="width:12%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">USD/kg</span></th>
+      <th style="width:10%;">FX<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/USD</span></th>
+      <th style="width:14%;">Export Price<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
+      <th style="width:14%;">Cattle Cost<br><span style="font-weight:400;font-size:9px;text-transform:none;">BRL/kg</span></th>
+      <th style="width:12%;">Volume<br><span style="font-weight:400;font-size:9px;text-transform:none;">'000 t</span></th>
+      <th style="width:16%;">Spread<br><span style="font-weight:400;font-size:9px;text-transform:none;">(×)</span></th>
     </tr>`;
     body.innerHTML = WEEKLY.slice().reverse().map(r => `<tr>
       <td>${r.start_date ?? '—'}</td>
@@ -794,6 +795,7 @@ function renderTable() {
       <td>${fmt(r.fx, 3)}</td>
       <td>${fmtBRL(r.secex_brl_kg)}</td>
       <td>${fmtBRL(r.cepea_r_kg)}</td>
+      <td>${r.vol_tons != null ? (r.vol_tons / 1000).toFixed(1) : '—'}</td>
       <td>${fmtSpread(r.spread)}</td>
     </tr>`).join('');
   }
@@ -859,13 +861,14 @@ function buildReferenceData() {
         if (diff < minDiff && w.start_date !== curr.start_date) { minDiff = diff; samely = w; }
       });
     }
+    const hasWVol = !!(curr?.vol_tons != null || prev?.vol_tons != null || samely?.vol_tons != null);
     const periods = [
-      { label: samely ? ['LY Wk', shortDate(samely.start_date)]   : ['LY Wk',  '—'], d: samely, hasVol: false },
-      { label: prev   ? ['Last Wk', shortDate(prev.start_date)]   : ['Last Wk','—'], d: prev,   hasVol: false },
-      { label: curr   ? ['This Wk', shortDate(curr.start_date)]   : ['This Wk','—'], d: curr,   hasVol: false },
+      { label: samely ? ['LY Wk', shortDate(samely.start_date)]   : ['LY Wk',  '—'], d: samely, hasVol: hasWVol },
+      { label: prev   ? ['Last Wk', shortDate(prev.start_date)]   : ['Last Wk','—'], d: prev,   hasVol: hasWVol },
+      { label: curr   ? ['This Wk', shortDate(curr.start_date)]   : ['This Wk','—'], d: curr,   hasVol: hasWVol },
     ];
     const tag = curr ? `${shortDate(curr.start_date)}: this / last / same LY` : 'Weekly';
-    _setREF(periods, tag, false);
+    _setREF(periods, tag, hasWVol);
   }
 }
 
