@@ -42,15 +42,22 @@ SCHEMA — table: weekly
   updated_at   TEXT               ISO timestamp
 """
 
-import sqlite3, os, sys, time
+import sqlite3, os, sys, time, warnings
 from datetime import datetime, date
 from calendar import monthrange
 from pathlib import Path
 
 try:
     import requests
+    # Suppress InsecureRequestWarning for Brazilian government domains
+    # (balanca.economia.gov.br uses ICP-Brasil cert not trusted by default on Linux)
+    from urllib3.exceptions import InsecureRequestWarning
+    warnings.filterwarnings("ignore", category=InsecureRequestWarning)
 except ImportError:
     sys.exit("Missing: pip install requests")
+
+# Domains that require SSL verification disabled (ICP-Brasil / SERPRO chain)
+_NO_VERIFY_HOSTS = ("balanca.economia.gov.br", "olinda.bcb.gov.br", "api.bcb.gov.br")
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 DB_PATH    = Path(__file__).parent / "beef_bz.db"
@@ -222,14 +229,17 @@ def init_db(conn):
 # ══════════════════════════════════════════════════════════════════════════════
 def get(url, **kwargs):
     hdrs = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
+    # Brazilian government servers use ICP-Brasil certs not trusted on Linux by default
+    ssl_verify = not any(h in url for h in _NO_VERIFY_HOSTS)
     for attempt in range(RETRY):
         try:
-            r = requests.get(url, headers=hdrs, timeout=TIMEOUT, **kwargs)
+            r = requests.get(url, headers=hdrs, timeout=TIMEOUT,
+                             verify=ssl_verify, **kwargs)
             r.raise_for_status()
             return r
         except Exception as e:
             if attempt == RETRY - 1:
-                print(f"  ✗ {url[:60]}…: {e}")
+                print(f"  ✗ {url[:70]}…: {e}")
                 return None
             time.sleep(2 ** attempt)
     return None
