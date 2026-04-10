@@ -599,10 +599,11 @@ def fetch_weekly_bulletin(conn):
     from datetime import date as _date, timedelta as _td
     PT_MON = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
               7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"}
+    PT_MON_REV = {v.lower(): k for k, v in PT_MON.items()}
     today  = _date.today()
+    # yr/mo will be overridden once we parse the bulletin period from the Excel
     yr     = today.year
     mo     = today.month
-    # ISO week number (SECEX files often use 2-digit week)
     wk_num = today.isocalendar()[1]
 
     # ── Step 1: fetch HTML and search broadly for xlsx links ──────────────────
@@ -740,12 +741,31 @@ def fetch_weekly_bulletin(conn):
 
     def _parse_sheet(ws):
         """
-        Return (vol_tons_mtd, price_usd_kg) for the current period, or (None, None).
+        Return (vol_tons_mtd, price_usd_kg, bull_year, bull_month).
+
+        bull_year / bull_month are the period reported in the bulletin (e.g.
+        March 2026 when the file title says "Até 5ª Semana de Março/2026").
+        They are extracted from any cell in the first 10 rows that contains a
+        Portuguese month abbreviation followed by a 4-digit year.
 
         Strategy: locate the category header row by scanning for "Toneladas"
         and "Preço" headers. The current-period data is in the same column as
         the category header (first column of each metric pair).
         """
+        # ── Extract bulletin period from header rows ──────────────────────────
+        bull_year = bull_month = None
+        for hrow in ws.iter_rows(max_row=10):
+            for cell in hrow:
+                v = str(cell.value or "").strip()
+                m = _re.search(
+                    r'\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*/(\d{4})\b',
+                    v, _re.IGNORECASE)
+                if m:
+                    bull_month = PT_MON_REV[m.group(1).lower()[:3]]
+                    bull_year  = int(m.group(2))
+                    break
+            if bull_year:
+                break
         ton_col   = None   # Excel column (1-based) for "Toneladas" header
         price_col = None   # Excel column (1-based) for "Preço (US$/Ton)" header
         usd_col   = None   # Excel column (1-based) for "US$ Mil" header (fallback)
@@ -803,17 +823,22 @@ def fetch_weekly_bulletin(conn):
               f"| beef row={carne_row}")
         price_cell_val = ws.cell(row=carne_row, column=price_col).value if price_col else None
         print(f"  [BULLETIN] Extracted: vol={vol_tons!r}  price_per_ton={price_cell_val!r}")
+        print(f"  [BULLETIN] Period from header: {bull_month}/{bull_year}")
 
-        return (float(vol_tons) if vol_tons is not None else None), price_usd_kg
+        return (float(vol_tons) if vol_tons is not None else None), price_usd_kg, bull_year, bull_month
 
     vol_mtd    = None
     price_usd  = None
     used_sheet = None
+    bull_yr    = None
+    bull_mo    = None
     for ws in sheets_to_try:
-        v, p = _parse_sheet(ws)
+        v, p, by, bm = _parse_sheet(ws)
         if v is not None:
             vol_mtd    = v
             price_usd  = p
+            bull_yr    = by
+            bull_mo    = bm
             used_sheet = ws.title
             print(f"  [BULLETIN] Sheet '{used_sheet}': vol_MTD={vol_mtd:,.0f} t"
                   + (f", price={price_usd:.4f} USD/kg" if price_usd else " (no price)"))
@@ -836,10 +861,14 @@ def fetch_weekly_bulletin(conn):
         price_usd = None
 
     # ── Step 5: find the right _weekly_raw row to update ─────────────────────
-    # Always update the latest row for the current month
-    target_mo, target_yr = mo, yr
-    yr_s = str(target_yr)
+    # Use the bulletin's own reported period (extracted from Excel header), NOT
+    # today's date.  This prevents creating phantom rows like "Apr 6" when the
+    # bulletin is still reporting March data.
+    target_yr = bull_yr if bull_yr else yr
+    target_mo = bull_mo if bull_mo else mo
+    yr_s = f"{target_yr:04d}"
     mo_s = f"{target_mo:02d}"
+    print(f"  [BULLETIN] Bulletin period resolved to: {yr_s}-{mo_s}")
 
     existing = conn.execute(
         "SELECT start_date, end_date, price_usd_kg FROM _weekly_raw"
@@ -848,13 +877,20 @@ def fetch_weekly_bulletin(conn):
     ).fetchone()
 
     if existing is None:
-        # No row for this month yet — create one for the current week
-        wk_start = today - _td(days=today.weekday())   # Monday
-        s_date   = str(wk_start)
-        e_date   = str(today)
-        existing_price = None
+        # Bulletin month has no seed row yet — only create a new row if the
+        # bulletin is for the CURRENT calendar month (not a past month).
+        if target_yr == today.year and target_mo == today.month:
+            wk_start = today - _td(days=today.weekday())   # Monday
+            s_date   = str(wk_start)
+            e_date   = str(today)
+            existing_price = None
+            print(f"  [BULLETIN] No existing row — creating new row {s_date} → {e_date}")
+        else:
+            print(f"  [BULLETIN] No row for {yr_s}-{mo_s} and it is a past month — skipping.")
+            return 0
     else:
         s_date, e_date, existing_price = existing
+        print(f"  [BULLETIN] Updating existing row: {s_date} → {e_date}")
 
     # Validate existing_price too — don't preserve a previously bad value
     if existing_price is not None and not (PRICE_MIN <= existing_price <= PRICE_MAX):
