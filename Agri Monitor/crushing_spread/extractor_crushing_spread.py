@@ -340,11 +340,23 @@ def run_soja(conn):
     if not all([uf_col, prod_col, date_col, preco_col]):
         raise RuntimeError(f"[Soja] Colunas nao encontradas. Disponiveis: {list(df.columns)}")
 
-    df = df[df[prod_col].str.upper().str.contains(CONAB_PRODUTO, na=False)]
-    df = df[df[uf_col].str.upper().isin(CONAB_UFS)]
-    if nivel_col:
-        df = df[df[nivel_col].str.upper().str.contains(CONAB_NIVEL, na=False)]
-    log.info(f"[Soja] Apos filtros: {len(df)} linhas")
+    # Filtra produto SOJA (nome exato: 'SOJA' com espacos)
+    df_soja = df[df[prod_col].str.strip().str.upper() == CONAB_PRODUTO].copy()
+    log.info(f"[Soja] Linhas com produto='SOJA': {len(df_soja)}")
+
+    # Mostra UFs e niveis disponiveis para diagnostico
+    if not df_soja.empty:
+        ufs_disp   = sorted(df_soja[uf_col].dropna().str.strip().str.upper().unique())
+        log.info(f"[Soja] UFs disponiveis: {ufs_disp}")
+        if nivel_col:
+            niveis_disp = df_soja[nivel_col].dropna().str.strip().str.upper().unique()
+            log.info(f"[Soja] Niveis disponiveis: {list(niveis_disp[:10])}")
+
+    df = df_soja[df_soja[uf_col].str.strip().str.upper().isin(CONAB_UFS)]
+    log.info(f"[Soja] Apos filtro UF (RS/MT): {len(df)} linhas")
+    if nivel_col and not df.empty:
+        df = df[df[nivel_col].str.strip().str.upper().str.contains(CONAB_NIVEL, na=False)]
+    log.info(f"[Soja] Apos filtro nivel PRODUTOR: {len(df)} linhas")
 
     if df.empty:
         log.warning("[Soja] Nenhuma linha — verifique filtros acima.")
@@ -708,12 +720,20 @@ def _parse_anp_biodiesel(content):
                 if val_str in ("***", "", "nan", "NaN"):
                     continue
                 preco = safe_float(val_str)
-                if preco and preco > 100:
+                if preco and preco > 0:
+                    # Planilha ANP usa R$/litro (~6-8 R$/l para biodiesel)
+                    # Precisamos de R$/m³ (~6000-8000 R$/m³) → multiplica por 1000
+                    if preco < 50:        # R$/litro
+                        preco_m3 = round(preco * 1000, 2)
+                    elif preco < 500:     # R$/100l (improvavel, mas cobre)
+                        preco_m3 = round(preco * 10, 2)
+                    else:                 # ja em R$/m³
+                        preco_m3 = round(preco, 2)
                     all_rows.append({
                         "data_inicial": di,
                         "data_final":   df_,
                         "regiao":       regiao_nome,
-                        "preco":        preco,
+                        "preco":        preco_m3,
                     })
                     n_parsed += 1
 
