@@ -293,69 +293,81 @@ def download(url, label, fatal=True, extra_headers=None):
 
 def run_soja(conn):
     log.info("=" * 60)
-    log.info("Soja — API CONAB preços ao produtor (RS e MT)")
+    log.info("Soja — CONAB PrecosSemanalProdutoUF.txt (RS e MT)")
     log.info("=" * 60)
 
     if not is_stale(conn, "soja_conab", SOJA_STALE_DAYS):
         log.info("[Soja] Dado fresco — pulando.")
         return {"skipped": True}
 
-    total_inserted = 0
-    for cfg in CONAB_SOJA_CONFIG:
-        uf      = cfg["uf"]
-        produto = cfg["produto"]
-        nivel   = cfg["nivel"]
+    ld = last_date(conn, "soja_conab")
+    content = download(CONAB_PRECO_URL, "conab-soja", fatal=True)
 
-        ld = last_date(conn, "soja_conab", where=f"uf='{uf}'")
-        log.info(f"[Soja-{uf}] Último dado no DB: {ld or 'nenhum'}")
-
+    for enc in ("latin-1", "utf-8-sig", "utf-8"):
         try:
-            r = requests.get(
-                f"{CONAB_API}/produto/serie-historica",
-                params={"produto": produto, "nivel": nivel, "uf": uf},
-                timeout=60,
-                verify=False,
-            )
-            r.raise_for_status()
-            data = r.json()
-        except Exception as e:
-            log.error(f"[Soja-{uf}] API CONAB falhou: {e}")
+            text = content.decode(enc)
+            break
+        except UnicodeDecodeError:
             continue
 
-        pontos = data.get("data", [])
-        log.info(f"[Soja-{uf}] {len(pontos)} pontos retornados pela API")
+    first_line = text.splitlines()[0] if text.splitlines() else ""
+    sep = "\t" if "\t" in first_line else ";"
+    df = pd.read_csv(io.StringIO(text), sep=sep, on_bad_lines="skip", dtype=str)
+    df.columns = [c.strip().upper() for c in df.columns]
+    log.info(f"[Soja] Colunas: {list(df.columns)} | Linhas: {len(df)}")
 
-        inserted = 0
-        for pt in pontos:
-            data_ref = str(pt.get("data") or "")[:10]
-            valor_kg = safe_float(pt.get("valor"))
-            if not data_ref or not valor_kg or valor_kg <= 0:
-                continue
-            if ld and data_ref <= ld:
-                continue
+    uf_col    = next((c for c in df.columns if c in ("UF", "SIGLA_UF", "ESTADO")), None)
+    prod_col  = next((c for c in df.columns if "PRODUTO" in c), None)
+    nivel_col = next((c for c in df.columns if "NIVEL" in c or "COMERCI" in c), None)
+    date_col  = next((c for c in df.columns if "DATA" in c), None)
+    preco_col = next((c for c in df.columns
+                      if "PRECO" in c or "VALOR" in c), None)
+    log.info(f"[Soja] Mapeamento: uf={uf_col}, prod={prod_col}, nivel={nivel_col}, "
+             f"data={date_col}, preco={preco_col}")
 
-            conn.execute(
-                "INSERT OR IGNORE INTO soja_conab "
-                "(data_referencia, uf, produto_conab, nivel, "
-                " preco_brl_kg, preco_brl_sc60, updated_at) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (data_ref, uf, produto, nivel,
-                 valor_kg, round(valor_kg * 60, 4), NOW_STR),
-            )
-            if conn.execute("SELECT changes()").fetchone()[0]:
-                inserted += 1
+    if prod_col:
+        soja_prods = [p for p in df[prod_col].dropna().unique() if "SOJA" in str(p).upper()]
+        log.info(f"[Soja] Produtos com SOJA: {soja_prods[:10]}")
 
-        conn.commit()
-        log.info(f"[Soja-{uf}] {inserted} linhas inseridas.")
-        total_inserted += inserted
-        time.sleep(0.5)
+    if not all([uf_col, prod_col, date_col, preco_col]):
+        raise RuntimeError(f"[Soja] Colunas nao encontradas. Disponiveis: {list(df.columns)}")
 
-    return {"inserido": total_inserted}
+    df = df[df[prod_col].str.upper().str.contains(CONAB_PRODUTO, na=False)]
+    df = df[df[uf_col].str.upper().isin(CONAB_UFS)]
+    if nivel_col:
+        df = df[df[nivel_col].str.upper().str.contains(CONAB_NIVEL, na=False)]
+    log.info(f"[Soja] Apos filtros: {len(df)} linhas")
 
+    if df.empty:
+        log.warning("[Soja] Nenhuma linha — verifique filtros acima.")
+        return {"inserido": 0}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SEÇÃO 2 — PTAX BCB (incremental — mesmo padrão dos outros extractors)
-# ─────────────────────────────────────────────────────────────────────────────
+    inserted = 0
+    for _, row in df.iterrows():
+        raw_date = str(row.get(date_col, "")).split("-")[0].strip()
+        dr = parse_date_br(raw_date)
+        if not dr or (ld and dr <= ld):
+            continue
+        uf       = str(row.get(uf_col, "")).strip().upper()
+        prod     = str(row.get(prod_col, "")).strip()
+        nivel    = str(row.get(nivel_col, "")).strip() if nivel_col else CONAB_NIVEL
+        preco_kg = safe_float(row.get(preco_col))
+        if not preco_kg or preco_kg <= 0:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO soja_conab "
+            "(data_referencia, uf, produto_conab, nivel, "
+            " preco_brl_kg, preco_brl_sc60, updated_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (dr, uf, prod, nivel, preco_kg, round(preco_kg * 60, 4), NOW_STR),
+        )
+        if conn.execute("SELECT changes()").fetchone()[0]:
+            inserted += 1
+
+    conn.commit()
+    log.info(f"[Soja] {inserted} linhas inseridas.")
+    return {"inserido": inserted}
+
 
 def run_ptax(conn):
     log.info("=" * 60)
@@ -467,17 +479,35 @@ def run_farelo(conn):
                 dtype={"CO_NCM": int, "CO_URF": str},
             )
 
-            # Filtra NCM de farelo de soja
+            # Diagnostico: mostra os NCMs presentes no CSV
+            ncms_disponiveis = df["CO_NCM"].dropna().unique()
+            tem_farelo = FARELO_NCM in ncms_disponiveis
+            log.info(f"[Farelo] {ano}: {len(ncms_disponiveis)} NCMs no CSV, farelo={tem_farelo}")
+            if not tem_farelo:
+                log.info(f"[Farelo] {ano}: NCMs encontrados (amostra): {list(ncms_disponiveis[:5])}")
+
+            # Filtra NCM de farelo de soja (CO_NCM ja foi lido como int)
             df = df[df["CO_NCM"] == FARELO_NCM].copy()
             if df.empty:
                 log.info(f"[Farelo] {ano}: NCM {FARELO_NCM} nao encontrado")
                 continue
 
-            # Filtra pelos portos de interesse e agrega por mes/porto
+            # Log das URFs unicas para diagnostico
+            if "CO_URF" in df.columns:
+                urfs_unicas = df["CO_URF"].dropna().unique()[:10]
+                log.info(f"[Farelo] {ano}: URFs encontradas p/ farelo: {list(urfs_unicas)}")
+
+            # Filtra pelos portos — tenta tanto int quanto string (com e sem zero)
             for porto, urf_code in URF_CONFIG.items():
-                df_porto = df[df["CO_URF"] == urf_code].copy()
+                urf_int = int(urf_code)  # 809200
+                if "CO_URF" in df.columns:
+                    # Converte coluna para int para comparacao robusta
+                    df["CO_URF_INT"] = pd.to_numeric(df["CO_URF"], errors="coerce")
+                    df_porto = df[df["CO_URF_INT"] == urf_int].copy()
+                else:
+                    df_porto = pd.DataFrame()
                 if df_porto.empty:
-                    log.info(f"[Farelo] {ano}/{porto}: sem dados")
+                    log.info(f"[Farelo] {ano}/{porto} (URF={urf_int}): sem dados")
                     continue
 
                 df_agg = (
@@ -562,13 +592,18 @@ def run_biodiesel(conn):
 
 def _parse_anp_biodiesel(content):
     """
-    Parseia a planilha .xls da ANP.
-    O arquivo tem cabecalho institucional nas primeiras linhas.
-    Varre todas as linhas ate encontrar o cabecalho real de dados.
+    Layout confirmado nos logs:
+      linha 7: ['Produto', 'Período', 'Região', 'Brasil']
+      linha 8: ['(A partir de 2013)', 'Norte', 'Nordeste', 'Centro-Oeste', 'Sul', 'Sudeste']
+      linha 9+: [produto, data_ini, data_fim, norte, nordeste, centro-oeste, sul, sudeste, brasil]
+
+    Estrategia: le sem header, identifica linha 8 (regioes) pela presenca
+    de 'Norte'+'Nordeste'+'Sul', anota indices de SUL e CENTRO-OESTE,
+    filtra as linhas de dados por produto = BIODIESEL B100.
     """
     try:
         xl = pd.ExcelFile(io.BytesIO(content), engine="xlrd")
-        log.info(f"[Biodiesel] Abas disponiveis: {xl.sheet_names}")
+        log.info(f"[Biodiesel] Abas: {xl.sheet_names}")
     except Exception as e:
         raise RuntimeError(f"[Biodiesel] Nao foi possivel abrir .xls: {e}")
 
@@ -580,103 +615,94 @@ def _parse_anp_biodiesel(content):
         except Exception:
             continue
 
-        # Loga as primeiras 15 linhas para diagnostico
-        log.info(f"[Biodiesel] Aba '{sheet}' — primeiras 15 linhas:")
-        for i, row in raw.head(15).iterrows():
-            vals = [str(v) for v in row.values if pd.notna(v) and str(v).strip()]
-            if vals:
-                log.info(f"  linha {i}: {vals}")
-
-        # Varre TODAS as linhas buscando o cabecalho real
-        header_row = None
+        # Procura a linha de regioes (contem Norte, Nordeste, Sul)
+        regiao_row_idx = None
         for i, row in raw.iterrows():
-            vals_upper = [str(v).upper() for v in row.values if pd.notna(v)]
-            row_str    = " ".join(vals_upper)
-            # Cabecalho real tem combinacoes de: DATA/SEMANA + REGIAO/PRODUTO + PRECO/VALOR
-            if (
-                ("INICIAL" in row_str and "FINAL" in row_str)
-                or ("SEMANA" in row_str and ("PREC" in row_str or "REGI" in row_str))
-                or ("DATA" in row_str and "REGI" in row_str and "PREC" in row_str)
-                or ("PRODUTO" in row_str and "REGI" in row_str and "PREC" in row_str)
-                or ("B100" in row_str and "REGI" in row_str)
-            ):
-                header_row = i
-                log.info(f"[Biodiesel] Cabecalho encontrado na linha {i}: {vals_upper}")
+            vals = [str(v).strip() for v in row.values if pd.notna(v) and str(v).strip()]
+            vals_up = [v.upper() for v in vals]
+            if "NORTE" in vals_up and "NORDESTE" in vals_up and "SUL" in vals_up:
+                regiao_row_idx = i
+                log.info(f"[Biodiesel] Linha de regioes: {i} → {vals}")
                 break
 
-        if header_row is None:
-            log.warning(f"[Biodiesel] Aba '{sheet}': cabecalho nao encontrado — pulando")
+        if regiao_row_idx is None:
+            log.warning(f"[Biodiesel] Aba '{sheet}': linha de regioes nao encontrada")
             continue
 
-        df = xl.parse(sheet, header=header_row)
-        df.columns = [str(c).strip().upper() for c in df.columns]
-        df = df.dropna(how="all")
-        log.info(f"[Biodiesel] Aba '{sheet}': colunas = {list(df.columns)}")
+        # Pega a lista de valores da linha de regioes para mapear indices de coluna
+        regiao_vals = [str(v).strip() if pd.notna(v) else "" for v in raw.iloc[regiao_row_idx].tolist()]
+        log.info(f"[Biodiesel] Valores das colunas: {regiao_vals}")
 
-        if not df.empty:
-            log.info(f"[Biodiesel] Primeira linha de dados: {dict(df.iloc[0])}")
+        # Encontra indices de SUL e CENTRO-OESTE
+        idx_sul = next((j for j, v in enumerate(regiao_vals)
+                        if "SUL" in v.upper() and "SUDE" not in v.upper()), None)
+        idx_co  = next((j for j, v in enumerate(regiao_vals)
+                        if "CENTRO" in v.upper()), None)
+        log.info(f"[Biodiesel] idx_sul={idx_sul}, idx_co={idx_co}")
 
-        # Identifica colunas por nome
-        di_col    = next((c for c in df.columns if "INICIAL" in c), None)
-        df_col    = next((c for c in df.columns if "FINAL"   in c), None)
-        reg_col   = next((c for c in df.columns if "REGI"    in c), None)
-        prod_col  = next((c for c in df.columns if "PRODUTO" in c), None)
-        preco_col = next(
-            (c for c in df.columns
-             if any(k in c for k in ("PRECO", "VALOR", "M3", "PONDERADO"))),
-            None
-        )
-
-        log.info(
-            f"[Biodiesel] Mapeamento: di={di_col}, df={df_col}, "
-            f"reg={reg_col}, prod={prod_col}, preco={preco_col}"
-        )
-
-        if not all([di_col, df_col, preco_col]):
-            log.warning(f"[Biodiesel] Aba '{sheet}': colunas insuficientes — pulando")
+        if idx_sul is None and idx_co is None:
+            log.warning(f"[Biodiesel] SUL e CENTRO-OESTE nao mapeados")
             continue
 
-        for _, row in df.iterrows():
-            # Filtra por produto se a coluna existir
-            if prod_col:
-                prod_val = str(row.get(prod_col, "")).upper()
-                if "BIODIESEL" not in prod_val and "B100" not in prod_val:
+        # Itera as linhas de dados (abaixo da linha de regioes)
+        for i in range(regiao_row_idx + 1, len(raw)):
+            row_vals = raw.iloc[i].tolist()
+
+            # Coluna 0 = produto
+            produto = str(row_vals[0]).strip() if pd.notna(row_vals[0]) else ""
+            if not produto or "BIODIESEL" not in produto.upper():
+                continue
+
+            # Colunas 1 e 2 = data_ini e data_fim (objetos datetime do pandas)
+            raw_di = row_vals[1] if len(row_vals) > 1 else None
+            raw_df = row_vals[2] if len(row_vals) > 2 else None
+
+            di = df_ = None
+            for rv, name in [(raw_di, "di"), (raw_df, "df_")]:
+                if rv is None or (isinstance(rv, float) and str(rv) == "nan"):
                     continue
+                try:
+                    if hasattr(rv, "strftime"):
+                        parsed = rv.strftime("%Y-%m-%d")
+                    else:
+                        parsed = parse_date_br(rv)
+                    if name == "di":
+                        di = parsed
+                    else:
+                        df_ = parsed
+                except Exception:
+                    pass
 
-            di    = parse_date_br(row.get(di_col))
-            df_   = parse_date_br(row.get(df_col))
-            preco = safe_float(row.get(preco_col))
+            if not di or not df_:
+                continue
 
-            # Regiao: da coluna ou do nome da aba
-            reg = ""
-            if reg_col:
-                reg = str(row.get(reg_col, "")).strip().upper()
-            if not reg:
-                reg = sheet.strip().upper()
-            reg = reg.replace("CENTRO OESTE", "CENTRO-OESTE")
-
-            if di and df_ and reg and preco and preco > 0:
-                all_rows.append({
-                    "data_inicial": di, "data_final": df_,
-                    "regiao": reg, "preco": preco,
-                })
+            # Extrai precos de SUL e CENTRO-OESTE
+            for idx, regiao_nome in [(idx_sul, "SUL"), (idx_co, "CENTRO-OESTE")]:
+                if idx is None or idx >= len(row_vals):
+                    continue
+                val = row_vals[idx]
+                if not pd.notna(val) or str(val).strip() in ("***", "", "nan"):
+                    continue
+                preco = safe_float(val)
+                if preco and preco > 100:  # sanity check: R$/m3 deve ser > 100
+                    all_rows.append({
+                        "data_inicial": di,
+                        "data_final":   df_,
+                        "regiao":       regiao_nome,
+                        "preco":        preco,
+                    })
 
     result = pd.DataFrame(all_rows)
     if not result.empty:
         result = result.drop_duplicates(subset=["data_inicial", "regiao"])
         result = result.sort_values("data_inicial")
-        log.info(
-            f"[Biodiesel] {len(result)} registros | "
-            f"{result['data_inicial'].min()} → {result['data_inicial'].max()}"
-        )
+        log.info(f"[Biodiesel] {len(result)} registros | "
+                 f"{result['data_inicial'].min()} → {result['data_inicial'].max()}")
+        log.info(f"[Biodiesel] Regioes: {result['regiao'].value_counts().to_dict()}")
     else:
         log.warning("[Biodiesel] Nenhum registro parseado.")
     return result
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SEÇÃO 5 — Spread calculado
-# ─────────────────────────────────────────────────────────────────────────────
 
 def run_spread(conn):
     log.info("=" * 60)
