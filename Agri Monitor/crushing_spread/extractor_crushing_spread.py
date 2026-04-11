@@ -301,11 +301,16 @@ def download(url, label, fatal=True, extra_headers=None):
 
 def run_soja(conn):
     """
-    Precos de soja ao produtor — CONAB PrecosSemanalUF.txt
-    Produto exato: 'SOJA' (com espacos, strip feito antes do match)
-    Nivel: 'PREÇO RECEBIDO P/ PR' (= preco recebido pelo produtor)
-    UFs: RS e MT
-    Preco em R$/kg → converte para R$/sc60 (×60)
+    Precos de soja ao produtor — CONAB PrecosSemanalUF.txt (update semanal)
+    Fonte: portaldeinformacoes.conab.gov.br/downloads/arquivos/PrecosSemanalUF.txt
+    Produto: 'SOJA' (match exato apos strip — exclui farelo, semente, oleo)
+    Nivel: 'PREÇO RECEBIDO P/ PR' (preco recebido pelo produtor, campo DSC_NIVEL_COMERCIALIZACAO)
+    UFs: RS e MT | Preco em R$/kg → converte para R$/sc60 (×60)
+
+    Historico anterior a 2025 vem do portal Siagro (precos mensais):
+    portaldeinformacoes.conab.gov.br → Mercado → Preços Agropecuários
+    Produto: 'SOJA EM GRÃOS   (60 kg)' | Nivel: PRODUTOR | UF: MT, RS
+    e foi carregado manualmente no DB via XLSX exportado do portal.
     """
     log.info("=" * 60)
     log.info("Soja — CONAB PrecosSemanalUF.txt (RS e MT)")
