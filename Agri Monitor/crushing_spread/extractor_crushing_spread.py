@@ -359,12 +359,35 @@ def run_soja(conn):
         log.warning("[Soja] Nenhuma linha apos filtros.")
         return {"inserido": 0}
 
+    # Log das primeiras linhas para diagnostico
+    amostra = df.head(3)
+    for _, row in amostra.iterrows():
+        log.info(
+            f"[Soja] Amostra: uf={row.get(uf_col,'?')} | "
+            f"data_raw='{row.get(date_col,'?')}' | "
+            f"preco={row.get(preco_col,'?')}"
+        )
+    log.info(f"[Soja] ld (ultimo no banco) = {ld}")
+
     inserted = 0
+    n_date_fail = 0
+    n_ld_skip   = 0
     for _, row in df.iterrows():
-        # DATA_INICIAL_FINAL_SEMANA pode ser "DD/MM/YYYY-DD/MM/YYYY" — pega a inicial
-        raw_date = str(row.get(date_col, "")).split("-")[0].strip()
+        # DATA_INICIAL_FINAL_SEMANA: "DD/MM/YYYY-DD/MM/YYYY" — pega a inicial
+        raw_field = str(row.get(date_col, "")).strip()
+        # Separa pela ultima ocorrencia de "-" entre duas datas BR
+        # Ex: "18/03/2026-24/03/2026" → split pelo "-" que fica entre as datas
+        # O campo pode ter formato alternativo sem tracinho — tenta o campo inteiro
+        parts = raw_field.split("-")
+        raw_date = parts[0].strip() if parts else raw_field
         dr = parse_date_br(raw_date)
-        if not dr or (ld and dr <= ld):
+        if not dr:
+            n_date_fail += 1
+            if n_date_fail <= 2:
+                log.warning(f"[Soja] Parse falhou: raw_field='{raw_field}' → raw_date='{raw_date}'")
+            continue
+        if ld and dr <= ld:
+            n_ld_skip += 1
             continue
         uf       = str(row.get(uf_col, "")).strip().upper()
         nivel    = str(row.get(nivel_col, "")).strip() if nivel_col else "PREÇO RECEBIDO P/ PR"
@@ -382,7 +405,8 @@ def run_soja(conn):
             inserted += 1
 
     conn.commit()
-    log.info(f"[Soja] {inserted} linhas inseridas.")
+    log.info(f"[Soja] {inserted} linhas inseridas | "
+             f"date_fail={n_date_fail} | ld_skip={n_ld_skip}.")
     return {"inserido": inserted}
 
 
