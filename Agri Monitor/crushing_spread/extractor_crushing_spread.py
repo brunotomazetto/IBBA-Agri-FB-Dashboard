@@ -373,13 +373,11 @@ def run_soja(conn):
     n_date_fail = 0
     n_ld_skip   = 0
     for _, row in df.iterrows():
-        # DATA_INICIAL_FINAL_SEMANA: "DD/MM/YYYY-DD/MM/YYYY" — pega a inicial
+        # DATA_INICIAL_FINAL_SEMANA: "DD-MM-YYYY - DD-MM-YYYY" — pega a inicial
         raw_field = str(row.get(date_col, "")).strip()
-        # Separa pela ultima ocorrencia de "-" entre duas datas BR
-        # Ex: "18/03/2026-24/03/2026" → split pelo "-" que fica entre as datas
-        # O campo pode ter formato alternativo sem tracinho — tenta o campo inteiro
-        parts = raw_field.split("-")
-        raw_date = parts[0].strip() if parts else raw_field
+        raw_date  = raw_field.split(" - ")[0].strip()
+        # Converte DD-MM-YYYY para parse_date_br (que aceita DD/MM/YYYY)
+        raw_date  = raw_date.replace("-", "/")
         dr = parse_date_br(raw_date)
         if not dr:
             n_date_fail += 1
