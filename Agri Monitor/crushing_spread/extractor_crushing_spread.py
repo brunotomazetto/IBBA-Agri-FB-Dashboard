@@ -77,15 +77,23 @@ CONAB_SOJA_CONFIG = [
     {"uf": "MT", "produto": "SOJA EM GRÃOS   (60 kg)", "nivel": "PRODUTOR"},
 ]
 
+# ── CONAB — TXT precos semanais por produto/UF ───────────────────────────────
+CONAB_PRECO_URL = (
+    "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/PrecosSemanalProdutoUF.txt"
+)
+CONAB_UFS     = {"RS", "MT"}
+CONAB_PRODUTO = "SOJA"
+CONAB_NIVEL   = "PRODUTOR"
+
 # ── SECEX — CSV bulk por ano (mesmo padrão do extractor_secex.py) ────────────
 SECEX_BASE_URL = "https://balanca.economia.gov.br/balanca/bd/comexstat-bd/ncm/EXP_{ano}.csv"
 FARELO_NCM     = 23040090   # Farelo e resíduos da extração de óleo de soja (int)
 
-# Códigos URF dos portos de interesse (coluna CO_URF no CSV)
-# Santos = 0809200 | Rio Grande = 0912600
-URF_CONFIG = {
-    "Santos":     "0809200",
-    "Rio Grande": "0912600",
+# Filtro por UF de embarque (SG_UF_NCM) — mais robusto que filtrar por URF
+# Santos → SP | Rio Grande → RS
+UF_PORTO_CONFIG = {
+    "Santos":     "SP",
+    "Rio Grande": "RS",
 }
 
 # ── BCB PTAX ─────────────────────────────────────────────────────────────────
@@ -479,35 +487,30 @@ def run_farelo(conn):
                 dtype={"CO_NCM": int, "CO_URF": str},
             )
 
-            # Diagnostico: mostra os NCMs presentes no CSV
-            ncms_disponiveis = df["CO_NCM"].dropna().unique()
-            tem_farelo = FARELO_NCM in ncms_disponiveis
-            log.info(f"[Farelo] {ano}: {len(ncms_disponiveis)} NCMs no CSV, farelo={tem_farelo}")
-            if not tem_farelo:
-                log.info(f"[Farelo] {ano}: NCMs encontrados (amostra): {list(ncms_disponiveis[:5])}")
-
-            # Filtra NCM de farelo de soja (CO_NCM ja foi lido como int)
-            df = df[df["CO_NCM"] == FARELO_NCM].copy()
-            if df.empty:
+            # Filtra NCM de farelo de soja (CO_NCM lido como int)
+            df_farelo = df[df["CO_NCM"] == FARELO_NCM].copy()
+            if df_farelo.empty:
                 log.info(f"[Farelo] {ano}: NCM {FARELO_NCM} nao encontrado")
                 continue
 
-            # Log das URFs unicas para diagnostico
-            if "CO_URF" in df.columns:
-                urfs_unicas = df["CO_URF"].dropna().unique()[:10]
-                log.info(f"[Farelo] {ano}: URFs encontradas p/ farelo: {list(urfs_unicas)}")
+            log.info(f"[Farelo] {ano}: {len(df_farelo)} linhas de farelo encontradas")
+            # Mostra UFs de embarque disponiveis para diagnostico
+            if "SG_UF_NCM" in df_farelo.columns:
+                ufs = df_farelo["SG_UF_NCM"].dropna().unique()
+                log.info(f"[Farelo] {ano}: UFs de embarque: {sorted(ufs)}")
 
-            # Filtra pelos portos — tenta tanto int quanto string (com e sem zero)
-            for porto, urf_code in URF_CONFIG.items():
-                urf_int = int(urf_code)  # 809200
-                if "CO_URF" in df.columns:
-                    # Converte coluna para int para comparacao robusta
-                    df["CO_URF_INT"] = pd.to_numeric(df["CO_URF"], errors="coerce")
-                    df_porto = df[df["CO_URF_INT"] == urf_int].copy()
-                else:
-                    df_porto = pd.DataFrame()
+            # Filtra por UF de embarque (SG_UF_NCM) — mais robusto que filtrar por URF
+            # SP = Santos | RS = Rio Grande
+            for porto, uf_emb in UF_PORTO_CONFIG.items():
+                col_uf = next((c for c in df_farelo.columns
+                               if "UF_NCM" in c or "SG_UF" in c), None)
+                if col_uf is None:
+                    log.warning(f"[Farelo] {ano}: coluna UF nao encontrada. "
+                                f"Colunas: {list(df_farelo.columns[:8])}")
+                    break
+                df_porto = df_farelo[df_farelo[col_uf].str.strip().str.upper() == uf_emb].copy()
                 if df_porto.empty:
-                    log.info(f"[Farelo] {ano}/{porto} (URF={urf_int}): sem dados")
+                    log.info(f"[Farelo] {ano}/{porto} (UF={uf_emb}): sem dados")
                     continue
 
                 df_agg = (
@@ -593,13 +596,12 @@ def run_biodiesel(conn):
 def _parse_anp_biodiesel(content):
     """
     Layout confirmado nos logs:
-      linha 7: ['Produto', 'Período', 'Região', 'Brasil']
       linha 8: ['(A partir de 2013)', 'Norte', 'Nordeste', 'Centro-Oeste', 'Sul', 'Sudeste']
       linha 9+: [produto, data_ini, data_fim, norte, nordeste, centro-oeste, sul, sudeste, brasil]
-
-    Estrategia: le sem header, identifica linha 8 (regioes) pela presenca
-    de 'Norte'+'Nordeste'+'Sul', anota indices de SUL e CENTRO-OESTE,
-    filtra as linhas de dados por produto = BIODIESEL B100.
+      - Produto ex: "Biodiesel (B100) (R$/m³)"
+      - Datas como objetos datetime (2013-01-06 00:00:00)
+      - Valores numericos ou "***" para sem dado
+      idx_sul=6, idx_co=5 (confirmados nos logs)
     """
     try:
         xl = pd.ExcelFile(io.BytesIO(content), engine="xlrd")
@@ -615,7 +617,7 @@ def _parse_anp_biodiesel(content):
         except Exception:
             continue
 
-        # Procura a linha de regioes (contem Norte, Nordeste, Sul)
+        # Procura linha de regioes (Norte + Nordeste + Sul juntos)
         regiao_row_idx = None
         for i, row in raw.iterrows():
             vals = [str(v).strip() for v in row.values if pd.notna(v) and str(v).strip()]
@@ -629,49 +631,60 @@ def _parse_anp_biodiesel(content):
             log.warning(f"[Biodiesel] Aba '{sheet}': linha de regioes nao encontrada")
             continue
 
-        # Pega a lista de valores da linha de regioes para mapear indices de coluna
-        regiao_vals = [str(v).strip() if pd.notna(v) else "" for v in raw.iloc[regiao_row_idx].tolist()]
+        # Monta mapa de indices de coluna a partir da linha de regioes
+        regiao_vals = raw.iloc[regiao_row_idx].tolist()
         log.info(f"[Biodiesel] Valores das colunas: {regiao_vals}")
 
-        # Encontra indices de SUL e CENTRO-OESTE
-        idx_sul = next((j for j, v in enumerate(regiao_vals)
-                        if "SUL" in v.upper() and "SUDE" not in v.upper()), None)
-        idx_co  = next((j for j, v in enumerate(regiao_vals)
-                        if "CENTRO" in v.upper()), None)
+        idx_sul = None
+        idx_co  = None
+        for j, v in enumerate(regiao_vals):
+            v_str = str(v).strip().upper() if pd.notna(v) else ""
+            if "SUL" in v_str and "SUDE" not in v_str:
+                idx_sul = j
+            if "CENTRO" in v_str:
+                idx_co = j
         log.info(f"[Biodiesel] idx_sul={idx_sul}, idx_co={idx_co}")
 
         if idx_sul is None and idx_co is None:
-            log.warning(f"[Biodiesel] SUL e CENTRO-OESTE nao mapeados")
+            log.warning("[Biodiesel] SUL e CENTRO-OESTE nao mapeados")
             continue
 
-        # Itera as linhas de dados (abaixo da linha de regioes)
+        # Itera linhas de dados (abaixo da linha de regioes)
+        n_parsed = 0
         for i in range(regiao_row_idx + 1, len(raw)):
             row_vals = raw.iloc[i].tolist()
 
-            # Coluna 0 = produto
-            produto = str(row_vals[0]).strip() if pd.notna(row_vals[0]) else ""
-            if not produto or "BIODIESEL" not in produto.upper():
+            # Coluna 0 = produto — deve conter "BIODIESEL" ou "B100"
+            prod_raw = str(row_vals[0]).strip() if pd.notna(row_vals[0]) else ""
+            if not prod_raw:
+                continue
+            prod_up = prod_raw.upper()
+            if "BIODIESEL" not in prod_up and "B100" not in prod_up:
                 continue
 
-            # Colunas 1 e 2 = data_ini e data_fim (objetos datetime do pandas)
-            raw_di = row_vals[1] if len(row_vals) > 1 else None
-            raw_df = row_vals[2] if len(row_vals) > 2 else None
+            # Colunas 1 e 2 = data_ini e data_fim
+            # Podem ser: datetime objects, strings "2013-01-06 00:00:00", ou strings "DD/MM/YYYY"
+            def parse_any_date(rv):
+                if rv is None or (isinstance(rv, float) and pd.isna(rv)):
+                    return None
+                # Objeto datetime do pandas/python
+                if hasattr(rv, 'strftime'):
+                    return rv.strftime("%Y-%m-%d")
+                # String com timestamp
+                s = str(rv).strip()
+                if not s or s.lower() == "nat" or s.lower() == "nan":
+                    return None
+                # Tenta ISO com hora: "2013-01-06 00:00:00"
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
+                            "%d/%m/%Y", "%d/%m/%y"):
+                    try:
+                        return datetime.strptime(s[:len(fmt)+2], fmt).strftime("%Y-%m-%d")
+                    except Exception:
+                        continue
+                return None
 
-            di = df_ = None
-            for rv, name in [(raw_di, "di"), (raw_df, "df_")]:
-                if rv is None or (isinstance(rv, float) and str(rv) == "nan"):
-                    continue
-                try:
-                    if hasattr(rv, "strftime"):
-                        parsed = rv.strftime("%Y-%m-%d")
-                    else:
-                        parsed = parse_date_br(rv)
-                    if name == "di":
-                        di = parsed
-                    else:
-                        df_ = parsed
-                except Exception:
-                    pass
+            di  = parse_any_date(row_vals[1] if len(row_vals) > 1 else None)
+            df_ = parse_any_date(row_vals[2] if len(row_vals) > 2 else None)
 
             if not di or not df_:
                 continue
@@ -681,16 +694,22 @@ def _parse_anp_biodiesel(content):
                 if idx is None or idx >= len(row_vals):
                     continue
                 val = row_vals[idx]
-                if not pd.notna(val) or str(val).strip() in ("***", "", "nan"):
+                if val is None or (isinstance(val, float) and pd.isna(val)):
                     continue
-                preco = safe_float(val)
-                if preco and preco > 100:  # sanity check: R$/m3 deve ser > 100
+                val_str = str(val).strip()
+                if val_str in ("***", "", "nan", "NaN"):
+                    continue
+                preco = safe_float(val_str)
+                if preco and preco > 100:  # R$/m3 de biodiesel sempre > 100
                     all_rows.append({
                         "data_inicial": di,
                         "data_final":   df_,
                         "regiao":       regiao_nome,
                         "preco":        preco,
                     })
+                    n_parsed += 1
+
+        log.info(f"[Biodiesel] Aba '{sheet}': {n_parsed} registros extraidos")
 
     result = pd.DataFrame(all_rows)
     if not result.empty:
