@@ -79,7 +79,7 @@ CONAB_SOJA_CONFIG = [
 
 # ── CONAB — TXT precos semanais por produto/UF ───────────────────────────────
 CONAB_PRECO_URL = (
-    "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/PrecosSemanalProdutoUF.txt"
+    "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/PrecosSemanalUF.txt"
 )
 CONAB_UFS     = {"RS", "MT"}
 CONAB_PRODUTO = "SOJA"
@@ -532,7 +532,7 @@ def run_farelo(conn):
                         "(ano, mes, porto, co_urf, kg_liquido, vl_fob_usd, "
                         " preco_usd_kg, updated_at) "
                         "VALUES (?,?,?,?,?,?,?,?)",
-                        (a, m, porto, urf_code, kg, fob,
+                        (a, m, porto, uf_emb, kg, fob,
                          round(fob / kg, 6), NOW_STR),
                     )
                     if conn.execute("SELECT changes()").fetchone()[0]:
@@ -595,12 +595,11 @@ def run_biodiesel(conn):
 
 def _parse_anp_biodiesel(content):
     """
-    Layout confirmado nos logs:
-      linha 8: ['(A partir de 2013)', 'Norte', 'Nordeste', 'Centro-Oeste', 'Sul', 'Sudeste']
-      linha 9+: [produto, data_ini, data_fim, norte, nordeste, centro-oeste, sul, sudeste, brasil]
-      - Produto ex: "Biodiesel (B100) (R$/m³)"
-      - Datas como objetos datetime (2013-01-06 00:00:00)
-      - Valores numericos ou "***" para sem dado
+    Layout confirmado nos logs (linha 8 = regioes, linha 9+ = dados):
+      ['(A partir de 2013)', 'Norte', 'Nordeste', 'Centro-Oeste', 'Sul', 'Sudeste']
+      linha 9: [produto, data_ini, data_fim, norte, nordeste, centro-oeste, sul, sudeste, brasil]
+      produto ex: "Biodiesel (B100) (R$/m3)"
+      datas como objetos datetime pandas
       idx_sul=6, idx_co=5 (confirmados nos logs)
     """
     try:
@@ -613,26 +612,30 @@ def _parse_anp_biodiesel(content):
 
     for sheet in xl.sheet_names:
         try:
+            # Le sem cabecalho — retorna DataFrame com indice 0..N
             raw = xl.parse(sheet, header=None)
         except Exception:
             continue
 
+        # Reset index para garantir acesso por posicao numerica com .iloc
+        raw = raw.reset_index(drop=True)
+
         # Procura linha de regioes (Norte + Nordeste + Sul juntos)
-        regiao_row_idx = None
-        for i, row in raw.iterrows():
-            vals = [str(v).strip() for v in row.values if pd.notna(v) and str(v).strip()]
+        regiao_pos = None  # posicao numerica no DataFrame resetado
+        for pos in range(len(raw)):
+            vals = [str(v).strip() for v in raw.iloc[pos].tolist() if pd.notna(v) and str(v).strip()]
             vals_up = [v.upper() for v in vals]
             if "NORTE" in vals_up and "NORDESTE" in vals_up and "SUL" in vals_up:
-                regiao_row_idx = i
-                log.info(f"[Biodiesel] Linha de regioes: {i} → {vals}")
+                regiao_pos = pos
+                log.info(f"[Biodiesel] Linha de regioes na posicao {pos}: {vals}")
                 break
 
-        if regiao_row_idx is None:
+        if regiao_pos is None:
             log.warning(f"[Biodiesel] Aba '{sheet}': linha de regioes nao encontrada")
             continue
 
-        # Monta mapa de indices de coluna a partir da linha de regioes
-        regiao_vals = raw.iloc[regiao_row_idx].tolist()
+        # Mapa de indices de coluna a partir da linha de regioes
+        regiao_vals = raw.iloc[regiao_pos].tolist()
         log.info(f"[Biodiesel] Valores das colunas: {regiao_vals}")
 
         idx_sul = None
@@ -649,39 +652,45 @@ def _parse_anp_biodiesel(content):
             log.warning("[Biodiesel] SUL e CENTRO-OESTE nao mapeados")
             continue
 
-        # Itera linhas de dados (abaixo da linha de regioes)
-        n_parsed = 0
-        for i in range(regiao_row_idx + 1, len(raw)):
-            row_vals = raw.iloc[i].tolist()
+        def parse_any_date(rv):
+            if rv is None:
+                return None
+            if hasattr(rv, 'strftime'):
+                return rv.strftime("%Y-%m-%d")
+            s = str(rv).strip()
+            if not s or s.lower() in ("nat", "nan", ""):
+                return None
+            # "2013-01-06 00:00:00" ou "2013-01-06"
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"):
+                try:
+                    return datetime.strptime(s[:19], fmt).strftime("%Y-%m-%d")
+                except Exception:
+                    continue
+            return None
 
-            # Coluna 0 = produto — deve conter "BIODIESEL" ou "B100"
+        # Itera linhas de dados abaixo da linha de regioes (usa posicao numerica)
+        n_parsed = 0
+        n_bio    = 0
+        for pos in range(regiao_pos + 1, len(raw)):
+            row_vals = raw.iloc[pos].tolist()
+
+            # Coluna 0 = produto
             prod_raw = str(row_vals[0]).strip() if pd.notna(row_vals[0]) else ""
             if not prod_raw:
                 continue
             prod_up = prod_raw.upper()
-            if "BIODIESEL" not in prod_up and "B100" not in prod_up:
-                continue
 
-            # Colunas 1 e 2 = data_ini e data_fim
-            # Podem ser: datetime objects, strings "2013-01-06 00:00:00", ou strings "DD/MM/YYYY"
-            def parse_any_date(rv):
-                if rv is None or (isinstance(rv, float) and pd.isna(rv)):
-                    return None
-                # Objeto datetime do pandas/python
-                if hasattr(rv, 'strftime'):
-                    return rv.strftime("%Y-%m-%d")
-                # String com timestamp
-                s = str(rv).strip()
-                if not s or s.lower() == "nat" or s.lower() == "nan":
-                    return None
-                # Tenta ISO com hora: "2013-01-06 00:00:00"
-                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
-                            "%d/%m/%Y", "%d/%m/%y"):
-                    try:
-                        return datetime.strptime(s[:len(fmt)+2], fmt).strftime("%Y-%m-%d")
-                    except Exception:
-                        continue
-                return None
+            # Conta quantas linhas de biodiesel passou
+            if "BIODIESEL" in prod_up or "B100" in prod_up:
+                n_bio += 1
+                if n_bio <= 3:
+                    log.info(f"[Biodiesel] Linha {pos}: produto='{prod_raw}', "
+                             f"col1={row_vals[1] if len(row_vals)>1 else '?'}, "
+                             f"col2={row_vals[2] if len(row_vals)>2 else '?'}, "
+                             f"col{idx_sul}={row_vals[idx_sul] if idx_sul and idx_sul<len(row_vals) else '?'}, "
+                             f"col{idx_co}={row_vals[idx_co] if idx_co and idx_co<len(row_vals) else '?'}")
+            else:
+                continue
 
             di  = parse_any_date(row_vals[1] if len(row_vals) > 1 else None)
             df_ = parse_any_date(row_vals[2] if len(row_vals) > 2 else None)
@@ -689,7 +698,6 @@ def _parse_anp_biodiesel(content):
             if not di or not df_:
                 continue
 
-            # Extrai precos de SUL e CENTRO-OESTE
             for idx, regiao_nome in [(idx_sul, "SUL"), (idx_co, "CENTRO-OESTE")]:
                 if idx is None or idx >= len(row_vals):
                     continue
@@ -700,7 +708,7 @@ def _parse_anp_biodiesel(content):
                 if val_str in ("***", "", "nan", "NaN"):
                     continue
                 preco = safe_float(val_str)
-                if preco and preco > 100:  # R$/m3 de biodiesel sempre > 100
+                if preco and preco > 100:
                     all_rows.append({
                         "data_inicial": di,
                         "data_final":   df_,
@@ -709,7 +717,8 @@ def _parse_anp_biodiesel(content):
                     })
                     n_parsed += 1
 
-        log.info(f"[Biodiesel] Aba '{sheet}': {n_parsed} registros extraidos")
+        log.info(f"[Biodiesel] Aba '{sheet}': {n_bio} linhas B100 encontradas, "
+                 f"{n_parsed} registros extraidos")
 
     result = pd.DataFrame(all_rows)
     if not result.empty:
