@@ -476,22 +476,41 @@ def _ingest_farelo_porto(conn, porto, urf):
         "language": "pt",
     }
 
-    try:
-        resp = requests.post(
-            COMEXSTAT_API,
-            json=payload,
-            headers={**HEADERS, "Content-Type": "application/json"},
-            timeout=60,
-            verify=False,
-        )
-        if not resp.ok:
-            log.error(
-                f"[Farelo-{porto}] API {resp.status_code}: {resp.text[:500]}"
+    # Retry com backoff para lidar com rate limit (429)
+    data = None
+    for attempt in range(1, 5):
+        try:
+            log.info(f"[Farelo-{porto}] Tentativa {attempt}/4...")
+            resp = requests.post(
+                COMEXSTAT_API,
+                json=payload,
+                headers={**HEADERS, "Content-Type": "application/json"},
+                timeout=60,
+                verify=False,
             )
-            resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        raise RuntimeError(f"[Farelo-{porto}] API ComexStat falhou: {e}")
+            if resp.status_code == 429:
+                wait = 30 * attempt  # 30s, 60s, 90s, 120s
+                log.warning(
+                    f"[Farelo-{porto}] Rate limit (429) — aguardando {wait}s..."
+                )
+                time.sleep(wait)
+                continue
+            if not resp.ok:
+                log.error(
+                    f"[Farelo-{porto}] API {resp.status_code}: {resp.text[:500]}"
+                )
+                resp.raise_for_status()
+            data = resp.json()
+            break
+        except requests.RequestException as e:
+            if attempt < 4:
+                log.warning(f"[Farelo-{porto}] Erro na tentativa {attempt}: {e}")
+                time.sleep(20 * attempt)
+            else:
+                raise RuntimeError(f"[Farelo-{porto}] API ComexStat falhou: {e}")
+
+    if data is None:
+        raise RuntimeError(f"[Farelo-{porto}] API ComexStat esgotou tentativas (rate limit)")
 
     rows = data.get("data", data.get("list", []))
     log.info(
@@ -564,12 +583,19 @@ def run_biodiesel(conn):
     content = download(ANP_BIODIESEL_URL, "biodiesel-anp", fatal=True)
     df      = _parse_anp_biodiesel(content)
 
+    # Protege contra DataFrame vazio ou sem coluna 'regiao'
+    if df.empty or "regiao" not in df.columns:
+        log.warning("[Biodiesel] Parser nao retornou dados estruturados.")
+        log.warning("[Biodiesel] Verifique os logs acima para entender o layout da planilha.")
+        return {"inserido": 0}
+
     df = df[df["regiao"].isin(ANP_REGIOES)]
     if ld:
         df = df[df["data_inicial"] > ld]
     if df.empty:
         log.info("[Biodiesel] Nenhum dado novo.")
         return {"inserido": 0}
+
 
     inserted = 0
     for _, row in df.iterrows():
@@ -603,34 +629,57 @@ def _parse_anp_biodiesel(content):
         except Exception:
             continue
 
+        # Dump primeiras linhas para diagnostico do layout real
+        log.info(f"[Biodiesel] Aba {sheet!r} — primeiras 5 linhas brutas:")
+        for i, row in raw.head(5).iterrows():
+            vals = [str(v) for v in row.values if pd.notna(v)]
+            log.info(f"  linha {i}: {vals}")
+
+        # Busca linha de cabecalho com criterios ampliados
         header_row = None
         for i, row in raw.iterrows():
             row_str = " ".join(str(v).upper() for v in row.values if pd.notna(v))
-            if "DATA" in row_str and ("REGI" in row_str or "PRODUTO" in row_str):
+            is_header = (
+                ("DATA" in row_str and ("REGI" in row_str or "PRODUTO" in row_str))
+                or ("INICIAL" in row_str and "FINAL" in row_str)
+                or ("SEMANA" in row_str and "PREC" in row_str)
+                or ("BIODIESEL" in row_str and "PREC" in row_str)
+            )
+            if is_header:
                 header_row = i
+                log.info(f"[Biodiesel] Aba {sheet!r}: cabecalho na linha {i}")
                 break
+
+        # Fallback: linha 0
         if header_row is None:
-            continue
+            log.warning(f"[Biodiesel] Aba {sheet!r}: cabecalho nao detectado, tentando linha 0")
+            header_row = 0
 
         df = xl.parse(sheet, header=header_row)
         df.columns = [str(c).strip().upper() for c in df.columns]
         df = df.dropna(how="all")
-        log.info(f"[Biodiesel] Aba '{sheet}': colunas = {list(df.columns)}")
+        log.info(f"[Biodiesel] Aba {sheet!r}: colunas = {list(df.columns)}")
+        if not df.empty:
+            log.info(f"[Biodiesel] Aba {sheet!r}: 1a linha = {dict(df.iloc[0])}")
 
         di_col    = next((c for c in df.columns if "INICIAL" in c), None)
         df_col    = next((c for c in df.columns if "FINAL"   in c), None)
         reg_col   = next((c for c in df.columns if "REGI"    in c), None)
         prod_col  = next((c for c in df.columns if "PRODUTO" in c), None)
         preco_col = next((c for c in df.columns
-                          if any(k in c for k in ("PRECO", "VALOR", "M3",
-                                                   "PONDERADO"))), None)
-        # Tenta tambem com caractere especial
+                          if any(k in c for k in ("PRECO", "VALOR", "M3", "PONDERADO"))), None)
         if not preco_col:
-            preco_col = next((c for c in df.columns
-                              if "PRE" in c or "M\u00b3" in c), None)
+            preco_col = next(
+                (c for c in df.columns if "PRE" in c or "M3" in c or "M\u00b3" in c), None
+            )
+
+        log.info(
+            f"[Biodiesel] Aba {sheet!r}: "
+            f"di={di_col}, df={df_col}, reg={reg_col}, prod={prod_col}, preco={preco_col}"
+        )
 
         if not all([di_col, df_col, preco_col]):
-            log.warning(f"[Biodiesel] Aba '{sheet}': colunas insuficientes — pulando")
+            log.warning(f"[Biodiesel] Aba {sheet!r}: colunas insuficientes — pulando")
             continue
 
         for _, row in df.iterrows():
@@ -665,11 +714,10 @@ def _parse_anp_biodiesel(content):
             f"{result['data_inicial'].min()} -> {result['data_inicial'].max()}"
         )
     else:
-        log.warning("[Biodiesel] Nenhum registro parseado da planilha.")
+        log.warning("[Biodiesel] Nenhum registro parseado — verifique os logs acima.")
     return result
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # SECAO 5 — Spread calculado
 # ─────────────────────────────────────────────────────────────────────────────
 
