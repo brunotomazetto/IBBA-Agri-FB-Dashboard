@@ -301,70 +301,89 @@ def download(url, label, fatal=True, extra_headers=None):
 
 def run_soja(conn):
     """
-    Busca preços de soja ao produtor via API CONAB.
-    Mesmo endpoint e padrão do extractor_imea.py.
-    Produto: "SOJA EM GRÃOS (60 kg)" | Nivel: "PRODUTOR" | UFs: RS e MT
-    Retorna R$/kg — converte para R$/sc60 multiplicando por 60.
+    Precos de soja ao produtor — CONAB PrecosSemanalUF.txt
+    Produto exato: 'SOJA' (com espacos, strip feito antes do match)
+    Nivel: 'PREÇO RECEBIDO P/ PR' (= preco recebido pelo produtor)
+    UFs: RS e MT
+    Preco em R$/kg → converte para R$/sc60 (×60)
     """
     log.info("=" * 60)
-    log.info("Soja — API CONAB precos ao produtor (RS e MT)")
+    log.info("Soja — CONAB PrecosSemanalUF.txt (RS e MT)")
     log.info("=" * 60)
 
     if not is_stale(conn, "soja_conab", SOJA_STALE_DAYS):
         log.info("[Soja] Dado fresco — pulando.")
         return {"skipped": True}
 
-    total_inserted = 0
+    ld      = last_date(conn, "soja_conab")
+    content = download(CONAB_PRECO_URL, "conab-soja", fatal=True)
 
-    for uf in ["RS", "MT"]:
-        ld = last_date(conn, "soja_conab", where=f"uf='{uf}'")
-        log.info(f"[Soja-{uf}] Ultimo dado no DB: {ld or 'nenhum'}")
-
+    for enc in ("latin-1", "utf-8-sig", "utf-8"):
         try:
-            r = requests.get(
-                f"{CONAB_API}/produto/serie-historica",
-                params={
-                    "produto": "SOJA EM GRÃOS (60 kg)",
-                    "nivel":   "PRODUTOR",
-                    "uf":      uf,
-                },
-                timeout=60,
-                verify=False,
-            )
-            r.raise_for_status()
-            data = r.json()
-        except Exception as e:
-            log.error(f"[Soja-{uf}] API CONAB falhou: {e}")
+            text = content.decode(enc)
+            break
+        except UnicodeDecodeError:
             continue
 
-        pontos = data.get("data", [])
-        log.info(f"[Soja-{uf}] {len(pontos)} pontos retornados")
+    first_line = text.splitlines()[0] if text.splitlines() else ""
+    sep = "\t" if "\t" in first_line else ";"
+    df = pd.read_csv(io.StringIO(text), sep=sep, on_bad_lines="skip", dtype=str)
+    df.columns = [c.strip().upper() for c in df.columns]
+    log.info(f"[Soja] Colunas: {list(df.columns)} | Linhas: {len(df)}")
 
-        inserted = 0
-        for pt in pontos:
-            data_ref = str(pt.get("data") or "")[:10]
-            valor_kg = safe_float(pt.get("valor"))
-            if not data_ref or not valor_kg or valor_kg <= 0:
-                continue
-            if ld and data_ref <= ld:
-                continue
-            conn.execute(
-                "INSERT OR IGNORE INTO soja_conab "
-                "(data_referencia, uf, produto_conab, nivel, "
-                " preco_brl_kg, preco_brl_sc60, updated_at) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (data_ref, uf, "SOJA EM GRÃOS (60 kg)", "PRODUTOR",
-                 valor_kg, round(valor_kg * 60, 4), NOW_STR),
-            )
-            if conn.execute("SELECT changes()").fetchone()[0]:
-                inserted += 1
+    uf_col    = next((c for c in df.columns if c in ("UF", "SIGLA_UF")), None)
+    prod_col  = next((c for c in df.columns if "PRODUTO" in c), None)
+    nivel_col = next((c for c in df.columns if "NIVEL" in c or "COMERCI" in c), None)
+    date_col  = next((c for c in df.columns if "DATA" in c), None)
+    preco_col = next((c for c in df.columns if "VALOR" in c or "PRECO" in c), None)
 
-        conn.commit()
-        log.info(f"[Soja-{uf}] {inserted} linhas inseridas.")
-        total_inserted += inserted
-        time.sleep(0.5)
+    if not all([uf_col, prod_col, date_col, preco_col]):
+        raise RuntimeError(f"[Soja] Colunas nao encontradas: {list(df.columns)}")
 
-    return {"inserido": total_inserted}
+    # Produto exato = 'SOJA' (apos strip)
+    df = df[df[prod_col].str.strip().str.upper() == "SOJA"].copy()
+    log.info(f"[Soja] Linhas produto='SOJA': {len(df)}")
+
+    # UFs RS e MT
+    df = df[df[uf_col].str.strip().str.upper().isin({"RS", "MT"})].copy()
+    log.info(f"[Soja] Apos filtro UF: {len(df)} linhas")
+
+    # Nivel: 'PREÇO RECEBIDO P/ PR' — contem 'RECEBIDO'
+    if nivel_col:
+        niveis = df[nivel_col].str.strip().str.upper().unique()
+        log.info(f"[Soja] Niveis disponiveis: {list(niveis)}")
+        df = df[df[nivel_col].str.strip().str.upper().str.contains("RECEBIDO", na=False)].copy()
+        log.info(f"[Soja] Apos filtro nivel RECEBIDO: {len(df)} linhas")
+
+    if df.empty:
+        log.warning("[Soja] Nenhuma linha apos filtros.")
+        return {"inserido": 0}
+
+    inserted = 0
+    for _, row in df.iterrows():
+        # DATA_INICIAL_FINAL_SEMANA pode ser "DD/MM/YYYY-DD/MM/YYYY" — pega a inicial
+        raw_date = str(row.get(date_col, "")).split("-")[0].strip()
+        dr = parse_date_br(raw_date)
+        if not dr or (ld and dr <= ld):
+            continue
+        uf       = str(row.get(uf_col, "")).strip().upper()
+        nivel    = str(row.get(nivel_col, "")).strip() if nivel_col else "PREÇO RECEBIDO P/ PR"
+        preco_kg = safe_float(row.get(preco_col))
+        if not preco_kg or preco_kg <= 0:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO soja_conab "
+            "(data_referencia, uf, produto_conab, nivel, "
+            " preco_brl_kg, preco_brl_sc60, updated_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (dr, uf, "SOJA", nivel, preco_kg, round(preco_kg * 60, 4), NOW_STR),
+        )
+        if conn.execute("SELECT changes()").fetchone()[0]:
+            inserted += 1
+
+    conn.commit()
+    log.info(f"[Soja] {inserted} linhas inseridas.")
+    return {"inserido": inserted}
 
 
 def run_ptax(conn):
