@@ -905,6 +905,384 @@ def run_spread(conn):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Dashboard HTML
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_dashboard(conn) -> None:
+    """
+    Regenera crushing_spread.html com os dados mais recentes do banco.
+    Mesmo padrão dos outros dashboards do projeto (dados embutidos como JSON).
+    """
+    log.info("[Dashboard] Gerando crushing_spread.html...")
+
+    BIO_START = "2022-01-01"
+
+    # ── Carrega series ────────────────────────────────────────────────────────
+    rows = conn.execute("""
+        SELECT data_referencia, regiao,
+               preco_soja_sc60, preco_farelo_usdkg, preco_farelo_ton, ptax,
+               preco_bio_m3, receita_farelo, receita_biodiesel,
+               custo_soja, spread_brl_ton
+        FROM crushing_spread
+        WHERE data_referencia >= ?
+        ORDER BY data_referencia, regiao
+    """, (BIO_START,)).fetchall()
+
+    last_date = conn.execute(
+        "SELECT MAX(data_referencia) FROM crushing_spread WHERE data_referencia >= ?",
+        (BIO_START,)
+    ).fetchone()[0] or ""
+
+    series = {"MT": [], "RS": []}
+    for r in rows:
+        series[r["regiao"]].append({
+            "d":         r["data_referencia"],
+            "soja_sc":   round(r["preco_soja_sc60"],    2),
+            "farelo_t":  round(r["preco_farelo_ton"],   2),
+            "farelo_usdkg": round(r["preco_farelo_usdkg"], 6),
+            "ptax":      round(r["ptax"],               4),
+            "bio_m3":    round(r["preco_bio_m3"],       2),
+            "rec_farelo":round(r["receita_farelo"],     2),
+            "rec_bio":   round(r["receita_biodiesel"],  2),
+            "custo":     round(r["custo_soja"],         2),
+            "spread":    round(r["spread_brl_ton"],     2),
+        })
+
+    # Últimos valores por regiao para o P&L
+    latest = {}
+    for regiao in ["MT", "RS"]:
+        r = conn.execute("""
+            SELECT preco_soja_sc60, preco_farelo_usdkg, preco_farelo_ton, ptax,
+                   preco_bio_m3, receita_farelo, receita_biodiesel, custo_soja, spread_brl_ton
+            FROM crushing_spread
+            WHERE regiao=? AND data_referencia=(SELECT MAX(data_referencia) FROM crushing_spread WHERE regiao=?)
+        """, (regiao, regiao)).fetchone()
+        if r:
+            latest[regiao] = {
+                "soja_sc":      round(r["preco_soja_sc60"],    2),
+                "farelo_usdkg": round(r["preco_farelo_usdkg"], 6),
+                "farelo_t":     round(r["preco_farelo_ton"],   2),
+                "ptax":         round(r["ptax"],               4),
+                "bio_m3":       round(r["preco_bio_m3"],       2),
+                "rec_farelo":   round(r["receita_farelo"],     2),
+                "rec_bio":      round(r["receita_biodiesel"],  2),
+                "custo":        round(r["custo_soja"],         2),
+                "spread":       round(r["spread_brl_ton"],     2),
+            }
+
+    import json as _json
+    data_json = _json.dumps({"last_date": last_date, "series": series, "latest": latest})
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Soy Crushing Spread — Biodiesel</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0;}}
+:root{{
+  --orange:#FF5500;--black:#1A1A1A;--gray-dark:#333;--gray-mid:#888;
+  --gray-light:#F4F4F4;--border:#E5E5E5;--white:#fff;
+  --green:#27AE60;--red:#C0392B;
+  --font:'Segoe UI',Helvetica,Arial,sans-serif;--radius:8px;
+}}
+html,body{{font-family:var(--font);background:var(--gray-light);color:var(--gray-dark);}}
+.filter-bar{{background:var(--white);border-bottom:1px solid var(--border);
+  padding:12px 20px;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;}}
+.filter-group{{display:flex;flex-direction:column;gap:4px;}}
+.filter-label{{font-size:10px;font-weight:700;color:var(--gray-mid);text-transform:uppercase;letter-spacing:.5px;}}
+.filter-sep{{width:1px;height:44px;background:var(--border);align-self:center;}}
+.seg{{display:inline-flex;background:var(--gray-light);border:1px solid var(--border);border-radius:5px;padding:2px;gap:2px;}}
+.seg-btn{{padding:5px 14px;border:none;border-radius:4px;font-size:12px;font-weight:600;
+  cursor:pointer;font-family:var(--font);background:transparent;color:var(--gray-mid);transition:all .15s;}}
+.seg-btn.on{{background:var(--orange);color:white;box-shadow:0 1px 3px rgba(0,0,0,.15);}}
+.seg-btn:hover:not(.on){{color:var(--gray-dark);}}
+.body{{padding:16px 20px 60px;}}
+.section-hdr{{display:flex;align-items:center;justify-content:space-between;margin:20px 0 10px;}}
+.section-title{{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
+  color:var(--gray-mid);border-left:3px solid var(--orange);padding-left:8px;}}
+.view-toggle{{display:inline-flex;background:var(--gray-light);border:1px solid var(--border);border-radius:5px;padding:2px;gap:2px;}}
+.vt-btn{{padding:4px 12px;border:none;border-radius:4px;font-size:11px;font-weight:600;
+  cursor:pointer;font-family:var(--font);background:transparent;color:var(--gray-mid);transition:all .15s;}}
+.vt-btn.on{{background:var(--white);color:var(--orange);box-shadow:0 1px 3px rgba(0,0,0,.08);}}
+.chart-grid{{display:grid;gap:12px;margin-bottom:12px;}}
+.g2{{grid-template-columns:1fr 1fr;}}
+.chart-card{{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;}}
+.chart-title{{font-size:13px;font-weight:700;color:var(--black);margin-bottom:2px;}}
+.chart-sub{{font-size:11px;color:var(--gray-mid);margin-bottom:12px;}}
+.chart-wrap{{position:relative;height:200px;}}
+.chart-wrap-tall{{position:relative;height:240px;}}
+.pl-wrap{{overflow-x:auto;}}
+.pl-table{{border-collapse:collapse;font-size:11.5px;width:100%;min-width:600px;}}
+.pl-table th{{padding:7px 12px;font-size:9.5px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.4px;color:var(--gray-mid);border-bottom:2px solid var(--border);
+  white-space:nowrap;background:var(--gray-light);text-align:right;}}
+.pl-table th.lbl{{text-align:left;min-width:180px;position:sticky;left:0;z-index:2;background:var(--gray-light);}}
+.pl-table td{{padding:6px 12px;text-align:right;border-bottom:1px solid #f0f0f0;white-space:nowrap;}}
+.pl-table td.lbl{{text-align:left;position:sticky;left:0;background:var(--white);z-index:1;font-size:12px;color:var(--gray-dark);}}
+.pl-table tr.group-hdr td{{background:#fafafa;font-size:9.5px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.4px;color:var(--gray-mid);padding-top:10px;border-bottom:none;}}
+.pl-table tr.group-hdr td.lbl{{background:#fafafa;}}
+.pl-table tr.sub td.lbl{{padding-left:22px;color:var(--gray-mid);font-size:11.5px;}}
+.pl-table tr.total td{{font-weight:700;border-top:1.5px solid var(--border);border-bottom:1.5px solid var(--border);}}
+.pl-table tr.total.spread td{{background:#fff8f5;}}
+.pl-table .pos{{color:var(--green);font-weight:600;}}
+.pl-table .neg{{color:var(--red);font-weight:600;}}
+.pl-table .na{{color:#ccc;}}
+.source-note{{font-size:10px;color:#bbb;text-align:right;margin-top:14px;font-style:italic;}}
+@media(max-width:900px){{.g2{{grid-template-columns:1fr;}}}}
+</style>
+</head>
+<body>
+<div class="filter-bar">
+  <div class="filter-group">
+    <div class="filter-label">Region</div>
+    <div class="seg" id="seg-region">
+      <button class="seg-btn on" onclick="setRegion('MT',this)">Mato Grosso</button>
+      <button class="seg-btn"    onclick="setRegion('RS',this)">Rio Grande do Sul</button>
+    </div>
+  </div>
+  <div class="filter-sep"></div>
+  <div class="filter-group">
+    <div class="filter-label">Period</div>
+    <div class="seg" id="seg-period">
+      <button class="seg-btn on" onclick="setPeriod('all',this)">All</button>
+      <button class="seg-btn"    onclick="setPeriod('1y',this)">1Y</button>
+      <button class="seg-btn"    onclick="setPeriod('6m',this)">6M</button>
+    </div>
+  </div>
+  <div class="filter-sep"></div>
+  <div class="filter-group">
+    <div class="filter-label">Formula</div>
+    <div style="font-size:11.5px;color:var(--gray-mid);line-height:1.7;padding-top:2px;">
+      Spread = (Meal &times;0.77) + (Bio &times;0.19) &minus; Soy &nbsp;|&nbsp;
+      <span style="color:var(--gray-dark);font-weight:600;" id="updated-label">&mdash;</span>
+    </div>
+  </div>
+</div>
+<div class="body">
+  <div class="section-hdr">
+    <span class="section-title">Revenue &amp; Cost Components</span>
+    <div class="view-toggle">
+      <button class="vt-btn on" onclick="setCompView('chart',this)">&#9783; Chart</button>
+      <button class="vt-btn"    onclick="setCompView('table',this)">&#9783; P&amp;L</button>
+    </div>
+  </div>
+  <div class="chart-card" style="margin-bottom:12px;">
+    <div id="comp-chart-view">
+      <div class="chart-title">Revenue &amp; Cost Components</div>
+      <div class="chart-sub">R$/t of soy &mdash; total revenue, meal revenue, biodiesel revenue, soy cost</div>
+      <div class="chart-wrap-tall"><canvas id="chartComp"></canvas></div>
+    </div>
+    <div id="comp-table-view" style="display:none;">
+      <div class="chart-title" style="margin-bottom:12px;">P&amp;L &mdash; Revenue &amp; Cost Components</div>
+      <div class="pl-wrap"><table class="pl-table" id="pl-table"></table></div>
+    </div>
+  </div>
+  <div class="section-hdr"><span class="section-title">Crushing Spread</span></div>
+  <div class="chart-grid g2">
+    <div class="chart-card">
+      <div class="chart-title">Historical (R$/t)</div>
+      <div class="chart-sub">Meal FOB SECEX &middot; Biodiesel B100 ANP &middot; CONAB farm gate</div>
+      <div class="chart-wrap"><canvas id="chartSpread"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Seasonality by Month</div>
+      <div class="chart-sub">R$/t &middot; each line = one year &middot; bold = historical avg</div>
+      <div class="chart-wrap"><canvas id="chartSpreadSeas"></canvas></div>
+    </div>
+  </div>
+  <div class="section-hdr"><span class="section-title">Biodiesel B100 &mdash; Producer Price</span></div>
+  <div class="chart-grid g2">
+    <div class="chart-card">
+      <div class="chart-title">Historical (R$/m&sup3;)</div>
+      <div class="chart-sub" id="bio-sub">ANP weighted average &middot; producer level</div>
+      <div class="chart-wrap"><canvas id="chartBio"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Seasonality by Month</div>
+      <div class="chart-sub">R$/m&sup3; &middot; each line = one year &middot; bold = historical avg</div>
+      <div class="chart-wrap"><canvas id="chartBioSeas"></canvas></div>
+    </div>
+  </div>
+  <div class="section-hdr"><span class="section-title">Soybean Meal FOB</span></div>
+  <div class="chart-grid g2">
+    <div class="chart-card">
+      <div class="chart-title">Historical (R$/t)</div>
+      <div class="chart-sub" id="meal-sub">SECEX NCM 23040090 &middot; port</div>
+      <div class="chart-wrap"><canvas id="chartMeal"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Seasonality by Month</div>
+      <div class="chart-sub">R$/t &middot; each line = one year &middot; bold = historical avg</div>
+      <div class="chart-wrap"><canvas id="chartMealSeas"></canvas></div>
+    </div>
+  </div>
+  <div class="section-hdr"><span class="section-title">Soy Farm Gate</span></div>
+  <div class="chart-grid g2">
+    <div class="chart-card">
+      <div class="chart-title">Historical (R$/sc 60 kg)</div>
+      <div class="chart-sub">CONAB/Siagro monthly average &middot; producer level</div>
+      <div class="chart-wrap"><canvas id="chartSoja"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Seasonality by Month</div>
+      <div class="chart-sub">R$/sc 60 kg &middot; each line = one year &middot; bold = historical avg</div>
+      <div class="chart-wrap"><canvas id="chartSojaSeas"></canvas></div>
+    </div>
+  </div>
+  <p class="source-note">Sources: CONAB/Siagro (soy prices) &middot; SECEX/MDIC NCM 23040090 (meal FOB) &middot; ANP B100 producers (biodiesel) &middot; BCB PTAX (FX) &middot; Agri Monitor / IBBA</p>
+</div>
+<script>
+const RAW = {data_json};
+const CFG = {{
+  MT: {{ port:'Santos',     bio:'Centro-Oeste', color:'#FF5500' }},
+  RS: {{ port:'Rio Grande', bio:'Sul',          color:'#1A7A4A' }},
+}};
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const YEAR_COLORS = {{ 2022:'#A0AEC0', 2023:'#68D391', 2024:'#63B3ED', 2025:'#F6AD55', 2026:'#FC8181' }};
+let region='MT', period='all', compView='chart', charts={{}};
+function filterData(s){{
+  if(period==='all')return s;
+  const c=new Date();
+  if(period==='1y')c.setFullYear(c.getFullYear()-1);
+  if(period==='6m')c.setMonth(c.getMonth()-6);
+  return s.filter(p=>p.d>=c.toISOString().slice(0,10));
+}}
+function buildSeas(series,field){{
+  const byYM={{}};
+  for(const p of series){{
+    if(p[field]==null)continue;
+    const y=+p.d.slice(0,4),m=+p.d.slice(5,7)-1;
+    if(!byYM[y])byYM[y]={{}};
+    if(!byYM[y][m])byYM[y][m]=[];
+    byYM[y][m].push(p[field]);
+  }}
+  const years=Object.keys(byYM).map(Number).sort();
+  const avg=y=>Array.from({{length:12}},(_,m)=>byYM[y]?.[m]?.length?byYM[y][m].reduce((a,b)=>a+b)/byYM[y][m].length:null);
+  const complete=years.filter(y=>y<new Date().getFullYear());
+  const hist=Array.from({{length:12}},(_,m)=>{{
+    const vs=complete.map(y=>avg(y)[m]).filter(v=>v!=null);
+    return vs.length?vs.reduce((a,b)=>a+b)/vs.length:null;
+  }});
+  return {{years,avg,hist}};
+}}
+function seasDatasets(seas){{
+  const ds=seas.years.map(y=>({{
+    label:String(y),data:seas.avg(y),
+    borderColor:YEAR_COLORS[y]||'#ccc',backgroundColor:'transparent',
+    borderWidth:1.5,pointRadius:2,pointHoverRadius:4,tension:.35,
+  }}));
+  ds.push({{
+    label:'Avg '+Math.min(...seas.years)+'–'+(new Date().getFullYear()-1),
+    data:seas.hist,borderColor:'#1A1A1A',backgroundColor:'transparent',
+    borderWidth:2.5,pointRadius:3,pointHoverRadius:5,tension:.35,
+  }});
+  return ds;
+}}
+function baseOpts(yFmt){{
+  return {{
+    responsive:true,maintainAspectRatio:false,
+    interaction:{{mode:'index',intersect:false}},
+    plugins:{{
+      legend:{{labels:{{color:'#888',font:{{family:'Segoe UI',size:11}},boxWidth:10,padding:10}}}},
+      tooltip:{{backgroundColor:'#fff',borderColor:'#e5e5e5',borderWidth:1,
+        titleColor:'#1A1A1A',bodyColor:'#888',
+        titleFont:{{family:'Segoe UI',size:11,weight:'700'}},
+        bodyFont:{{family:'Segoe UI',size:11}},padding:10,
+        callbacks:{{label:ctx=>ctx.parsed.y==null?'':' '+yFmt(ctx.parsed.y)}}}}
+    }},
+    scales:{{
+      x:{{grid:{{color:'rgba(0,0,0,.04)'}},ticks:{{color:'#aaa',font:{{size:10}},maxTicksLimit:12,maxRotation:0}}}},
+      y:{{grid:{{color:'rgba(0,0,0,.04)'}},ticks:{{color:'#aaa',font:{{size:10}},callback:yFmt}}}}
+    }}
+  }};
+}}
+function seasOpts(yFmt){{
+  const o=baseOpts(yFmt);
+  o.scales.x.ticks={{...o.scales.x.ticks,callback:(_,i)=>MONTHS[i]}};
+  return o;
+}}
+function mk(id,labels,datasets,opts){{
+  if(charts[id])charts[id].destroy();
+  charts[id]=new Chart(document.getElementById(id),{{type:'line',data:{{labels,datasets}},options:opts}});
+}}
+function setRegion(r,btn){{region=r;document.querySelectorAll('#seg-region .seg-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');render();}}
+function setPeriod(p,btn){{period=p;document.querySelectorAll('#seg-period .seg-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');render();}}
+function setCompView(v,btn){{
+  compView=v;
+  document.querySelectorAll('.vt-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+  document.getElementById('comp-chart-view').style.display=v==='chart'?'':'none';
+  document.getElementById('comp-table-view').style.display=v==='table'?'':'none';
+  if(v==='table')renderPL();
+}}
+function renderPL(){{
+  const s=filterData(RAW.series[region]);
+  const byMonth={{}};
+  for(const p of s){{const ym=p.d.slice(0,7);byMonth[ym]=p;}}
+  const months=Object.keys(byMonth).sort().slice(-24);
+  const fmtN=v=>v==null?'<span class="na">&mdash;</span>':`<span class="${{v>=0?'pos':'neg'}}">${{Number(v).toLocaleString('pt-BR',{{minimumFractionDigits:0,maximumFractionDigits:0}})}}</span>`;
+  const fmtV=v=>v==null?'<span class="na">&mdash;</span>':Number(v).toLocaleString('pt-BR',{{minimumFractionDigits:0,maximumFractionDigits:0}});
+  const fmtR=v=>v==null?'<span class="na">&mdash;</span>':Number(v).toLocaleString('pt-BR',{{minimumFractionDigits:2,maximumFractionDigits:2}});
+  const row=(cls,lbl,field,fmt)=>`<tr class="${{cls}}"><td class="lbl">${{lbl}}</td>`+months.map(m=>`<td>${{fmt(byMonth[m]?.[field])}}</td>`).join('')+'</tr>';
+  const calc=(cls,lbl,fn,fmt)=>`<tr class="${{cls}}"><td class="lbl">${{lbl}}</td>`+months.map(m=>`<td>${{fmt(byMonth[m]?fn(byMonth[m]):null)}}</td>`).join('')+'</tr>';
+  const thead='<thead><tr><th class="lbl">Item</th>'+months.map(m=>`<th>${{m}}</th>`).join('')+'</tr></thead>';
+  const tbody=`<tbody>
+    <tr class="group-hdr"><td class="lbl" colspan="${{months.length+1}}">REVENUE</td></tr>
+    ${{row('sub','Meal Revenue (R$/t)','rec_farelo',fmtV)}}
+    ${{row('sub','Biodiesel Revenue (R$/t)','rec_bio',fmtV)}}
+    ${{calc('total','Total Revenue (R$/t)',p=>p.rec_farelo+p.rec_bio,fmtV)}}
+    <tr class="group-hdr"><td class="lbl" colspan="${{months.length+1}}">COST</td></tr>
+    ${{row('sub','Soy Cost (R$/t)','custo',fmtV)}}
+    <tr class="group-hdr"><td class="lbl" colspan="${{months.length+1}}">INPUTS</td></tr>
+    ${{row('sub','Soy Farm Gate (R$/sc60)','soja_sc',fmtV)}}
+    ${{row('sub','Meal FOB (R$/t)','farelo_t',fmtV)}}
+    ${{row('sub','Biodiesel B100 (R$/m\u00b3)','bio_m3',fmtV)}}
+    ${{row('sub','PTAX (R$/USD)','ptax',fmtR)}}
+    <tr class="group-hdr"><td class="lbl" colspan="${{months.length+1}}">RESULT</td></tr>
+    ${{row('total spread','Crushing Spread (R$/t)','spread',fmtN)}}
+  </tbody>`;
+  document.getElementById('pl-table').innerHTML=thead+tbody;
+}}
+function render(){{
+  const col=CFG[region].color;
+  const s=filterData(RAW.series[region]);
+  const sAll=RAW.series[region];
+  const lbl=s.map(p=>p.d.slice(0,7));
+  const fmtK=v=>'R$\u00a0'+Number(v).toLocaleString('pt-BR',{{minimumFractionDigits:0,maximumFractionDigits:0}});
+  const d=new Date(RAW.last_date+'T12:00:00');
+  document.getElementById('updated-label').textContent='Updated '+d.toLocaleDateString('en-GB',{{day:'2-digit',month:'short',year:'numeric'}});
+  document.getElementById('meal-sub').textContent='SECEX NCM 23040090 \u00b7 '+CFG[region].port+' port';
+  document.getElementById('bio-sub').textContent='ANP weighted avg \u00b7 '+CFG[region].bio+' region';
+  mk('chartComp',lbl,[
+    {{label:'Total Revenue',data:s.map(p=>p.rec_farelo+p.rec_bio),borderColor:col,borderWidth:2,pointRadius:0,tension:.3,backgroundColor:'transparent'}},
+    {{label:'Meal Revenue', data:s.map(p=>p.rec_farelo),borderColor:col+'99',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[5,3],backgroundColor:'transparent'}},
+    {{label:'Bio Revenue',  data:s.map(p=>p.rec_bio),borderColor:'#E67E22',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[3,3],backgroundColor:'transparent'}},
+    {{label:'Soy Cost',     data:s.map(p=>p.custo),borderColor:'#C0392B',borderWidth:1.5,pointRadius:0,tension:.3,backgroundColor:'transparent'}},
+  ],baseOpts(fmtK));
+  if(compView==='table')renderPL();
+  mk('chartSpread',lbl,[{{label:'Spread (R$/t)',data:s.map(p=>p.spread),borderColor:col,backgroundColor:col+'18',borderWidth:2,pointRadius:0,pointHoverRadius:3,fill:true,tension:.35}}],baseOpts(fmtK));
+  mk('chartSpreadSeas',MONTHS,seasDatasets(buildSeas(sAll,'spread')),seasOpts(fmtK));
+  mk('chartBio',lbl,[{{label:'Biodiesel B100 (R$/m\u00b3)',data:s.map(p=>p.bio_m3),borderColor:'#E67E22',backgroundColor:'#E67E2218',borderWidth:1.5,pointRadius:0,fill:true,tension:.3}}],baseOpts(fmtK));
+  mk('chartBioSeas',MONTHS,seasDatasets(buildSeas(sAll,'bio_m3')),seasOpts(fmtK));
+  mk('chartMeal',lbl,[{{label:'Meal FOB (R$/t)',data:s.map(p=>p.farelo_t),borderColor:'#2980B9',backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:.3}}],baseOpts(fmtK));
+  mk('chartMealSeas',MONTHS,seasDatasets(buildSeas(sAll,'farelo_t')),seasOpts(fmtK));
+  mk('chartSoja',lbl,[{{label:'Soy (R$/sc60)',data:s.map(p=>p.soja_sc),borderColor:'#1A1A1A',backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:.3}}],baseOpts(v=>v.toLocaleString('pt-BR',{{minimumFractionDigits:0}})));
+  mk('chartSojaSeas',MONTHS,seasDatasets(buildSeas(sAll,'soja_sc')),seasOpts(v=>v.toLocaleString('pt-BR',{{minimumFractionDigits:0}})));
+}}
+render();
+</script>
+</body>
+</html>"""
+
+    out_path = DB_DIR / "crushing_spread.html"
+    out_path.write_text(html, encoding="utf-8")
+    log.info(f"[Dashboard] Escrito: {out_path} ({len(html):,} chars)")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -989,6 +1367,7 @@ def main():
         ("Farelo/SECEX",  lambda: run_farelo(conn)),
         ("Biodiesel/ANP", lambda: run_biodiesel(conn)),
         ("Spread",        lambda: run_spread(conn)),
+        ("Dashboard",     lambda: generate_dashboard(conn)),
     ]:
         try:
             fn()
